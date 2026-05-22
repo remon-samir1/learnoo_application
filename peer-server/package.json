@@ -1,0 +1,22 @@
+{
+  "name": "learnoo-peer-server",
+  "version": "1.0.0",
+  "description": "Custom PeerJS signaling server for Learnoo",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "peerjs",
+    "webrtc",
+    "signaling",
+    "learnoo"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "peer": "^0.6.10",
+    "express": "^4.18.2"
+  }
+}

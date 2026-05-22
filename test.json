@@ -1,0 +1,870 @@
+{
+    "data": {
+        "id": "33",
+        "type": "courses",
+        "attributes": {
+            "title": "ادارة عامة",
+            "sub_title": "ادارة - اولى انتساب",
+            "description": "شرح مبسط",
+            "thumbnail": "https://api.learnoo.app/storage/uploads/thumbnails/0K6JA6x1GdMvDOWLQjhSubYd5MehW4WkQiR11tXO.jpg",
+            "objectives": "توصيل المعلومة بسهولة",
+            "price": "0.00",
+            "max_views_per_student": 5,
+            "approval": 0,
+            "status": 0,
+            "reason": null,
+            "is_locked": true,
+            "stats": {
+                "lectures": 1,
+                "chapters": 5,
+                "notes": 1,
+                "exams": 20,
+                "students": 1
+            },
+            "performance": {
+                "avg_score": 18.7,
+                "completion_rate": 0
+            },
+            "category_id": 185,
+            "category": {
+                "data": {
+                    "id": "185",
+                    "type": "department",
+                    "attributes": {
+                        "image": "https://api.learnoo.app/storage/uploads/images/Cy0oVqV1UNdnxgRabdRarvwo6F0EzItUKTKOg9X4.jpg",
+                        "name": "كورسات",
+                        "order": 1,
+                        "stats": {
+                            "courses": 6,
+                            "students": 0
+                        },
+                        "parent_id": 184,
+                        "created_at": "2026-04-23T21:43:16.000000Z",
+                        "updated_at": "2026-04-23T21:43:16.000000Z"
+                    }
+                }
+            },
+            "instructor": {
+                "data": {
+                    "id": "01kp4m364m63x0yw1fvzkjf3pe",
+                    "type": "users",
+                    "attributes": {
+                        "id": "01kp4m364m63x0yw1fvzkjf3pe",
+                        "student_code": null,
+                        "first_name": "Admin",
+                        "last_name": "account",
+                        "full_name": "Admin account",
+                        "specialization": null,
+                        "role": "Admin",
+                        "status_name": "Active",
+                        "status": 1,
+                        "can_use_activations": true,
+                        "email": "karl@learnoo.com",
+                        "email_verified_at": "2026-04-13T23:51:10+00:00",
+                        "phone": null,
+                        "phone_verified_at": null,
+                        "image": "https://api.learnoo.app/storage/users/0VIq4j315uV2oiw8WuUlK07xJaIgkP7hgEirqQI6.png",
+                        "created_at": "2026-04-13T23:51:10+00:00",
+                        "updated_at": "2026-05-12T07:55:18+00:00",
+                        "activity_stats": {
+                            "notes_created": 0,
+                            "downloads": 0,
+                            "live_attendance": 1,
+                            "community_posts": 1
+                        },
+                        "device_access": {
+                            "device": "Windows PC",
+                            "last_ip": "156.206.139.180"
+                        }
+                    }
+                }
+            },
+            "lectures": [
+                {
+                    "id": "30",
+                    "type": "lectures",
+                    "attributes": {
+                        "id": 30,
+                        "course_id": 33,
+                        "title": "المحاضرة الاولى",
+                        "description": "سسس",
+                        "order": 0,
+                        "chapters": [
+                            {
+                                "id": "107",
+                                "type": "chapters",
+                                "attributes": {
+                                    "lecture_id": 30,
+                                    "course_id": 33,
+                                    "title": "Quis quos consequat",
+                                    "thumbnail": null,
+                                    "video": "https://api.learnoo.app/hls/chapter/107/playlist",
+                                    "duration": "1:37",
+                                    "is_free_preview": false,
+                                    "is_free_preview_attachment": false,
+                                    "max_views": 59,
+                                    "current_user_views": 0,
+                                    "view_by_minute": 51,
+                                    "is_activated": true,
+                                    "is_locked": false,
+                                    "can_watch": true,
+                                    "attachments": [
+                                        {
+                                            "id": "72",
+                                            "type": "attachments",
+                                            "attributes": {
+                                                "name": "Cover_Letter.pdf",
+                                                "path": "https://api.learnoo.app/storage/uploads/chapters/attachments/Cover_Letter.pdf",
+                                                "extension": "pdf",
+                                                "size": "2714",
+                                                "downloadable": false,
+                                                "created_at": "2026-05-12T15:54:28+00:00"
+                                            }
+                                        }
+                                    ],
+                                    "discussions": [],
+                                    "created_at": "2026-05-10T13:50:04+00:00",
+                                    "updated_at": "2026-05-12T15:55:58+00:00"
+                                }
+                            },
+                            {
+                                "id": "108",
+                                "type": "chapters",
+                                "attributes": {
+                                    "lecture_id": 30,
+                                    "course_id": 33,
+                                    "title": "In ea ea neque quia",
+                                    "thumbnail": null,
+                                    "video": "https://api.learnoo.app/hls/chapter/108/playlist",
+                                    "duration": "1:37",
+                                    "is_free_preview": true,
+                                    "is_free_preview_attachment": false,
+                                    "max_views": 76,
+                                    "current_user_views": 0,
+                                    "view_by_minute": 40,
+                                    "is_activated": true,
+                                    "is_locked": false,
+                                    "can_watch": true,
+                                    "attachments": [
+                                        {
+                                            "id": "73",
+                                            "type": "attachments",
+                                            "attributes": {
+                                                "name": "Cover_Letter.pdf",
+                                                "path": "https://api.learnoo.app/storage/uploads/chapters/attachments/Cover_Letter.pdf",
+                                                "extension": "pdf",
+                                                "size": "2714",
+                                                "downloadable": false,
+                                                "created_at": "2026-05-12T15:56:24+00:00"
+                                            }
+                                        }
+                                    ],
+                                    "discussions": [],
+                                    "created_at": "2026-05-10T14:27:20+00:00",
+                                    "updated_at": "2026-05-12T15:56:24+00:00"
+                                }
+                            },
+                            {
+                                "id": "115",
+                                "type": "chapters",
+                                "attributes": {
+                                    "lecture_id": 30,
+                                    "course_id": 33,
+                                    "title": "test 1",
+                                    "thumbnail": null,
+                                    "video": "https://api.learnoo.app/hls/chapter/115/playlist",
+                                    "duration": "1:37",
+                                    "is_free_preview": true,
+                                    "is_free_preview_attachment": false,
+                                    "max_views": 6,
+                                    "current_user_views": 0,
+                                    "view_by_minute": 37,
+                                    "is_activated": true,
+                                    "is_locked": false,
+                                    "can_watch": true,
+                                    "attachments": [
+                                        {
+                                            "id": "74",
+                                            "type": "attachments",
+                                            "attributes": {
+                                                "name": "Cover_Letter.pdf",
+                                                "path": "https://api.learnoo.app/storage/uploads/chapters/attachments/Cover_Letter.pdf",
+                                                "extension": "pdf",
+                                                "size": "2714",
+                                                "downloadable": false,
+                                                "created_at": "2026-05-12T16:01:43+00:00"
+                                            }
+                                        }
+                                    ],
+                                    "discussions": [],
+                                    "created_at": "2026-05-12T16:01:43+00:00",
+                                    "updated_at": "2026-05-12T16:07:35+00:00"
+                                }
+                            },
+                            {
+                                "id": "116",
+                                "type": "chapters",
+                                "attributes": {
+                                    "lecture_id": 30,
+                                    "course_id": 33,
+                                    "title": "Ullamco dignissimos",
+                                    "thumbnail": null,
+                                    "video": "https://api.learnoo.app/hls/chapter/116/playlist",
+                                    "duration": "1:37",
+                                    "is_free_preview": false,
+                                    "is_free_preview_attachment": false,
+                                    "max_views": 87,
+                                    "current_user_views": 0,
+                                    "view_by_minute": 73,
+                                    "is_activated": true,
+                                    "is_locked": false,
+                                    "can_watch": true,
+                                    "attachments": [
+                                        {
+                                            "id": "75",
+                                            "type": "attachments",
+                                            "attributes": {
+                                                "name": "Cover_Letter.pdf",
+                                                "path": "https://api.learnoo.app/storage/uploads/chapters/attachments/Cover_Letter.pdf",
+                                                "extension": "pdf",
+                                                "size": "2714",
+                                                "downloadable": false,
+                                                "created_at": "2026-05-12T16:29:42+00:00"
+                                            }
+                                        }
+                                    ],
+                                    "discussions": [],
+                                    "created_at": "2026-05-12T16:29:28+00:00",
+                                    "updated_at": "2026-05-12T16:29:52+00:00"
+                                }
+                            },
+                            {
+                                "id": "123",
+                                "type": "chapters",
+                                "attributes": {
+                                    "lecture_id": 30,
+                                    "course_id": 33,
+                                    "title": "Eum ut velit conseq",
+                                    "thumbnail": null,
+                                    "video": null,
+                                    "duration": null,
+                                    "is_free_preview": false,
+                                    "is_free_preview_attachment": false,
+                                    "max_views": 87,
+                                    "current_user_views": 0,
+                                    "view_by_minute": 44,
+                                    "is_activated": false,
+                                    "is_locked": true,
+                                    "can_watch": false,
+                                    "attachments": [
+                                        {
+                                            "id": "83",
+                                            "type": "attachments",
+                                            "attributes": {
+                                                "name": "Cover_Letter.pdf",
+                                                "path": "https://api.learnoo.app/storage/uploads/chapters/attachments/Cover_Letter.pdf",
+                                                "extension": "pdf",
+                                                "size": "2714",
+                                                "downloadable": false,
+                                                "created_at": "2026-05-12T23:35:49+00:00"
+                                            }
+                                        }
+                                    ],
+                                    "discussions": [],
+                                    "created_at": "2026-05-12T23:35:49+00:00",
+                                    "updated_at": "2026-05-12T23:35:49+00:00"
+                                }
+                            }
+                        ],
+                        "created_at": "2026-04-25T14:56:31+00:00",
+                        "updated_at": "2026-04-25T14:56:31+00:00"
+                    }
+                }
+            ],
+            "notes": [
+                {
+                    "id": "12",
+                    "type": "notes",
+                    "attributes": {
+                        "title": "Chapter Summary",
+                        "type": "summary",
+                        "course_id": 33,
+                        "linked_lecture": "lecture-1",
+                        "content": "fghfghfdghdfghdfghdfghdfgh",
+                        "is_publish": false,
+                        "attachment": null,
+                        "created_at": "2026-05-12T05:09:16+00:00",
+                        "updated_at": "2026-05-12T06:11:44+00:00"
+                    }
+                }
+            ],
+            "exams": [
+                {
+                    "id": "11",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 11,
+                        "title": "ahmed",
+                        "max_attempts": 2,
+                        "current_attempts": 2,
+                        "remaining_attempts": 0,
+                        "type": "exam",
+                        "start_time": "2026-04-15T11:20:00+00:00",
+                        "end_time": "2026-05-15T13:08:00+00:00",
+                        "duration": 60,
+                        "has_activation": false,
+                        "total_marks": 100,
+                        "passing_marks": 80,
+                        "is_public": true,
+                        "status": "active",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-04-15T07:02:54+00:00",
+                        "updated_at": "2026-05-06T11:51:53+00:00"
+                    }
+                },
+                {
+                    "id": "19",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 19,
+                        "title": "Voluptatem ut debit",
+                        "max_attempts": 46,
+                        "current_attempts": 0,
+                        "remaining_attempts": 46,
+                        "type": "homework",
+                        "start_time": "2026-05-11T07:56:00+00:00",
+                        "end_time": "2026-05-30T04:54:00+00:00",
+                        "duration": 42,
+                        "has_activation": false,
+                        "total_marks": 7,
+                        "passing_marks": 28,
+                        "is_public": false,
+                        "status": "active",
+                        "chapter_id": 107,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-11T09:31:29+00:00",
+                        "updated_at": "2026-05-11T13:03:52+00:00"
+                    }
+                },
+                {
+                    "id": "20",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 20,
+                        "title": "Voluptatem Temporib",
+                        "max_attempts": 61,
+                        "current_attempts": 0,
+                        "remaining_attempts": 61,
+                        "type": "homework",
+                        "start_time": "2026-05-11T13:12:00+00:00",
+                        "end_time": "2026-05-30T06:40:00+00:00",
+                        "duration": 26,
+                        "has_activation": false,
+                        "total_marks": 26,
+                        "passing_marks": 42,
+                        "is_public": false,
+                        "status": "active",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-11T13:07:02+00:00",
+                        "updated_at": "2026-05-11T13:07:02+00:00"
+                    }
+                },
+                {
+                    "id": "23",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 23,
+                        "title": "Quos consequat Vel",
+                        "max_attempts": 30,
+                        "current_attempts": 0,
+                        "remaining_attempts": 30,
+                        "type": "exam",
+                        "start_time": "1978-02-06T21:27:00+00:00",
+                        "end_time": "2019-07-24T08:43:00+00:00",
+                        "duration": 65,
+                        "has_activation": false,
+                        "total_marks": 19,
+                        "passing_marks": 2,
+                        "is_public": true,
+                        "status": "active",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-11T16:44:41+00:00",
+                        "updated_at": "2026-05-11T16:44:41+00:00"
+                    }
+                },
+                {
+                    "id": "24",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 24,
+                        "title": "Saepe pariatur Qui",
+                        "max_attempts": 96,
+                        "current_attempts": 2,
+                        "remaining_attempts": 94,
+                        "type": "homework",
+                        "start_time": "2026-05-11T14:58:00+00:00",
+                        "end_time": "2026-05-30T01:17:00+00:00",
+                        "duration": 95,
+                        "has_activation": false,
+                        "total_marks": 86,
+                        "passing_marks": 8,
+                        "is_public": true,
+                        "status": "active",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-11T16:47:21+00:00",
+                        "updated_at": "2026-05-11T16:47:21+00:00"
+                    }
+                },
+                {
+                    "id": "25",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 25,
+                        "title": "Placeat duis tempor",
+                        "max_attempts": 25,
+                        "current_attempts": 0,
+                        "remaining_attempts": 25,
+                        "type": "exam",
+                        "start_time": "1989-04-21T10:21:00+00:00",
+                        "end_time": "2009-05-25T19:08:00+00:00",
+                        "duration": 46,
+                        "has_activation": false,
+                        "total_marks": 21,
+                        "passing_marks": 94,
+                        "is_public": true,
+                        "status": "active",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-11T16:50:41+00:00",
+                        "updated_at": "2026-05-11T16:50:41+00:00"
+                    }
+                },
+                {
+                    "id": "26",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 26,
+                        "title": "Fugit facilis iste",
+                        "max_attempts": 83,
+                        "current_attempts": 0,
+                        "remaining_attempts": 83,
+                        "type": "exam",
+                        "start_time": "2026-05-11T01:50:00+00:00",
+                        "end_time": "2026-06-06T12:13:00+00:00",
+                        "duration": 58,
+                        "has_activation": false,
+                        "total_marks": 26,
+                        "passing_marks": 13,
+                        "is_public": true,
+                        "status": "draft",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-11T16:52:29+00:00",
+                        "updated_at": "2026-05-11T16:52:29+00:00"
+                    }
+                },
+                {
+                    "id": "27",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 27,
+                        "title": "Ipsum placeat ea do",
+                        "max_attempts": 94,
+                        "current_attempts": 0,
+                        "remaining_attempts": 94,
+                        "type": "homework",
+                        "start_time": "2026-05-10T03:27:00+00:00",
+                        "end_time": "2026-05-28T23:41:00+00:00",
+                        "duration": 59,
+                        "has_activation": false,
+                        "total_marks": 13,
+                        "passing_marks": 63,
+                        "is_public": true,
+                        "status": "active",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-11T16:55:39+00:00",
+                        "updated_at": "2026-05-11T16:55:39+00:00"
+                    }
+                },
+                {
+                    "id": "28",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 28,
+                        "title": "Ipsum placeat ea do",
+                        "max_attempts": 94,
+                        "current_attempts": 1,
+                        "remaining_attempts": 93,
+                        "type": "homework",
+                        "start_time": "2026-05-10T03:27:00+00:00",
+                        "end_time": "2026-05-28T23:41:00+00:00",
+                        "duration": 59,
+                        "has_activation": false,
+                        "total_marks": 13,
+                        "passing_marks": 63,
+                        "is_public": true,
+                        "status": "active",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-11T16:56:02+00:00",
+                        "updated_at": "2026-05-11T16:56:02+00:00"
+                    }
+                },
+                {
+                    "id": "29",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 29,
+                        "title": "Ipsum placeat ea do",
+                        "max_attempts": 94,
+                        "current_attempts": 0,
+                        "remaining_attempts": 94,
+                        "type": "homework",
+                        "start_time": "2026-05-10T03:27:00+00:00",
+                        "end_time": "2026-05-28T23:41:00+00:00",
+                        "duration": 59,
+                        "has_activation": false,
+                        "total_marks": 13,
+                        "passing_marks": 63,
+                        "is_public": true,
+                        "status": "active",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-11T16:56:47+00:00",
+                        "updated_at": "2026-05-11T16:56:47+00:00"
+                    }
+                },
+                {
+                    "id": "30",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 30,
+                        "title": "Ipsum placeat ea do",
+                        "max_attempts": 94,
+                        "current_attempts": 0,
+                        "remaining_attempts": 94,
+                        "type": "homework",
+                        "start_time": "2026-05-10T03:27:00+00:00",
+                        "end_time": "2026-05-28T23:41:00+00:00",
+                        "duration": 59,
+                        "has_activation": false,
+                        "total_marks": 13,
+                        "passing_marks": 63,
+                        "is_public": true,
+                        "status": "active",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-11T16:58:29+00:00",
+                        "updated_at": "2026-05-11T16:58:29+00:00"
+                    }
+                },
+                {
+                    "id": "31",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 31,
+                        "title": "Ipsum placeat ea do",
+                        "max_attempts": 94,
+                        "current_attempts": 1,
+                        "remaining_attempts": 93,
+                        "type": "homework",
+                        "start_time": "2026-05-10T03:27:00+00:00",
+                        "end_time": "2026-05-28T23:41:00+00:00",
+                        "duration": 59,
+                        "has_activation": false,
+                        "total_marks": 13,
+                        "passing_marks": 63,
+                        "is_public": true,
+                        "status": "active",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-11T17:00:36+00:00",
+                        "updated_at": "2026-05-11T17:00:36+00:00"
+                    }
+                },
+                {
+                    "id": "32",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 32,
+                        "title": "Ipsum placeat ea do",
+                        "max_attempts": 94,
+                        "current_attempts": 1,
+                        "remaining_attempts": 93,
+                        "type": "homework",
+                        "start_time": "2026-05-10T03:27:00+00:00",
+                        "end_time": "2026-05-28T23:41:00+00:00",
+                        "duration": 59,
+                        "has_activation": false,
+                        "total_marks": 13,
+                        "passing_marks": 63,
+                        "is_public": true,
+                        "status": "active",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-11T17:00:52+00:00",
+                        "updated_at": "2026-05-11T17:00:52+00:00"
+                    }
+                },
+                {
+                    "id": "33",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 33,
+                        "title": "Ipsum placeat ea do",
+                        "max_attempts": 94,
+                        "current_attempts": 1,
+                        "remaining_attempts": 93,
+                        "type": "homework",
+                        "start_time": "2026-05-10T03:27:00+00:00",
+                        "end_time": "2026-05-28T23:41:00+00:00",
+                        "duration": 59,
+                        "has_activation": false,
+                        "total_marks": 13,
+                        "passing_marks": 63,
+                        "is_public": true,
+                        "status": "active",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-11T17:01:46+00:00",
+                        "updated_at": "2026-05-11T17:01:46+00:00"
+                    }
+                },
+                {
+                    "id": "34",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 34,
+                        "title": "Ipsum placeat ea do",
+                        "max_attempts": 94,
+                        "current_attempts": 3,
+                        "remaining_attempts": 91,
+                        "type": "homework",
+                        "start_time": "2026-05-10T03:27:00+00:00",
+                        "end_time": "2026-05-28T23:41:00+00:00",
+                        "duration": 59,
+                        "has_activation": false,
+                        "total_marks": 13,
+                        "passing_marks": 63,
+                        "is_public": true,
+                        "status": "active",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-11T17:05:09+00:00",
+                        "updated_at": "2026-05-11T17:05:09+00:00"
+                    }
+                },
+                {
+                    "id": "35",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 35,
+                        "title": "Laborum error laboru",
+                        "max_attempts": 13,
+                        "current_attempts": 6,
+                        "remaining_attempts": 7,
+                        "type": "exam",
+                        "start_time": "2026-05-11T01:13:00+00:00",
+                        "end_time": "2026-05-14T10:44:00+00:00",
+                        "duration": 65,
+                        "has_activation": false,
+                        "total_marks": 68,
+                        "passing_marks": 95,
+                        "is_public": true,
+                        "status": "active",
+                        "chapter_id": 107,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-11T17:10:18+00:00",
+                        "updated_at": "2026-05-11T17:10:18+00:00"
+                    }
+                },
+                {
+                    "id": "45",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 45,
+                        "title": "اختبار على الحصة الاولى (Copy)",
+                        "max_attempts": 1,
+                        "current_attempts": 0,
+                        "remaining_attempts": 1,
+                        "type": "homework",
+                        "start_time": "2026-04-18T04:41:00+00:00",
+                        "end_time": "2026-10-19T09:41:00+00:00",
+                        "duration": 60,
+                        "has_activation": false,
+                        "total_marks": 100,
+                        "passing_marks": 60,
+                        "is_public": true,
+                        "status": "draft",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-12T20:25:59+00:00",
+                        "updated_at": "2026-05-12T20:25:59+00:00"
+                    }
+                },
+                {
+                    "id": "46",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 46,
+                        "title": "أختبر نفسك (Copy)",
+                        "max_attempts": 10,
+                        "current_attempts": 3,
+                        "remaining_attempts": 7,
+                        "type": "exam",
+                        "start_time": "2026-05-12T04:33:00+00:00",
+                        "end_time": "2026-05-16T04:33:00+00:00",
+                        "duration": 60,
+                        "has_activation": false,
+                        "total_marks": 100,
+                        "passing_marks": 60,
+                        "is_public": true,
+                        "status": "active",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-12T20:27:56+00:00",
+                        "updated_at": "2026-05-12T20:40:51+00:00"
+                    }
+                },
+                {
+                    "id": "49",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 49,
+                        "title": "Minim dignissimos of",
+                        "max_attempts": 49,
+                        "current_attempts": 0,
+                        "remaining_attempts": 49,
+                        "type": "exam",
+                        "start_time": "2026-05-13T14:58:00+00:00",
+                        "end_time": "2026-05-30T10:39:00+00:00",
+                        "duration": 33,
+                        "has_activation": false,
+                        "total_marks": 3,
+                        "passing_marks": 72,
+                        "is_public": false,
+                        "status": "active",
+                        "chapter_id": null,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-12T22:28:02+00:00",
+                        "updated_at": "2026-05-12T23:07:26+00:00"
+                    }
+                },
+                {
+                    "id": "50",
+                    "type": "quizzes",
+                    "attributes": {
+                        "id": 50,
+                        "title": "Anim vero et totam v",
+                        "max_attempts": 3,
+                        "current_attempts": 0,
+                        "remaining_attempts": 3,
+                        "type": "exam",
+                        "start_time": "2026-05-13T15:58:00+00:00",
+                        "end_time": "2026-05-29T03:14:00+00:00",
+                        "duration": 82,
+                        "has_activation": false,
+                        "total_marks": 37,
+                        "passing_marks": 80,
+                        "is_public": true,
+                        "status": "active",
+                        "chapter_id": 107,
+                        "course_id": 33,
+                        "can_view": false,
+                        "created_at": "2026-05-12T23:08:03+00:00",
+                        "updated_at": "2026-05-12T23:57:37+00:00"
+                    }
+                }
+            ],
+            "attachments": [],
+            "chapter_attachments": [
+                {
+                    "id": "72",
+                    "type": "attachments",
+                    "attributes": {
+                        "name": "Cover_Letter.pdf",
+                        "path": "https://api.learnoo.app/storage/uploads/chapters/attachments/Cover_Letter.pdf",
+                        "extension": "pdf",
+                        "size": "2714",
+                        "downloadable": false,
+                        "created_at": "2026-05-12T15:54:28+00:00"
+                    }
+                },
+                {
+                    "id": "73",
+                    "type": "attachments",
+                    "attributes": {
+                        "name": "Cover_Letter.pdf",
+                        "path": "https://api.learnoo.app/storage/uploads/chapters/attachments/Cover_Letter.pdf",
+                        "extension": "pdf",
+                        "size": "2714",
+                        "downloadable": false,
+                        "created_at": "2026-05-12T15:56:24+00:00"
+                    }
+                },
+                {
+                    "id": "74",
+                    "type": "attachments",
+                    "attributes": {
+                        "name": "Cover_Letter.pdf",
+                        "path": "https://api.learnoo.app/storage/uploads/chapters/attachments/Cover_Letter.pdf",
+                        "extension": "pdf",
+                        "size": "2714",
+                        "downloadable": false,
+                        "created_at": "2026-05-12T16:01:43+00:00"
+                    }
+                },
+                {
+                    "id": "75",
+                    "type": "attachments",
+                    "attributes": {
+                        "name": "Cover_Letter.pdf",
+                        "path": "https://api.learnoo.app/storage/uploads/chapters/attachments/Cover_Letter.pdf",
+                        "extension": "pdf",
+                        "size": "2714",
+                        "downloadable": false,
+                        "created_at": "2026-05-12T16:29:42+00:00"
+                    }
+                },
+                {
+                    "id": "83",
+                    "type": "attachments",
+                    "attributes": {
+                        "name": "Cover_Letter.pdf",
+                        "path": "https://api.learnoo.app/storage/uploads/chapters/attachments/Cover_Letter.pdf",
+                        "extension": "pdf",
+                        "size": "2714",
+                        "downloadable": false,
+                        "created_at": "2026-05-12T23:35:49+00:00"
+                    }
+                }
+            ],
+            "chapter_discussions": [],
+            "created_at": "2026-04-23 21:48:18",
+            "updated_at": "2026-04-23 21:48:18"
+        }
+    }}
