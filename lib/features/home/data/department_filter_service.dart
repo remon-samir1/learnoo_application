@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'models/department_node.dart';
 
 /// Service for filtering user departments based on hierarchy validation
@@ -297,7 +298,7 @@ class DepartmentFilterService {
         cParentId = cParentData?['id']?.toString();
       }
 
-      print('Center: $cId, parent: $cParentId, user centers: $centerIds');
+      debugPrint('Center: $cId, parent: $cParentId, user centers: $centerIds');
 
       // Center must belong to user's university and be in user's centers
       if (cId != null &&
@@ -363,21 +364,21 @@ class DepartmentFilterService {
 
   /// Debug helper: Print the hierarchy tree structure
   static void debugPrintTree(Map<String, dynamic> tree) {
-    print('=== Hierarchy Tree ===');
-    print('University ID: ${tree['universityId']}');
+    debugPrint('=== Hierarchy Tree ===');
+    debugPrint('University ID: ${tree['universityId']}');
     final centers = tree['centers'] as List<dynamic>? ?? [];
-    print('Centers count: ${centers.length}');
+    debugPrint('Centers count: ${centers.length}');
     for (final center in centers) {
       final c = center as Map<String, dynamic>;
-      print('  Center: ${c['name']} (${c['id']})');
+      debugPrint('  Center: ${c['name']} (${c['id']})');
       final faculties = c['faculties'] as List<dynamic>? ?? [];
       for (final faculty in faculties) {
         final f = faculty as Map<String, dynamic>;
         final depts = f['departments'];
         final deptCount = depts is List ? depts.length : 0;
-        print('    Faculty: ${f['name']} (${f['id']}) - $deptCount departments');
+        debugPrint('    Faculty: ${f['name']} (${f['id']}) - $deptCount departments');
       }
     }
-    print('====================');
+    debugPrint('====================');
   }
 }

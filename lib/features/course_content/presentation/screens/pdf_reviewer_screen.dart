@@ -11,6 +11,7 @@ import '../../../auth/data/auth_repository.dart';
 import '../models/pdf_annotation.dart';
 import '../managers/pdf_annotation_manager.dart';
 import '../../../../core/services/pdf_watermark_service.dart';
+import '../widgets/pdf_navigation_bar.dart';
 
 
 class PdfReviewerScreen extends StatefulWidget {
@@ -53,6 +54,12 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
 
   // Current drawing state
   List<AnnotationPoint> _currentStrokePoints = [];
+
+  /// Page position, kept in state so the navigation bar can show "3 / 24" and
+  /// enable or disable its arrows. The controller only reports these once the
+  /// document has loaded.
+  int _currentPage = 0;
+  int _pageCount = 0;
 
   // Available annotation colors
   final List<Color> _annotationColors = [
@@ -300,27 +307,29 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
     
     final result = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Unsaved Changes'),
-        content: const Text('You have unsaved annotations. What would you like to do?'),
+      builder: (dialogContext) => AlertDialog(
+        title: Text('pdf.unsaved_changes_title'.tr()),
+        content: Text('pdf.unsaved_changes_message'.tr()),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text('profile.cancel'.tr()),
           ),
           TextButton(
             onPressed: () async {
+              final navigator = Navigator.of(dialogContext);
               await _discardChanges();
-              Navigator.pop(context, true);
+              navigator.pop(true);
             },
-            child: const Text('Discard'),
+            child: Text('pdf.discard_changes'.tr()),
           ),
           TextButton(
             onPressed: () async {
+              final navigator = Navigator.of(dialogContext);
               await _autoSaveToPdf();
-              Navigator.pop(context, true);
+              navigator.pop(true);
             },
-            child: const Text('Save & Close'),
+            child: Text('pdf.save_and_close'.tr()),
           ),
         ],
       ),
@@ -563,6 +572,16 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
                     enableTextSelection: _currentAnnotationMode == AnnotationMode.none,
                     enableDocumentLinkAnnotation: true,
                     enableHyperlinkNavigation: true,
+                    onDocumentLoaded: (details) {
+                      setState(() {
+                        _pageCount = details.document.pages.count;
+                        _currentPage = _pdfViewerController.pageNumber;
+                      });
+                    },
+                    onPageChanged: (details) {
+                      setState(() => _currentPage = details.newPageNumber);
+                    },
+                    onZoomLevelChanged: (details) => setState(() {}),
                   )
                 else
                   const Center(child: Text('PDF file not available')),
@@ -633,6 +652,12 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
               ],
             ),
           ),
+          if (_localFilePath != null)
+            PdfNavigationBar(
+              controller: _pdfViewerController,
+              currentPage: _currentPage,
+              pageCount: _pageCount,
+            ),
         ],
       ),
     ));

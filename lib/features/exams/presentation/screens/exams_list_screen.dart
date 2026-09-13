@@ -1,15 +1,19 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:shimmer/shimmer.dart';
+import '../../../../core/services/student_scope.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/widgets/pagination_bar.dart';
 import '../../../auth//data/auth_repository.dart';
 import '../../../course_content/data/course_repository.dart';
+import '../../../course_content/data/chapter_repository.dart';
 import '../../data/exam_repository.dart';
 import '../../data/exam_filter_service.dart';
+import '../../domain/quiz_activation_lock.dart';
 import '../../domain/usecases/exam_access_usecase.dart';
 import '../../models/quiz_models.dart';
-import 'exam_notice_screen.dart';
 
 class ExamsListScreen extends StatefulWidget {
   const ExamsListScreen({super.key});
@@ -22,99 +26,184 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
   final ExamRepository _examRepository = ExamRepository();
   final AuthRepository _authRepository = AuthRepository();
   final CourseRepository _courseRepository = CourseRepository();
+  final ChapterRepository _chapterRepository = ChapterRepository();
   final ExamAccessUseCase _examAccessUseCase = ExamAccessUseCase();
+
   List<Quiz> _quizzes = [];
-  Map<int, int>  _remainingAttempts = {};
-  Map<int, List<QuizAttempt>> _attemptsMap = {};
+  final Map<int, int> _remainingAttempts = {};
+  final Map<int, List<QuizAttempt>> _attemptsMap = {};
   bool _isLoading = true;
   String? _errorMessage;
+
+  // Pagination & Search state
+  final TextEditingController _searchController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  Timer? _debounceTimer;
+  int _currentPage = 1;
+  int _lastPage = 1;
+  static const int _perPage = 15;
+  bool _hasNextPage = false;
+  bool _isSearching = false;
+  String _searchQuery = '';
+
+  List<dynamic> _cachedAllowedCourses = [];
+  List<dynamic> _cachedAllChapters = [];
+  StudentScope _scope = const StudentScope.empty();
 
   @override
   void initState() {
     super.initState();
-    _loadQuizzes();
+    _loadQuizzes(page: 1);
   }
 
-  Future<void> _loadQuizzes() async {
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _searchController.dispose();
+    _debounceTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadQuizzes({int page = 1}) async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
+      _currentPage = page;
     });
 
     try {
-      // Fetch all required data in parallel
-      final results = await Future.wait([
-        _examRepository.getQuizzes(),
-        _authRepository.getProfile(),
-        _courseRepository.getCourses(),
-      ]);
+      // Fetch user profile, allowed courses, and chapters once (or reuse cache)
+      if (_cachedAllowedCourses.isEmpty || _cachedAllChapters.isEmpty) {
+        final results = await Future.wait([
+          _authRepository.getProfile(),
+          _courseRepository.getCourses(),
+          StudentScopeService().load(),
+          _chapterRepository.getChapters(),
+        ]);
+
+        if (!mounted) return;
+
+        final meResult = results[0] as Map<String, dynamic>;
+        final coursesResult = results[1] as Map<String, dynamic>;
+        _scope = results[2] as StudentScope;
+        final chaptersResult = results[3] as Map<String, dynamic>;
+
+        if (meResult['success'] && coursesResult['success']) {
+          final meData = meResult['data'] as Map<String, dynamic>;
+          final allCourses = coursesResult['data'] as List<dynamic>? ?? [];
+          final allChapters = chaptersResult['success']
+              ? (chaptersResult['data'] as List<dynamic>? ?? [])
+              : <dynamic>[];
+
+          final allowedDeptIds = _getAllowedDepartmentIds(meData);
+          _cachedAllowedCourses = allCourses.where((course) {
+            final id = course['id']?.toString();
+            if (id != null && _scope.isVisible(id)) return true;
+            if (allowedDeptIds.isEmpty) return true;
+            final attrs = course['attributes'] ?? {};
+            final categoryId = attrs['category']?['data']?['id']?.toString() ??
+                attrs['department']?['data']?['id']?.toString();
+            if (categoryId == null) return false;
+            return allowedDeptIds.contains(categoryId);
+          }).toList();
+
+          _cachedAllChapters = allChapters;
+        }
+      }
+
+      final quizResult = await _examRepository.getQuizzes(
+        page: page,
+        perPage: _perPage,
+        title: _searchQuery.isNotEmpty ? _searchQuery : null,
+      );
 
       if (!mounted) return;
 
-      final quizResult = results[0];
-      final meResult = results[1];
-      final coursesResult = results[2];
-
-      if (quizResult['success'] && meResult['success'] && coursesResult['success']) {
+      if (quizResult['success']) {
         final allQuizzes = quizResult['data'] as List<Quiz>;
-        final meData = meResult['data'] as Map<String, dynamic>;
-        final allCourses = coursesResult['data'] as List<dynamic>? ?? [];
-
-        // Step 1: Get allowed department IDs from me data (same as Home Screen)
-        final allowedDeptIds = _getAllowedDepartmentIds(meData);
-
-        // Step 2: Filter courses to only those in allowed departments (same as Home Screen)
-        final allowedCourses = allowedDeptIds.isEmpty
-            ? allCourses // If no dept filter, show all
-            : allCourses.where((course) {
-                final attrs = course['attributes'] ?? {};
-                final categoryId = attrs['category']?['data']?['id']?.toString() ??
-                    attrs['department']?['data']?['id']?.toString();
-                if (categoryId == null) return false;
-                return allowedDeptIds.contains(categoryId);
-              }).toList();
-
-        // Step 3: Filter exams based on allowed courses and their chapters
         final filteredQuizzes = await ExamFilterService.filterExams(
           exams: allQuizzes,
-          allowedCourses: allowedCourses,
-          allChapters: [], // Chapters will be resolved lazily if needed
+          allowedCourses: _cachedAllowedCourses,
+          allChapters: _cachedAllChapters,
         );
 
-        setState(() {
-          _quizzes = filteredQuizzes;
-        });
+        final meta = quizResult['meta'] as Map<String, dynamic>?;
+        final lastPage = (meta?['last_page'] as num?)?.toInt() ?? 1;
+        final curPage = (meta?['current_page'] as num?)?.toInt() ?? page;
+        final hasNext = quizResult['hasNextPage'] as bool? ?? (curPage < lastPage);
 
         setState(() {
           _quizzes = filteredQuizzes;
+          _currentPage = curPage;
+          _lastPage = lastPage;
+          _hasNextPage = hasNext;
+          _isLoading = false;
+          _isSearching = false;
         });
 
-        // Initialize remaining attempts from quiz data
         for (final quiz in filteredQuizzes) {
           _remainingAttempts[quiz.quizId] = quiz.remainingAttempts;
         }
+
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            0,
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+          );
+        }
       } else {
         setState(() {
-          _errorMessage = quizResult['message'] ??
-                          meResult['message'] ??
-                          coursesResult['message'] ??
-                          'Failed to load exams';
+          _errorMessage = quizResult['message'] ?? 'Failed to load exams';
+          _isLoading = false;
+          _isSearching = false;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _errorMessage = 'Connection error: $e';
+          _isLoading = false;
+          _isSearching = false;
         });
       }
     }
+  }
 
+  void _onSearchChanged(String query) {
+    _debounceTimer?.cancel();
     setState(() {
-      _isLoading = false;
+      _isSearching = true;
+      _searchQuery = query.trim();
+    });
+
+    _debounceTimer = Timer(const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+      _loadQuizzes(page: 1);
     });
   }
 
-  /// Get allowed department IDs from me data (same logic as Home Screen)
+  void _clearSearch() {
+    _searchController.clear();
+    _debounceTimer?.cancel();
+    setState(() {
+      _searchQuery = '';
+      _isSearching = false;
+    });
+    _loadQuizzes(page: 1);
+  }
+
+  List<Quiz> get _filteredQuizzes {
+    if (_searchQuery.isEmpty) return _quizzes;
+    final q = _searchQuery.toLowerCase();
+    return _quizzes.where((quiz) {
+      final title = quiz.title.toLowerCase();
+      final chapter = (quiz.chapter?.title ?? '').toLowerCase();
+      final type = quiz.type.toLowerCase();
+      return title.contains(q) || chapter.contains(q) || type.contains(q);
+    }).toList();
+  }
+
   List<String> _getAllowedDepartmentIds(Map<String, dynamic> meData) {
     final Set<String> ids = {};
 
@@ -148,6 +237,69 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
     }
   }
 
+  Widget _buildSearchBar() {
+    return Container(
+      height: 48,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: TextField(
+        controller: _searchController,
+        onChanged: _onSearchChanged,
+        style: const TextStyle(fontSize: 14, color: Color(0xFF1F2937)),
+        decoration: InputDecoration(
+          hintText: 'exams.search_exams_hint'.tr(),
+          hintStyle: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
+          prefixIcon: const Padding(
+            padding: EdgeInsets.all(12),
+            child: FaIcon(
+              FontAwesomeIcons.magnifyingGlass,
+              color: Color(0xFF9CA3AF),
+              size: 16,
+            ),
+          ),
+          suffixIcon: _isSearching
+              ? const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Color(0xFF5A6AF0),
+                      ),
+                    ),
+                  ),
+                )
+              : _searchController.text.isNotEmpty
+                  ? GestureDetector(
+                      onTap: _clearSearch,
+                      child: const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: FaIcon(
+                          FontAwesomeIcons.xmark,
+                          color: Color(0xFF9CA3AF),
+                          size: 16,
+                        ),
+                      ),
+                    )
+                  : null,
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(vertical: 14),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -155,7 +307,7 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
       body: Stack(
         children: [
           Container(
-            height: 200,
+            height: 220,
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
@@ -171,49 +323,73 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
           SafeArea(
             child: Column(
               children: [
-                Expanded(
-                  flex: 2,
-                  child: Center(
-                    child: Text(
-                      'exams.title'.tr(),
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                  child: Column(
+                    children: [
+                      Text(
+                        'exams.title'.tr(),
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
                       ),
-                    ),
+                      const SizedBox(height: 12),
+                      _buildSearchBar(),
+                    ],
                   ),
                 ),
                 Expanded(
-                  flex: 8,
                   child: _isLoading
                       ? _buildSkeletonList()
                       : _errorMessage != null
                           ? _buildErrorView()
                           : RefreshIndicator(
-                              onRefresh: _loadQuizzes,
-                              child: _quizzes.isEmpty
+                              onRefresh: () => _loadQuizzes(page: 1),
+                              child: _filteredQuizzes.isEmpty
                                   ? LayoutBuilder(
                                       builder: (context, constraints) {
                                         return SingleChildScrollView(
-                                          physics: const AlwaysScrollableScrollPhysics(),
+                                          physics:
+                                              const AlwaysScrollableScrollPhysics(),
                                           child: ConstrainedBox(
-                                            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                                            constraints: BoxConstraints(
+                                              minHeight: constraints.maxHeight,
+                                            ),
                                             child: _buildEmptyView(),
                                           ),
                                         );
                                       },
                                     )
                                   : ListView.builder(
-                                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                                      itemCount: _quizzes.length,
+                                      controller: _scrollController,
+                                      padding: const EdgeInsets.fromLTRB(
+                                          16, 8, 16, 16),
+                                      physics:
+                                          const AlwaysScrollableScrollPhysics(),
+                                      itemCount: _filteredQuizzes.length,
                                       itemBuilder: (context, index) {
-                                        final quiz = _quizzes[index];
-                                        final remaining = _remainingAttempts[quiz.quizId] ?? quiz.maxAttempts;
-                                        return _buildQuizCard(context, quiz, remaining);
+                                        final quiz = _filteredQuizzes[index];
+                                        final remaining =
+                                            _remainingAttempts[quiz.quizId] ??
+                                                quiz.maxAttempts;
+                                        return _buildQuizCard(
+                                          context,
+                                          quiz,
+                                          remaining,
+                                        );
                                       },
                                     ),
                             ),
+                ),
+                PaginationBar(
+                  currentPage: _currentPage,
+                  lastPage: _lastPage,
+                  hasNextPage: _hasNextPage,
+                  isLoading: _isLoading,
+                  onPageChanged: (newPage) => _loadQuizzes(page: newPage),
+                  primaryColor: const Color(0xFF5A6AF0),
                 ),
               ],
             ),
@@ -342,25 +518,45 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
   }
 
   Widget _buildStatusBadge(Quiz quiz, int remainingAttempts) {
-    final status = quiz.getStatus(remainingAttempts);
-    final text = quiz.getStatusTextKey(status).tr();
-    Color bgColor;
-    Color textColor;
+    // Classified through the shared gate rather than time alone, so an exam
+    // that needs an activation code is never badged "Available Now".
+    final bucket = classifyQuiz(
+      {'attributes': quiz.attributes},
+      _scope.enrolledCourseIds,
+    );
 
-    switch (status) {
-      case QuizStatus.expired:
+    final String text;
+    final Color bgColor;
+    final Color textColor;
+
+    switch (bucket) {
+      case QuizBucket.expired:
+        text = 'exams.status_expired'.tr();
         bgColor = const Color(0xFFF5F5F5);
         textColor = AppColors.textGray;
         break;
-      case QuizStatus.noAttempts:
-        bgColor = const Color(0xFFFFF0F0);
-        textColor = const Color(0xFFFF4B4B);
+      case QuizBucket.completed:
+        text = 'exams.status_completed'.tr();
+        bgColor = const Color(0xFFEFF6FF);
+        textColor = const Color(0xFF2563EB);
         break;
-      case QuizStatus.available:
+      case QuizBucket.locked:
+        text = 'exams.status_locked'.tr();
+        bgColor = const Color(0xFFFFF7ED);
+        textColor = const Color(0xFF92400E);
+        break;
+      case QuizBucket.courseNotEnrolled:
+        text = 'exams.status_course_locked'.tr();
+        bgColor = const Color(0xFFFFF7ED);
+        textColor = const Color(0xFF92400E);
+        break;
+      case QuizBucket.available:
+        text = 'exams.status_available'.tr();
         bgColor = const Color(0xFFE6F7F0);
         textColor = const Color(0xFF27AE60);
         break;
-      case QuizStatus.upcoming:
+      case QuizBucket.upcoming:
+        text = 'exams.status_upcoming'.tr();
         bgColor = const Color(0xFFFFF4E6);
         textColor = const Color(0xFFF2994A);
         break;
@@ -389,6 +585,7 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
             await _examAccessUseCase.handleExamAccess(
               context: context,
               quiz: quiz,
+              enrolledCourseIds: _scope.enrolledCourseIds,
             );
             // Refresh attempts when returning
             if (mounted) {

@@ -16,7 +16,6 @@ import '../../../exams/data/exam_filter_service.dart';
 import '../../../exams/domain/usecases/exam_access_usecase.dart';
 import '../../../exams/models/quiz_models.dart';
 import 'course_detail_screen.dart';
-import '../../../exams/presentation/screens/quiz_screen.dart';
 import 'pdf_reviewer_screen.dart';
 import 'unlock_material_screen.dart';
 import 'pdf_viewer_screen.dart';
@@ -25,12 +24,14 @@ import '../../../community/data/models/post_model.dart';
 import '../../../community/data/models/social_link_model.dart';
 import '../../../community/presentation/screens/create_post_screen.dart';
 import '../../services/attachment_permission_service.dart';
+import '../../../home/data/department_repository.dart';
 
 class SubjectDetailScreen extends StatefulWidget {
   final String subjectId;
   final String subjectTitle;
   final String? subjectImage;
   final String subtitle;
+  final List<dynamic>? initialCourses;
 
   const SubjectDetailScreen({
     super.key,
@@ -38,6 +39,7 @@ class SubjectDetailScreen extends StatefulWidget {
     required this.subjectTitle,
     this.subjectImage,
     this.subtitle = 'Course Content',
+    this.initialCourses,
   });
 
   @override
@@ -97,7 +99,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
     try {
       // Fetch all exams and chapters for this department
       final results = await Future.wait([
-        _examRepository.getQuizzes(),
+        _examRepository.getQuizzes(perPage: 500),
         _chapterRepository.getChapters(),
       ]);
 
@@ -158,6 +160,14 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
       return;
     }
 
+    if (widget.initialCourses != null && widget.initialCourses!.isNotEmpty) {
+      setState(() {
+        _courses = List.from(widget.initialCourses!);
+        _isLoadingCourses = false;
+      });
+      return;
+    }
+
     setState(() => _isLoadingCourses = true);
     try {
       final categoryId = int.tryParse(widget.subjectId);
@@ -165,13 +175,61 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
         categoryId: categoryId,
         include: 'attachments',
       );
-      if (result['success'] && mounted) {
+      List<dynamic> fetchedCourses = [];
+      if (result['success'] && result['data'] is List) {
+        fetchedCourses = List<dynamic>.from(result['data']);
+      }
+
+      // Fallback: If /v1/course?category_id= returned empty, extract embedded courses from department
+      if (fetchedCourses.isEmpty) {
+        final deptRepo = DepartmentRepository();
+        final deptResult = await deptRepo.getDepartments();
+        if (deptResult['success'] && deptResult['data'] is List) {
+          final allDepts = deptResult['data'] as List<dynamic>;
+
+          Map<String, dynamic>? findDeptRecursively(List<dynamic> list, String targetId) {
+            for (final item in list) {
+              if (item is Map) {
+                final id = item['id']?.toString() ??
+                    (item['data'] is Map ? item['data']['id']?.toString() : null);
+                if (id == targetId) return Map<String, dynamic>.from(item);
+
+                final attrs = item['attributes'];
+                if (attrs is Map) {
+                  final children = attrs['childrens'] ?? attrs['children'];
+                  if (children is List) {
+                    final found = findDeptRecursively(children, targetId);
+                    if (found != null) return found;
+                  }
+                }
+              }
+            }
+            return null;
+          }
+
+          final matchingDept = findDeptRecursively(allDepts, widget.subjectId);
+          if (matchingDept != null) {
+            final attrs = matchingDept['attributes'] is Map
+                ? matchingDept['attributes'] as Map
+                : matchingDept;
+            final rawCourses = attrs['courses'];
+            final coursesList = rawCourses is List
+                ? rawCourses
+                : (rawCourses is Map && rawCourses['data'] is List
+                    ? rawCourses['data'] as List
+                    : null);
+            if (coursesList != null && coursesList.isNotEmpty) {
+              fetchedCourses = List<dynamic>.from(coursesList);
+            }
+          }
+        }
+      }
+
+      if (mounted) {
         setState(() {
-          _courses = result['data'] ?? [];
+          _courses = fetchedCourses;
           _isLoadingCourses = false;
         });
-      } else if (mounted) {
-        setState(() => _isLoadingCourses = false);
       }
     } catch (e) {
       if (mounted) {

@@ -8,18 +8,22 @@ import 'package:flutter_linkify/flutter_linkify.dart';
 import '../../../../core/widgets/video_thumbnail_widget.dart';
 import '../../../../core/network/api_constants.dart';
 import '../../../../core/theme/app_colors.dart';
-import '../../data/lecture_repository.dart';
-import '../../data/live_room_repository.dart';
 import '../../data/models/live_room.dart' as lr;
+import '../../../../core/services/student_scope.dart';
+import '../../../../core/utils/coerce.dart';
+import '../../domain/chapter_access.dart';
 import '../../services/attachment_permission_service.dart';
 import '../../data/course_repository.dart';
+import '../../data/library_repository.dart';
+import '../../../notes/presentation/widgets/note_attachment_preview.dart';
+import '../../../exams/domain/quiz_activation_lock.dart';
 import '../../../exams/domain/usecases/exam_access_usecase.dart';
 import '../../../exams/models/quiz_models.dart';
-import '../../../exams/presentation/screens/quiz_screen.dart';
 import '../../../community/data/repositories/community_repository.dart';
 import '../../../community/data/models/post_model.dart';
 import '../../../community/data/models/social_link_model.dart';
 import '../../../community/presentation/screens/create_post_screen.dart';
+import '../../../community/presentation/widgets/post_comments_section.dart';
 import 'lecture_detail_screen.dart';
 import 'pdf_reviewer_screen.dart';
 
@@ -45,10 +49,9 @@ class CourseDetailScreen extends StatefulWidget {
 
 class _CourseDetailScreenState extends State<CourseDetailScreen>
     with SingleTickerProviderStateMixin {
-  final _lectureRepository = LectureRepository();
   final _courseRepository = CourseRepository();
-  final _liveRoomRepository = LiveRoomRepository();
   final _communityRepository = CommunityRepository();
+  final _libraryRepository = LibraryRepository();
   late TabController _tabController;
 
   bool _isLoadingLectures = true;
@@ -61,195 +64,280 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
   List<lr.LiveRoom> _liveRooms = [];
   List<Post> _posts = [];
   List<SocialLink> _socialLinks = [];
+
+  /// Notes and library materials for this course — the web's Notes and Library
+  /// tabs, which the app's four-tab bar was missing entirely.
+  bool _isLoadingNotes = true;
+  bool _isLoadingLibrary = true;
+  List<dynamic> _notes = [];
+  List<dynamic> _libraryItems = [];
+  String? _notesErrorMessage;
+  String? _libraryErrorMessage;
+
+  /// Signed-in student's id, so their own comments get a delete button.
+  String? _currentUserId;
+
+  /// Which courses the student activated. The exam gate needs it: an exam
+  /// bundled with a course (`is_public: "included"`) unlocks through the
+  /// course rather than through a code.
+  StudentScope _scope = const StudentScope.empty();
   List<bool> _isExpanded = [];
-  String _qaFilter = 'All';
   String? _communityErrorMessage;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    // Six tabs, in the same order as the web: lectures, exams, notes, live,
+    // community, library.
+    _tabController = TabController(length: 6, vsync: this);
     _loadData();
+    _loadCurrentUserId();
+    _loadScope();
   }
 
   Future<void> _loadData() async {
-    await Future.wait([_loadLectures(), _loadExams()]);
-    await Future.wait([
-      _loadLiveRooms(),
-      _loadCommunityPosts(),
-      _loadSocialLinks(),
-    ]);
+    await _loadCourseDetails();
+    await _loadCourseLibrary();
   }
 
-  Future<void> _loadExams() async {
-    setState(() => _isLoadingExams = true);
-    try {
-      final courseResult = await _courseRepository.getCourseById(
-        widget.courseId,
-      );
-      if (!mounted) return;
+  Future<void> _loadCurrentUserId() async {
+    final id = await _communityRepository.currentUserId();
+    if (mounted) setState(() => _currentUserId = id);
+  }
 
-      if (courseResult['success']) {
-        final courseData = courseResult['data'] as Map<String, dynamic>? ?? {};
-        final attributes =
-            courseData['attributes'] as Map<String, dynamic>? ?? {};
+  Future<void> _loadScope() async {
+    try {
+      final scope = await StudentScopeService().load();
+      if (mounted) setState(() => _scope = scope);
+    } catch (_) {
+      // An unavailable scope just means the activation gate falls back to
+      // treating bundled exams as locked, which is the safe direction.
+    }
+  }
+
+  Future<void> _loadCourseDetails() async {
+    if (widget.courseId.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _isLoadingLectures = false;
+          _isLoadingExams = false;
+          _isLoadingSocialLinks = false;
+          _isLoadingCommunity = false;
+          _isLoadingLiveRooms = false;
+          _isLoadingNotes = false;
+        });
+      }
+      return;
+    }
+
+    setState(() {
+      _isLoadingLectures = true;
+      _isLoadingExams = true;
+      _isLoadingSocialLinks = true;
+      _isLoadingCommunity = true;
+      _isLoadingLiveRooms = true;
+      _isLoadingNotes = true;
+      _communityErrorMessage = null;
+      _notesErrorMessage = null;
+    });
+
+    try {
+      final courseResult =
+          await _courseRepository.getCourseById(widget.courseId);
+
+      if (courseResult['success'] == true &&
+          courseResult['data'] != null &&
+          mounted) {
+        final rawData = courseResult['data'];
+        final Map<String, dynamic> courseData = rawData is Map
+            ? Map<String, dynamic>.from(rawData)
+            : <String, dynamic>{};
+        final Map<String, dynamic> attributes = courseData['attributes'] is Map
+            ? Map<String, dynamic>.from(courseData['attributes'])
+            : <String, dynamic>{};
+
+        // 1. Lectures and Chapters from course attributes ONLY
+        final rawLectures = attributes['lectures'];
+        List<dynamic> lecturesList = [];
+        if (rawLectures is List) {
+          lecturesList = List<dynamic>.from(rawLectures);
+        }
+
+        // Attach chapter_attachments to chapters if missing in chapter payload
+        final rawChapterAttachments = attributes['chapter_attachments'];
+        if (rawChapterAttachments is List &&
+            rawChapterAttachments.isNotEmpty) {
+          for (var lec in lecturesList) {
+            if (lec is Map) {
+              final lecAttrs = lec['attributes'] is Map
+                  ? lec['attributes'] as Map
+                  : lec;
+              final chs = lecAttrs['chapters'];
+              if (chs is List) {
+                for (var ch in chs) {
+                  if (ch is Map) {
+                    final chAttrs = ch['attributes'] is Map
+                        ? ch['attributes'] as Map
+                        : ch;
+                    final chAtts = chAttrs['attachments'];
+                    if (chAtts == null ||
+                        (chAtts is List && chAtts.isEmpty)) {
+                      final chId = ch['id']?.toString();
+                      final matched = rawChapterAttachments.where((ca) {
+                        final caAttrs = ca is Map && ca['attributes'] is Map
+                            ? ca['attributes'] as Map
+                            : (ca is Map ? ca : {});
+                        return caAttrs['chapter_id']?.toString() == chId;
+                      }).toList();
+                      if (matched.isNotEmpty) {
+                        chAttrs['attachments'] = matched;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // 2. Exams from course attributes ONLY
+        final Map<String, Quiz> mergedExams = {};
         final rawExams = attributes['exams'];
         final examsList = rawExams is List
             ? rawExams
-            : rawExams is Map<String, dynamic> && rawExams['data'] is List
+            : rawExams is Map && rawExams['data'] is List
             ? rawExams['data'] as List<dynamic>
             : <dynamic>[];
 
-        final courseExams = examsList
-            .whereType<Map<String, dynamic>>()
-            .map((examJson) => Quiz.fromJson(examJson))
-            .toList();
+        for (final examItem in examsList) {
+          if (examItem is Map) {
+            try {
+              final q = Quiz.fromJson(Map<String, dynamic>.from(examItem));
+              mergedExams[q.id] = q;
+            } catch (e) {
+              debugPrint(
+                '[CourseDetailScreen] Error parsing exam from course: $e',
+              );
+            }
+          }
+        }
+
+        // 3. Social links from course attributes ONLY
+        final rawSocialLinks =
+            attributes['social-links'] ?? attributes['social_links'];
+        List<SocialLink> socialLinksList = [];
+        if (rawSocialLinks is List) {
+          for (final item in rawSocialLinks) {
+            if (item is Map) {
+              try {
+                socialLinksList.add(
+                  SocialLink.fromJson(Map<String, dynamic>.from(item)),
+                );
+              } catch (e) {
+                debugPrint(
+                  '[CourseDetailScreen] Error parsing social link: $e',
+                );
+              }
+            }
+          }
+        }
+
+        // 4. Community Posts from course attributes ONLY
+        final rawPosts = attributes['posts'];
+        List<Post> postsList = [];
+        if (rawPosts is List) {
+          for (final item in rawPosts) {
+            if (item is Map) {
+              try {
+                postsList.add(
+                  Post.fromJson(Map<String, dynamic>.from(item)),
+                );
+              } catch (e) {
+                debugPrint(
+                  '[CourseDetailScreen] Error parsing post from course: $e',
+                );
+              }
+            }
+          }
+        }
+
+        // 5. Live rooms from course attributes ONLY
+        final rawLiveRooms =
+            attributes['live_rooms'] ?? attributes['live-rooms'];
+        List<lr.LiveRoom> liveRoomsList = [];
+        if (rawLiveRooms is List) {
+          for (final item in rawLiveRooms) {
+            if (item is Map) {
+              try {
+                liveRoomsList.add(
+                  lr.LiveRoom.fromJson(Map<String, dynamic>.from(item)),
+                );
+              } catch (e) {
+                debugPrint(
+                  '[CourseDetailScreen] Error parsing live room from course: $e',
+                );
+              }
+            }
+          }
+        }
+
+        // 6. Notes from course attributes ONLY
+        final rawNotes = attributes['notes'];
+        List<dynamic> notesList = [];
+        if (rawNotes is List) {
+          notesList = List<dynamic>.from(rawNotes);
+        }
 
         setState(() {
-          _exams = courseExams;
+          _lectures = lecturesList;
+          _isExpanded = List<bool>.filled(lecturesList.length, false);
+          _exams = mergedExams.values.toList();
+          _socialLinks = socialLinksList;
+          _posts = postsList;
+          _liveRooms = liveRoomsList;
+          _notes = notesList;
+          _isLoadingLectures = false;
           _isLoadingExams = false;
+          _isLoadingSocialLinks = false;
+          _isLoadingCommunity = false;
+          _isLoadingLiveRooms = false;
+          _isLoadingNotes = false;
         });
-      } else if (mounted) {
-        setState(() => _isLoadingExams = false);
+      } else {
+        if (mounted) {
+          setState(() {
+            _isLoadingLectures = false;
+            _isLoadingExams = false;
+            _isLoadingSocialLinks = false;
+            _isLoadingCommunity = false;
+            _isLoadingLiveRooms = false;
+            _isLoadingNotes = false;
+          });
+        }
       }
     } catch (e) {
+      debugPrint('[CourseDetailScreen] _loadCourseDetails error: $e');
       if (mounted) {
-        setState(() => _isLoadingExams = false);
+        setState(() {
+          _isLoadingLectures = false;
+          _isLoadingExams = false;
+          _isLoadingSocialLinks = false;
+          _isLoadingCommunity = false;
+          _isLoadingLiveRooms = false;
+          _isLoadingNotes = false;
+        });
       }
     }
   }
+
+  Future<void> _loadLectures() => _loadCourseDetails();
+  Future<void> _loadSocialLinks() => _loadCourseDetails();
+  Future<void> _loadCommunityPosts() => _loadCourseDetails();
 
   @override
   void dispose() {
     _tabController.dispose();
     super.dispose();
-  }
-
-  Future<void> _loadLectures() async {
-    if (widget.courseId.isEmpty) {
-      setState(() => _isLoadingLectures = false);
-      return;
-    }
-
-    setState(() => _isLoadingLectures = true);
-    try {
-      final courseId = int.tryParse(widget.courseId);
-      final result = await _lectureRepository.getLectures(courseId: courseId);
-      if (result['success'] && mounted) {
-        final allLectures = result['data'] as List<dynamic>? ?? [];
-        final filteredLectures = allLectures.where((lecture) {
-          final attributes = lecture['attributes'] ?? {};
-          final lectureCourseId = attributes['course_id']?.toString();
-          return lectureCourseId == widget.courseId;
-        }).toList();
-
-        setState(() {
-          _lectures = filteredLectures;
-          _isExpanded = List<bool>.filled(filteredLectures.length, false);
-          _isLoadingLectures = false;
-        });
-      } else if (mounted) {
-        setState(() => _isLoadingLectures = false);
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoadingLectures = false);
-      }
-    }
-  }
-
-  Future<void> _loadLiveRooms() async {
-    if (!mounted) return;
-    setState(() => _isLoadingLiveRooms = true);
-    try {
-      final result = await _liveRoomRepository.getLiveRooms();
-      if (result['success'] && mounted) {
-        final allLiveRooms = result['data'] as List<lr.LiveRoom>;
-        final courseIdInt = int.tryParse(widget.courseId);
-        setState(() {
-          _liveRooms = allLiveRooms
-              .where((room) => room.courseId == courseIdInt)
-              .toList();
-          _isLoadingLiveRooms = false;
-        });
-      } else if (mounted) {
-        setState(() => _isLoadingLiveRooms = false);
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoadingLiveRooms = false);
-      }
-    }
-  }
-
-  Future<void> _loadCommunityPosts() async {
-    if (!mounted) return;
-    setState(() {
-      _isLoadingCommunity = true;
-      _communityErrorMessage = null;
-    });
-
-    try {
-      final courseIdInt = int.tryParse(widget.courseId);
-      if (courseIdInt == null) {
-        setState(() {
-          _posts = [];
-          _isLoadingCommunity = false;
-        });
-        return;
-      }
-
-      final result = await _communityRepository.getPosts(courseId: courseIdInt);
-      if (result['success'] && result['data'] != null && mounted) {
-        final posts = result['data'] as List<Post>;
-        setState(() {
-          _posts = posts;
-          _isLoadingCommunity = false;
-        });
-      } else if (mounted) {
-        setState(() {
-          _posts = [];
-          _isLoadingCommunity = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _communityErrorMessage = 'Failed to load community posts';
-          _isLoadingCommunity = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _loadSocialLinks() async {
-    if (!mounted) return;
-    setState(() => _isLoadingSocialLinks = true);
-
-    try {
-      final result = await _communityRepository.getSocialLinks();
-      if (result['success'] && mounted) {
-        final allLinks = result['data'] as List<SocialLink>;
-        final courseIdInt = int.tryParse(widget.courseId);
-
-        final filteredLinks = allLinks.where((link) {
-          return link.attributes.courses.any(
-            (course) => course.id == widget.courseId,
-          );
-        }).toList();
-
-        setState(() {
-          _socialLinks = filteredLinks;
-          _isLoadingSocialLinks = false;
-        });
-      } else if (mounted) {
-        setState(() => _isLoadingSocialLinks = false);
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoadingSocialLinks = false);
-      }
-    }
   }
 
   Future<void> _handleReaction(Post post, String reactionType) async {
@@ -365,20 +453,35 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
     final chapterId = chapter['id']?.toString() ?? '';
     final chapterTitle =
         chapterAttrs['title']?.toString() ?? 'course.untitled_chapter'.tr();
-    final isLocked = chapterAttrs['is_locked'] as bool? ?? false;
-    final isActivated = chapterAttrs['is_activated'] as bool? ?? false;
-    final isFreePreview = chapterAttrs['is_free_preview'] as bool? ?? false;
+    final isLocked = coerceFlagOrNull(chapterAttrs['is_locked']) == true;
+    final isActivated = coerceFlagOrNull(chapterAttrs['is_activated']) == true;
+    final isFreePreview = coerceFlag(chapterAttrs['is_free_preview']);
     final isFreePreviewAttachment =
-        chapterAttrs['is_free_preview_attachment'] as bool? ?? false;
-    final maxViews =
-        int.tryParse(chapterAttrs['max_views']?.toString() ?? '') ?? 0;
+        coerceFlag(chapterAttrs['is_free_preview_attachment']);
+    final maxViews = chapterMaxViews(chapter) ?? 0;
 
-    // Find first PDF attachment
-    final pdfAttachment = attachments.firstWhere((att) {
-      final ext =
-          att['attributes']?['extension']?.toString().toLowerCase() ?? '';
-      return ext == 'pdf';
-    }, orElse: () => null);
+    // First PDF attachment, matched on extension or a `.pdf` path so a row
+    // with a missing `extension` field is still found.
+    final pdfAttachments = chapterPdfAttachments(chapter);
+    dynamic pdfAttachment = pdfAttachments.isEmpty
+        ? null
+        : pdfAttachments.first;
+
+    if (pdfAttachment == null && attachments.isNotEmpty) {
+      for (final att in attachments) {
+        if (att is Map) {
+          final attrs = att['attributes'] is Map ? att['attributes'] as Map : att;
+          final ext = coerceString(attrs['extension'])?.toLowerCase().trim() ?? '';
+          final path = coerceString(attrs['path'])?.toLowerCase() ?? '';
+          final name = coerceString(attrs['name'])?.toLowerCase() ?? '';
+          if (ext == 'pdf' || path.endsWith('.pdf') || path.contains('.pdf') || name.endsWith('.pdf')) {
+            pdfAttachment = att;
+            break;
+          }
+        }
+      }
+      pdfAttachment ??= attachments.first;
+    }
 
     if (pdfAttachment == null) {
       ScaffoldMessenger.of(
@@ -387,8 +490,11 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
       return;
     }
 
-    final attachmentAttrs = pdfAttachment['attributes'] ?? {};
-    final fileIsLocked = attachmentAttrs['is_locked'] as bool? ?? false;
+    final attachmentAttrs = (pdfAttachment is Map && pdfAttachment['attributes'] is Map)
+        ? pdfAttachment['attributes'] as Map
+        : (pdfAttachment is Map ? pdfAttachment : const <String, dynamic>{});
+    final fileIsLocked =
+        coerceFlagOrNull(attachmentAttrs['is_locked']) == true;
     final pdfPath = attachmentAttrs['path']?.toString() ?? '';
     final pdfName = attachmentAttrs['name']?.toString() ?? chapterTitle;
 
@@ -400,7 +506,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
       chapterIsActivated: isActivated,
       chapterIsFreePreview: isFreePreview,
       chapterIsFreePreviewAttachment: isFreePreviewAttachment,
-      currentViews: 0, // TODO: Track current views if needed
+      currentViews: chapterCurrentViews(chapter),
       maxViews: maxViews,
     );
 
@@ -679,8 +785,10 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                     ? _buildLecturesSkeleton()
                     : _buildLecturesTab(),
                 _buildExamsTab(),
+                _buildNotesTab(),
                 _buildLiveTab(),
                 _buildCommunityTab(),
+                _buildLibraryTab(),
               ],
             ),
           ),
@@ -696,9 +804,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
           height: 320,
           width: double.infinity,
           child: CachedNetworkImage(
-            imageUrl: widget.thumbnail.isNotEmpty
-                ? widget.thumbnail
-                : 'https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=800',
+            imageUrl: widget.thumbnail,
             fit: BoxFit.cover,
             memCacheWidth: 800,
             memCacheHeight: 640,
@@ -815,29 +921,348 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
     );
   }
 
- Widget _buildTabBar() {
-  return Container(
-    decoration: const BoxDecoration(
-      border: Border(bottom: BorderSide(color: Color(0xFFF1F1F1))),
-    ),
-    child: TabBar(
-      controller: _tabController,
-      labelColor: const Color(0xFF3451E5),
-      unselectedLabelColor: Colors.grey,
-      indicatorColor: const Color(0xFF3451E5),
-      indicatorWeight: 3,
-      indicatorPadding: EdgeInsets.zero,
-      isScrollable: true,                  
-      tabAlignment: TabAlignment.start,     
-      tabs: [
-        Tab(text: 'course.lectures_and_pdf'.tr()),
-        Tab(text: 'course.exams'.tr()),
-        Tab(text: 'course.live'.tr()),
-        Tab(text: 'course.community'.tr()),
-      ],
-    ),
-  );
-}
+  // -----------------------------------------------------------------------
+  // Notes tab — the web's `StudentCourseNotesTab`.
+  // -----------------------------------------------------------------------
+
+  Widget _buildNotesTab() {
+    if (_isLoadingNotes) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_notesErrorMessage != null) {
+      return _buildTabMessage(_notesErrorMessage!, isError: true);
+    }
+
+    if (_notes.isEmpty) {
+      return _buildTabMessage('course.notes_empty'.tr());
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(20),
+      itemCount: _notes.length,
+      itemBuilder: (context, index) => _buildCourseNoteCard(_notes[index]),
+    );
+  }
+
+  Widget _buildCourseNoteCard(dynamic note) {
+    final attrs = note is Map ? (note['attributes'] ?? note) : const {};
+    final title = (attrs is Map ? attrs['title'] : null)?.toString().trim() ?? '';
+    final content =
+        (attrs is Map ? attrs['content'] : null)?.toString().trim() ?? '';
+    final linked =
+        (attrs is Map ? attrs['linked_lecture'] : null)?.toString().trim() ?? '';
+    final attachment = attrs is Map ? attrs['attachment'] : null;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title.isEmpty ? 'course.untitled_note'.tr() : title,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+          if (linked.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              linked,
+              style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+            ),
+          ],
+          if (content.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              content,
+              style: const TextStyle(
+                fontSize: 13,
+                height: 1.6,
+                color: Color(0xFF475569),
+              ),
+            ),
+          ],
+          if (attachment is Map) ...[
+            const SizedBox(height: 12),
+            NoteAttachmentPreview(attachment: Map<String, dynamic>.from(attachment)),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // Library tab — the web's `StudentCourseLibraryTab`.
+  // -----------------------------------------------------------------------
+
+  Future<void> _loadCourseLibrary() async {
+    setState(() => _isLoadingLibrary = true);
+    try {
+      final courseIdInt = int.tryParse(widget.courseId);
+      final result = await _libraryRepository.getLibraries(courseId: courseIdInt);
+      if (!mounted) return;
+
+      if (result['success'] == true) {
+        final all = (result['data'] as List?) ?? const [];
+        setState(() {
+          _libraryItems = all.where((item) {
+            final attrs = item is Map ? (item['attributes'] ?? item) : null;
+            if (attrs is! Map) return false;
+            // The web hides unpublished materials.
+            if (attrs['is_publish'] == false) return false;
+            if (courseIdInt == null) return true;
+            final id = attrs['course_id'];
+            return id != null && id.toString() == widget.courseId;
+          }).toList();
+          _isLoadingLibrary = false;
+        });
+      } else {
+        setState(() {
+          _libraryErrorMessage = result['message']?.toString();
+          _isLoadingLibrary = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoadingLibrary = false);
+    }
+  }
+
+  Widget _buildLibraryTab() {
+    if (_isLoadingLibrary) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_libraryErrorMessage != null) {
+      return _buildTabMessage(_libraryErrorMessage!, isError: true);
+    }
+
+    if (_libraryItems.isEmpty) {
+      return _buildTabMessage('course.library_empty'.tr());
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(20),
+      itemCount: _libraryItems.length,
+      itemBuilder: (context, index) => _buildLibraryItemCard(_libraryItems[index]),
+    );
+  }
+
+  Widget _buildLibraryItemCard(dynamic item) {
+    final attrs = item is Map ? (item['attributes'] ?? item) : const {};
+    final map = attrs is Map ? attrs : const {};
+    final title = map['title']?.toString() ?? '';
+    final description = map['description']?.toString() ?? '';
+    final locked = map['is_locked'] == true;
+    final cover = map['cover_image']?.toString() ?? '';
+    final price = map['price']?.toString() ?? '0';
+    final attachments = map['attachments'] is List
+        ? (map['attachments'] as List)
+        : const [];
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (cover.isNotEmpty)
+            ClipRRect(
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(16)),
+              child: CachedNetworkImage(
+                imageUrl: cover,
+                height: 140,
+                width: double.infinity,
+                fit: BoxFit.cover,
+                errorWidget: (context, url, error) => const SizedBox.shrink(),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      locked ? Icons.lock_outline : Icons.lock_open_outlined,
+                      size: 18,
+                      color: locked
+                          ? const Color(0xFFF97316)
+                          : const Color(0xFF10B981),
+                    ),
+                  ],
+                ),
+                if (description.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    description,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      height: 1.6,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                Text(
+                  '${'course.price'.tr()}: $price',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF475569),
+                  ),
+                ),
+                if (attachments.isEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'course.no_attachments'.tr(),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF94A3B8),
+                    ),
+                  ),
+                ] else
+                  ...attachments.whereType<Map>().map((att) {
+                    final name = att['name']?.toString() ?? '';
+                    final url = att['url']?.toString() ?? '';
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: InkWell(
+                        onTap: locked || url.isEmpty
+                            ? null
+                            : () => launchUrl(
+                                  Uri.parse(url),
+                                  mode: LaunchMode.externalApplication,
+                                ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              locked
+                                  ? Icons.lock_outline
+                                  : Icons.download_outlined,
+                              size: 16,
+                              color: locked
+                                  ? const Color(0xFF94A3B8)
+                                  : AppColors.primaryBlue,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                name,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: locked
+                                      ? const Color(0xFF94A3B8)
+                                      : AppColors.primaryBlue,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Centred empty / error text shared by the two new tabs.
+  Widget _buildTabMessage(String message, {bool isError = false}) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 14,
+            color: isError ? Colors.red : const Color(0xFF64748B),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTabBar() {
+    return Container(
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFFF1F1F1))),
+      ),
+      child: TabBar(
+        controller: _tabController,
+        labelColor: const Color(0xFF3451E5),
+        unselectedLabelColor: Colors.grey,
+        indicatorColor: const Color(0xFF3451E5),
+        indicatorWeight: 3,
+        indicatorPadding: EdgeInsets.zero,
+        isScrollable: true,
+        tabAlignment: TabAlignment.start,
+        tabs: [
+          Tab(
+            text: _lectures.isNotEmpty
+                ? '${'course.lectures_and_pdf'.tr()} (${_lectures.length})'
+                : 'course.lectures_and_pdf'.tr(),
+          ),
+          Tab(
+            text: _exams.isNotEmpty
+                ? '${'course.exams'.tr()} (${_exams.length})'
+                : 'course.exams'.tr(),
+          ),
+          Tab(
+            text: _notes.isNotEmpty
+                ? '${'course.notes'.tr()} (${_notes.length})'
+                : 'course.notes'.tr(),
+          ),
+          Tab(
+            text: _liveRooms.isNotEmpty
+                ? '${'course.live'.tr()} (${_liveRooms.length})'
+                : 'course.live'.tr(),
+          ),
+          Tab(
+            text: (_socialLinks.isNotEmpty || _posts.isNotEmpty)
+                ? '${'course.community'.tr()} (${_socialLinks.length + _posts.length})'
+                : 'course.community'.tr(),
+          ),
+          Tab(
+            text: _libraryItems.isNotEmpty
+                ? '${'course.library'.tr()} (${_libraryItems.length})'
+                : 'course.library'.tr(),
+          ),
+        ],
+      ),
+    );
+  }
   Widget _buildLecturesSkeleton() {
     return ListView.builder(
       padding: const EdgeInsets.all(20),
@@ -871,7 +1296,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
   }
 
   Widget _buildLecturesTab() {
-    if (_lectures.isEmpty) {
+    if (_lectures.isEmpty && _exams.isEmpty && _socialLinks.isEmpty) {
       return Center(
         child: Text(
           'course.no_lectures_available'.tr(),
@@ -880,22 +1305,54 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
       );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(20),
-      itemCount: _lectures.length,
-      itemBuilder: (context, index) {
-        final lecture = _lectures[index];
-        final attributes = lecture['attributes'] ?? {};
-        final lectureTitle =
-            attributes['title']?.toString() ?? 'course.untitled_lecture'.tr();
+    final activeSocialLinks =
+        _socialLinks.where((link) => link.attributes.status).toList();
 
-        return Column(
-          children: [
-            _buildChapterItem(index, lectureTitle, lecture),
-            if (index < _lectures.length - 1) const SizedBox(height: 20),
-          ],
-        );
-      },
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        if (activeSocialLinks.isNotEmpty) ...[
+          _buildLecturesSocialLinksBanner(activeSocialLinks),
+          const SizedBox(height: 20),
+        ],
+        if (_lectures.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF9FAFB),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: Center(
+              child: Text(
+                'course.no_lectures_available'.tr(),
+                style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
+              ),
+            ),
+          )
+        else
+          ..._lectures.asMap().entries.map((entry) {
+            final index = entry.key;
+            final lecture = entry.value;
+            final attributes = lecture['attributes'] ?? {};
+            final lectureTitle =
+                attributes['title']?.toString() ?? 'course.untitled_lecture'.tr();
+
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: (index < _lectures.length - 1 || _exams.isNotEmpty)
+                    ? 20
+                    : 0,
+              ),
+              child: _buildChapterItem(index, lectureTitle, lecture),
+            );
+          }),
+        if (_exams.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _buildCourseExamsSectionInLecturesTab(),
+        ],
+        const SizedBox(height: 40),
+      ],
     );
   }
 
@@ -1030,17 +1487,19 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                         (rawVideo == null || rawVideo.toString() == 'null')
                         ? ''
                         : rawVideo.toString();
+                    // Read every flag through the shared helpers: the API sends
+                    // 1 / "1" as often as true, which the old `as bool?` casts
+                    // silently turned into false.
                     final isLocked =
-                        chapterAttrs['is_locked'] as bool? ?? false;
+                        coerceFlagOrNull(chapterAttrs['is_locked']) == true;
                     final isFreePreview =
-                        chapterAttrs['is_free_preview'] as bool? ?? false;
+                        coerceFlag(chapterAttrs['is_free_preview']);
                     final canWatch =
-                        chapterAttrs['can_watch'] as bool? ?? false;
+                        coerceCanWatchExplicitTrue(chapterAttrs['can_watch']);
                     final isActivated =
-                        chapterAttrs['is_activated'] as bool? ?? false;
+                        coerceFlagOrNull(chapterAttrs['is_activated']) == true;
                     final isFreePreviewAttachment =
-                        chapterAttrs['is_free_preview_attachment'] as bool? ??
-                        false;
+                        coerceFlag(chapterAttrs['is_free_preview_attachment']);
                     final rawAttachments = chapterAttrs['attachments'];
 
                     final attachments = rawAttachments is List
@@ -1056,20 +1515,17 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                         0;
                     final isLastItem = chapterIndex == chapters.length - 1;
 
-                    // Check if chapter has PDF attachments but no video
-                    final hasPdfOnly =
-                        videoUrl.isEmpty &&
-                        attachments.any((att) {
-                          final ext =
-                              att['attributes']?['extension']
-                                  ?.toString()
-                                  .toLowerCase() ??
-                              '';
-                          return ext == 'pdf';
-                        });
+                    // PDF-only: no stream in any of the video fields, but a PDF
+                    // attached. Tapping such a chapter opens the reviewer
+                    // directly instead of a player with nothing to play.
+                    final hasPdfOnly = chapterIsPdfOnly(chapter) ||
+                        (!chapterHasVideoContent(chapter) &&
+                            (attachments.isNotEmpty ||
+                                chapterPdfAttachments(chapter).isNotEmpty));
 
                     final widgets = <Widget>[
                       _buildNestedChapterItem(
+                        chapter,
                         chapterTitle,
                         duration,
                         thumbnail,
@@ -1103,7 +1559,96 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
   }
 
   // New nested chapter item with tree visualization
+  /// Status badges for one chapter row.
+  ///
+  /// The web shows the video state and the PDF state independently, plus a
+  /// re-activation prompt once the view allowance is spent. The app collapsed
+  /// all of that into a single badge driven by `is_free_preview`, so a chapter
+  /// whose PDF was free but whose video was locked looked completely unlocked.
+  List<Widget> _buildChapterStateBadges(dynamic chapter) {
+    // A course the student has activated is not locked; an unloaded scope is
+    // treated as locked, which is the safe direction.
+    final courseLocked = !_scope.isEnrolled(widget.courseId);
+
+    if (chapterViewsExhausted(chapter)) {
+      return [
+        _chapterBadge(
+          'course.views_exhausted'.tr(),
+          const Color(0xFFB91C1C),
+          const Color(0xFFFEF2F2),
+        ),
+      ];
+    }
+
+    final badges = <Widget>[];
+
+    if (chapterHasVideoContent(chapter)) {
+      if (isChapterVideoPlayable(chapter, courseLocked: courseLocked)) {
+        badges.add(_chapterBadge(
+          'course.watch'.tr(),
+          const Color(0xFF2DBC77),
+          const Color(0xFFE8F9F0),
+        ));
+      } else if (chapterVideoRequiresActivation(chapter,
+          courseLocked: courseLocked)) {
+        badges.add(_chapterBadge(
+          'course.locked'.tr(),
+          const Color(0xFF92400E),
+          const Color(0xFFFFF7ED),
+        ));
+      }
+    }
+
+    if (chapterHasPdfAttachment(chapter)) {
+      if (isChapterPdfVisible(chapter, courseLocked: courseLocked)) {
+        badges.add(_chapterBadge(
+          'course.open_file'.tr(),
+          const Color(0xFFE74C3C),
+          const Color(0xFFFFE8E8),
+        ));
+      } else if (chapterPdfRequiresActivation(chapter,
+          courseLocked: courseLocked)) {
+        badges.add(_chapterBadge(
+          'course.requires_unlock'.tr(),
+          const Color(0xFF6B7280),
+          const Color(0xFFF5F5F5),
+        ));
+      }
+    }
+
+    if (badges.isEmpty) {
+      badges.add(_chapterBadge(
+        'course.locked'.tr(),
+        Colors.grey,
+        const Color(0xFFF0F2FF),
+      ));
+    }
+
+    return [
+      Wrap(spacing: 6, runSpacing: 6, children: badges),
+    ];
+  }
+
+  Widget _chapterBadge(String label, Color foreground, Color background) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: foreground,
+          fontWeight: FontWeight.bold,
+          fontSize: 11,
+        ),
+      ),
+    );
+  }
+
   Widget _buildNestedChapterItem(
+    dynamic chapter,
     String title,
     String duration,
     String imageUrl,
@@ -1190,6 +1735,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                       onTap: onTap,
                     )
                   : _buildLectureListItem(
+                      chapter,
                       title,
                       duration,
                       imageUrl,
@@ -1210,6 +1756,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
   }
 
   Widget _buildLectureListItem(
+    dynamic chapter,
     String title,
     String duration,
     String imageUrl,
@@ -1345,101 +1892,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                     ],
                   ),
                   const SizedBox(height: 8),
-                  if (isFreePreview)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFE8F9F0),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        'course.free_preview'.tr(),
-                        style: const TextStyle(
-                          color: Color(0xFF2DBC77),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 11,
-                        ),
-                      ),
-                    )
-                  else if (canWatch)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFE8F9F0),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.check_circle,
-                            color: Color(0xFF2DBC77),
-                            size: 12,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'course.available'.tr(),
-                            style: const TextStyle(
-                              color: Color(0xFF2DBC77),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  else if (hasPdfOnly)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isLocked
-                            ? const Color(0xFFF5F5F5)
-                            : const Color(0xFFFFE8E8),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        isLocked
-                            ? 'course.requires_unlock'.tr()
-                            : 'course.open_file'.tr(),
-                        style: TextStyle(
-                          color: isLocked
-                              ? Colors.grey[600]
-                              : const Color(0xFFE74C3C),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 11,
-                        ),
-                      ),
-                    )
-                  else
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF0F2FF),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        isLocked ? 'course.locked'.tr() : 'course.watch'.tr(),
-                        style: TextStyle(
-                          color: isLocked
-                              ? Colors.grey
-                              : const Color(0xFF3451E5),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ),
+                  ..._buildChapterStateBadges(chapter),
                 ],
               ),
             ),
@@ -1746,14 +2199,67 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
       );
     }
 
-    return ListView.builder(
+    // Grouped exactly like the web's ExamsTab: available, upcoming, completed,
+    // locked, expired — instead of one flat list where a locked exam looked
+    // identical to an open one.
+    final grouped = <QuizBucket, List<Quiz>>{};
+    for (final exam in _exams) {
+      final bucket = classifyQuiz(
+        {'attributes': exam.attributes},
+        _scope.enrolledCourseIds,
+      );
+      grouped.putIfAbsent(bucket, () => []).add(exam);
+    }
+
+    const order = [
+      QuizBucket.available,
+      QuizBucket.upcoming,
+      QuizBucket.completed,
+      QuizBucket.courseNotEnrolled,
+      QuizBucket.locked,
+      QuizBucket.expired,
+    ];
+
+    final sections = <Widget>[];
+    for (final bucket in order) {
+      final exams = grouped[bucket];
+      if (exams == null || exams.isEmpty) continue;
+
+      sections
+        ..add(Padding(
+          padding: EdgeInsets.only(top: sections.isEmpty ? 0 : 8, bottom: 12),
+          child: Text(
+            _examBucketHeading(bucket),
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1F2937),
+            ),
+          ),
+        ))
+        ..addAll(exams.map((exam) => _buildExamCard(exam, bucket)));
+    }
+
+    return ListView(
       padding: const EdgeInsets.all(24.0),
-      itemCount: _exams.length,
-      itemBuilder: (context, index) {
-        final exam = _exams[index];
-        return _buildExamCard(exam);
-      },
+      children: sections,
     );
+  }
+
+  String _examBucketHeading(QuizBucket bucket) {
+    switch (bucket) {
+      case QuizBucket.available:
+        return 'exams.section_available'.tr();
+      case QuizBucket.upcoming:
+        return 'exams.section_upcoming'.tr();
+      case QuizBucket.completed:
+        return 'exams.section_completed'.tr();
+      case QuizBucket.courseNotEnrolled:
+      case QuizBucket.locked:
+        return 'exams.section_locked'.tr();
+      case QuizBucket.expired:
+        return 'exams.section_expired'.tr();
+    }
   }
 
   Widget _buildExamsSkeleton() {
@@ -1797,29 +2303,71 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
     );
   }
 
-  Widget _buildExamCard(Quiz exam) {
-    final status = exam.getStatus(exam.remainingAttempts);
-    final statusText = exam.getStatusTextKey(status).tr();
+  /// Badge text for a bucket, matching the web's per-section badges.
+  String _examBucketBadge(QuizBucket bucket) {
+    switch (bucket) {
+      case QuizBucket.available:
+        return 'exams.status_available'.tr();
+      case QuizBucket.upcoming:
+        return 'exams.status_upcoming'.tr();
+      case QuizBucket.completed:
+        return 'exams.status_completed'.tr();
+      case QuizBucket.expired:
+        return 'exams.status_expired'.tr();
+      case QuizBucket.courseNotEnrolled:
+        return 'exams.status_course_locked'.tr();
+      case QuizBucket.locked:
+        return 'exams.status_locked'.tr();
+    }
+  }
 
-    Color statusColor;
-    Color statusBgColor;
+  /// Call-to-action for a bucket. A locked exam invites activation rather than
+  /// showing a dead "not available" button.
+  String _examBucketButtonLabel(QuizBucket bucket) {
+    switch (bucket) {
+      case QuizBucket.available:
+        return 'exams.btn_start_exam'.tr();
+      case QuizBucket.upcoming:
+        return 'exams.btn_not_available'.tr();
+      case QuizBucket.completed:
+        return 'exams.status_completed'.tr();
+      case QuizBucket.expired:
+        return 'exams.btn_exam_expired'.tr();
+      case QuizBucket.courseNotEnrolled:
+        return 'exams.btn_activate_course'.tr();
+      case QuizBucket.locked:
+        return 'exams.btn_activate_exam'.tr();
+    }
+  }
 
-    switch (status) {
-      case QuizStatus.available:
+  Widget _buildExamCard(Quiz exam, QuizBucket bucket) {
+    // The badge and the button both follow the bucket, so an exam that is
+    // locked behind an activation code can never render a Start button.
+    final statusText = _examBucketBadge(bucket);
+    final Color statusColor;
+    final Color statusBgColor;
+
+    switch (bucket) {
+      case QuizBucket.available:
         statusColor = const Color(0xFF27AE60);
         statusBgColor = const Color(0xFFE6F7F0);
         break;
-      case QuizStatus.expired:
-        statusColor = Colors.red;
-        statusBgColor = const Color(0xFFFFF0F0);
-        break;
-      case QuizStatus.upcoming:
+      case QuizBucket.upcoming:
         statusColor = const Color(0xFFF2994A);
         statusBgColor = const Color(0xFFFFF9F0);
         break;
-      case QuizStatus.noAttempts:
-        statusColor = const Color(0xFFFF4B4B);
+      case QuizBucket.completed:
+        statusColor = const Color(0xFF2563EB);
+        statusBgColor = const Color(0xFFEFF6FF);
+        break;
+      case QuizBucket.expired:
+        statusColor = Colors.red;
         statusBgColor = const Color(0xFFFFF0F0);
+        break;
+      case QuizBucket.locked:
+      case QuizBucket.courseNotEnrolled:
+        statusColor = const Color(0xFF92400E);
+        statusBgColor = const Color(0xFFFFF7ED);
         break;
     }
 
@@ -1889,18 +2437,21 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
           ),
           const SizedBox(height: 24),
           ElevatedButton(
-            onPressed: status == QuizStatus.available
-                ? () async {
-                    // Use ExamAccessUseCase to handle access control
+            // Locked exams stay tappable: the use case opens the activation
+            // prompt, which is how a student unlocks one on the web too.
+            onPressed: bucket == QuizBucket.expired ||
+                    bucket == QuizBucket.completed
+                ? null
+                : () async {
                     final examAccessUseCase = ExamAccessUseCase();
                     await examAccessUseCase.handleExamAccess(
                       context: context,
                       quiz: exam,
+                      enrolledCourseIds: _scope.enrolledCourseIds,
                     );
-                  }
-                : null,
+                  },
             style: ElevatedButton.styleFrom(
-              backgroundColor: status == QuizStatus.available
+              backgroundColor: bucket == QuizBucket.available
                   ? const Color(0xFF263EE2)
                   : const Color(0xFFC4C4C4),
               foregroundColor: Colors.white,
@@ -1913,292 +2464,11 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
               elevation: 0,
             ),
             child: Text(
-              exam.getButtonTextKey(status).tr().toUpperCase(),
+              _examBucketButtonLabel(bucket).toUpperCase(),
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildQATab() {
-    return Column(
-      children: [
-        _buildQASubFilters(),
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            children: [
-              if (_qaFilter == 'All' || _qaFilter == 'Ask Question') ...[
-                _buildQuestionItem(
-                  'Ahmed Hassan',
-                  '2 hours ago',
-                  'Can you explain the difference between merge sort and quick sort?',
-                  'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100',
-                  response: {
-                    'name': 'Dr. Sarah Ahmed',
-                    'role': 'Instructor',
-                    'time': '1 hour ago',
-                    'text':
-                        'Great question! Merge sort always has O(n log n) complexity, while quick sort has average O(n log n) but worst case O(n²).',
-                  },
-                ),
-              ],
-              const SizedBox(height: 20),
-            ],
-          ),
-        ),
-        _buildQABottomBar(),
-      ],
-    );
-  }
-
-  Widget _buildQASubFilters() {
-    final filters = ['All', 'Ask Question', 'Comments', 'Voice'];
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      child: Center(
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Row(
-            children: filters.map((filter) {
-              bool isSelected = _qaFilter == filter;
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: InkWell(
-                  onTap: () => setState(() => _qaFilter = filter),
-                  borderRadius: BorderRadius.circular(20),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? const Color(0xFFF0F2FF)
-                          : Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      filter,
-                      style: TextStyle(
-                        color: isSelected
-                            ? const Color(0xFF3451E5)
-                            : Colors.grey,
-                        fontSize: 12,
-                        fontWeight: isSelected
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildQuestionItem(
-    String name,
-    String time,
-    String text,
-    String avatarUrl, {
-    Map<String, String>? response,
-    bool isWaiting = false,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              ClipOval(
-                child: CachedNetworkImage(
-                  imageUrl: avatarUrl,
-                  width: 40,
-                  height: 40,
-                  fit: BoxFit.cover,
-                  memCacheWidth: 80,
-                  memCacheHeight: 80,
-                  placeholder: (context, url) => const CircleAvatar(
-                    radius: 20,
-                    backgroundColor: Colors.grey,
-                  ),
-                  errorWidget: (context, url, error) => const CircleAvatar(
-                    radius: 20,
-                    backgroundColor: Colors.grey,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                    ),
-                  ),
-                  Text(
-                    time,
-                    style: const TextStyle(color: Colors.grey, fontSize: 11),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.only(left: 52),
-            child: Text(
-              text,
-              style: TextStyle(color: Colors.grey[800], fontSize: 13),
-            ),
-          ),
-          if (response != null) ...[
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.only(left: 40),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF0F2FF),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 32,
-                          height: 32,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF263EE2),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Center(
-                            child: Text(
-                              'D',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              response['name']!,
-                              style: const TextStyle(
-                                color: Color(0xFF263EE2),
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF263EE2),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                response['role']!,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const Spacer(),
-                        Text(
-                          response['time']!,
-                          style: const TextStyle(
-                            color: Colors.grey,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      response['text']!,
-                      style: TextStyle(
-                        color: Colors.grey[800],
-                        fontSize: 13,
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildQABottomBar() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: Color(0xFFF1F1F1))),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Row(
-          children: [
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF7F8FF),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: TextField(
-                  decoration: InputDecoration(
-                    hintText: _qaFilter == 'Comments'
-                        ? 'Write a comment...'
-                        : 'Type here...',
-                    hintStyle: const TextStyle(
-                      color: Colors.grey,
-                      fontSize: 14,
-                    ),
-                    border: InputBorder.none,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            _buildCircleActionButton(Icons.mic_none, const Color(0xFF263EE2)),
-            const SizedBox(width: 12),
-            _buildCircleActionButton(
-              Icons.send_rounded,
-              const Color(0xFF263EE2),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -2665,7 +2935,22 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
         .toList();
 
     if (activeLinks.isEmpty) {
-      return const SizedBox.shrink();
+      // The web says so explicitly rather than collapsing the section, so a
+      // student can tell "no groups yet" from "still loading".
+      return Container(
+        margin: const EdgeInsets.all(20),
+        padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        child: Text(
+          'community.social_empty'.tr(),
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+        ),
+      );
     }
 
     return Container(
@@ -2673,27 +2958,198 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Quick Links',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey[800],
-            ),
+          Row(
+            children: [
+              const FaIcon(
+                FontAwesomeIcons.shareNodes,
+                size: 16,
+                color: Color(0xFF3451E5),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                context.locale.languageCode == 'ar'
+                    ? 'روابط ومجموعات الكورس'
+                    : 'Quick Links',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1F2937),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
-          Row(
-            children: activeLinks.map((link) {
-              return Expanded(
-                child: Padding(
-                  padding: EdgeInsets.only(
-                    right: activeLinks.last == link ? 0 : 12,
+          activeLinks.length > 2
+              ? SizedBox(
+                  height: 115,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: activeLinks.length,
+                    separatorBuilder: (_, index) => const SizedBox(width: 12),
+                    itemBuilder: (context, index) => SizedBox(
+                      width: 155,
+                      child: _buildQuickLinkCard(activeLinks[index]),
+                    ),
                   ),
-                  child: _buildQuickLinkCard(link),
+                )
+              : Row(
+                  children: activeLinks.map((link) {
+                    return Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.only(
+                          right: activeLinks.last == link ? 0 : 12,
+                        ),
+                        child: _buildQuickLinkCard(link),
+                      ),
+                    );
+                  }).toList(),
                 ),
-              );
-            }).toList(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLecturesSocialLinksBanner(List<SocialLink> activeLinks) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const FaIcon(
+                FontAwesomeIcons.shareNodes,
+                size: 16,
+                color: Color(0xFF3451E5),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                context.locale.languageCode == 'ar'
+                    ? 'قنوات ومجموعات الكورس'
+                    : 'Course Groups & Links',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1E293B),
+                ),
+              ),
+            ],
           ),
+          const SizedBox(height: 12),
+          activeLinks.length > 2
+              ? SizedBox(
+                  height: 115,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: activeLinks.length,
+                    separatorBuilder: (_, index) => const SizedBox(width: 10),
+                    itemBuilder: (context, index) => SizedBox(
+                      width: 150,
+                      child: _buildQuickLinkCard(activeLinks[index]),
+                    ),
+                  ),
+                )
+              : Row(
+                  children: activeLinks.map((link) {
+                    return Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.only(
+                          right: activeLinks.last == link ? 0 : 10,
+                        ),
+                        child: _buildQuickLinkCard(link),
+                      ),
+                    );
+                  }).toList(),
+                ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCourseExamsSectionInLecturesTab() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFFAFBFF),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE0E7FF)),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF3451E5).withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(
+                      Icons.quiz_outlined,
+                      color: Color(0xFF3451E5),
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    context.locale.languageCode == 'ar'
+                        ? 'امتحانات الكورس'
+                        : 'Course Exams',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1F2937),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF3451E5),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${_exams.length}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              TextButton(
+                onPressed: () => _tabController.animateTo(1),
+                child: Text(
+                  context.locale.languageCode == 'ar' ? 'عرض الكل' : 'View All',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF3451E5),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ..._exams.map((exam) {
+            final bucket = classifyQuiz(
+              {'attributes': exam.attributes},
+              _scope.enrolledCourseIds,
+            );
+            return _buildExamCard(exam, bucket);
+          }),
         ],
       ),
     );
@@ -2754,18 +3210,42 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
       } catch (_) {
         // Keep default gradient
       }
+    } else {
+      final target = '${link.link} ${link.attributes.title}'.toLowerCase();
+      if (target.contains('youtu')) {
+        gradientColors = [const Color(0xFFCC181E), const Color(0xFFFF4B4B)];
+      } else if (target.contains('telegram') || target.contains('t.me')) {
+        gradientColors = [const Color(0xFF0088CC), const Color(0xFF29B6F6)];
+      } else if (target.contains('whatsapp') || target.contains('wa.me')) {
+        gradientColors = [const Color(0xFF1EBE5D), const Color(0xFF4ADE80)];
+      } else if (target.contains('facebook') || target.contains('fb.com')) {
+        gradientColors = [const Color(0xFF1877F2), const Color(0xFF4292F7)];
+      }
     }
 
     return GestureDetector(
       onTap: () async {
-        final url = Uri.parse(link.link);
-        if (await canLaunchUrl(url)) {
-          await launchUrl(url, mode: LaunchMode.externalApplication);
+        String urlStr = link.link.trim();
+        if (urlStr.isEmpty) return;
+        if (!urlStr.startsWith('http://') && !urlStr.startsWith('https://')) {
+          urlStr = 'https://$urlStr';
+        }
+        final url = Uri.tryParse(urlStr);
+        if (url != null) {
+          try {
+            if (await canLaunchUrl(url)) {
+              await launchUrl(url, mode: LaunchMode.externalApplication);
+            } else {
+              await launchUrl(url, mode: LaunchMode.platformDefault);
+            }
+          } catch (e) {
+            debugPrint('[CourseDetailScreen] Error opening social link: $e');
+          }
         }
       },
       behavior: HitTestBehavior.opaque,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 10),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
@@ -2775,15 +3255,10 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: gradientColors[0].withValues(alpha: 0.4),
-              blurRadius: 12,
-              offset: const Offset(0, 6),
-              spreadRadius: -2,
-            ),
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.08),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
+              color: gradientColors[0].withValues(alpha: 0.35),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+              spreadRadius: -1,
             ),
           ],
         ),
@@ -2791,41 +3266,14 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              padding: const EdgeInsets.all(10),
+              padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: 0.2),
                 shape: BoxShape.circle,
               ),
-              child: link.attributes.icon.isNotEmpty
-                  ? ClipOval(
-                      child: CachedNetworkImage(
-                        imageUrl: link.attributes.icon,
-                        width: 28,
-                        height: 28,
-                        fit: BoxFit.cover,
-                        memCacheWidth: 56,
-                        memCacheHeight: 56,
-                        placeholder: (context, url) => const FaIcon(
-                          FontAwesomeIcons.link,
-                          color: Colors.white,
-                          size: 24,
-                        ),
-                        errorWidget: (context, url, error) {
-                          return const FaIcon(
-                            FontAwesomeIcons.link,
-                            color: Colors.white,
-                            size: 24,
-                          );
-                        },
-                      ),
-                    )
-                  : const FaIcon(
-                      FontAwesomeIcons.link,
-                      color: Colors.white,
-                      size: 24,
-                    ),
+              child: _buildSocialIcon(link),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Text(
               link.attributes.title.isNotEmpty
                   ? link.attributes.title
@@ -2833,16 +3281,78 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: 12,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.bold,
                 color: Colors.white,
-                height: 1.3,
+                height: 1.2,
               ),
-              maxLines: 2,
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
+            if (link.attributes.title.isNotEmpty &&
+                link.attributes.subtitle.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(
+                link.attributes.subtitle,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.normal,
+                  color: Colors.white.withValues(alpha: 0.85),
+                  height: 1.2,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildSocialIcon(SocialLink link) {
+    final iconUrl = link.attributes.icon.trim();
+    if (iconUrl.isNotEmpty) {
+      return ClipOval(
+        child: CachedNetworkImage(
+          imageUrl: iconUrl,
+          width: 24,
+          height: 24,
+          fit: BoxFit.cover,
+          memCacheWidth: 48,
+          memCacheHeight: 48,
+          placeholder: (context, url) => const FaIcon(
+            FontAwesomeIcons.link,
+            color: Colors.white,
+            size: 18,
+          ),
+          errorWidget: (context, url, error) => _buildFallbackSocialIcon(link),
+        ),
+      );
+    }
+    return _buildFallbackSocialIcon(link);
+  }
+
+  Widget _buildFallbackSocialIcon(SocialLink link) {
+    final target =
+        '${link.link} ${link.attributes.title} ${link.attributes.subtitle}'
+            .toLowerCase();
+    final dynamic iconData;
+    if (target.contains('youtu')) {
+      iconData = FontAwesomeIcons.youtube;
+    } else if (target.contains('t.me') || target.contains('telegram')) {
+      iconData = FontAwesomeIcons.telegram;
+    } else if (target.contains('wa.me') || target.contains('whatsapp')) {
+      iconData = FontAwesomeIcons.whatsapp;
+    } else if (target.contains('facebook') || target.contains('fb.com')) {
+      iconData = FontAwesomeIcons.facebook;
+    } else {
+      iconData = FontAwesomeIcons.link;
+    }
+    return FaIcon(
+      iconData,
+      color: Colors.white,
+      size: 18,
     );
   }
 
@@ -3016,7 +3526,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
             final isPinned =
                 entry.key == 0 && post.attributes.postType == 'summary';
             return _buildPostCard(post: post, isPinned: isPinned);
-          }).toList(),
+          }),
         ],
       ),
     );
@@ -3218,6 +3728,11 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                 ),
               ),
             ],
+          ),
+          PostCommentsSection(
+            post: post,
+            currentUserId: _currentUserId,
+            onChanged: _loadCommunityPosts,
           ),
         ],
       ),

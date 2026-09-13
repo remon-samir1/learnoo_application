@@ -4,6 +4,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../data/models/post_model.dart';
 import '../../data/models/social_link_model.dart';
 import '../../data/repositories/community_repository.dart';
+import '../widgets/post_comments_section.dart';
 import 'create_post_screen.dart';
 import '../../../search/data/search_repository.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -30,6 +31,10 @@ class _CommunityScreenState extends State<CommunityScreen> {
   bool _isLoadingSocialLinks = false;
   String? _errorMessage;
 
+  /// Signed-in student's id, so their own comments get a delete button — the
+  /// same check the web's comment list makes.
+  String? _currentUserId;
+
   // Search state variables
   bool _isSearching = false;
   List<dynamic> _searchResults = [];
@@ -38,8 +43,18 @@ class _CommunityScreenState extends State<CommunityScreen> {
   @override
   void initState() {
     super.initState();
-    _loadPosts();
-    _loadCourses();
+    _loadInitialData();
+    _loadCurrentUserId();
+  }
+
+  Future<void> _loadInitialData() async {
+    await _loadCourses();
+    await _loadPosts();
+  }
+
+  Future<void> _loadCurrentUserId() async {
+    final id = await _repository.currentUserId();
+    if (mounted) setState(() => _currentUserId = id);
   }
 
   Future<void> _loadPosts() async {
@@ -48,74 +63,77 @@ class _CommunityScreenState extends State<CommunityScreen> {
       _errorMessage = null;
     });
 
-    int? courseId;
+    String? courseId;
     if (_selectedFilter != 'All') {
-      final selectedCourse = _courses.firstWhere(
-        (c) => c.attributes.title == _selectedFilter,
-        orElse: () => PostCourse(id: '', type: '', attributes: CourseAttributes(title: '', subTitle: '', description: '', thumbnail: '', objectives: '', price: '0', maxViewsPerStudent: 0, visibility: 'public', approval: 0, status: 0, reason: '')),
-      );
-      if (selectedCourse.id.isNotEmpty) {
-        courseId = int.tryParse(selectedCourse.id);
+      final selectedCourse = _courses.where((c) => c.attributes.title == _selectedFilter).firstOrNull;
+      if (selectedCourse != null && selectedCourse.id.isNotEmpty) {
+        courseId = selectedCourse.id;
       }
     }
 
-    final result = await _repository.getPosts(courseId: courseId);
+    final result = await _repository.getEnrolledCoursesPosts(
+      courseId: courseId,
+      enrolledCourses: _courses,
+    );
 
-    setState(() {
-      _isLoading = false;
-      if (result['success']) {
-        _posts = result['data'];
-      } else {
-        _errorMessage = result['message'];
-      }
-    });
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+        if (result['success']) {
+          _posts = List<Post>.from(result['data'] ?? []);
+          if (result['courses'] is List<PostCourse>) {
+            _courses = result['courses'] as List<PostCourse>;
+          } else if (result['course'] is PostCourse) {
+            final updated = result['course'] as PostCourse;
+            final idx = _courses.indexWhere((c) => c.id == updated.id);
+            if (idx != -1) {
+              _courses[idx] = updated;
+            }
+          }
+        } else {
+          _errorMessage = result['message'];
+        }
+      });
+      _updateSocialLinks();
+    }
   }
 
   Future<void> _loadCourses() async {
-    final result = await _repository.getCourses();
-    if (result['success']) {
-      final List<dynamic> courseData = result['data'];
+    final result = await _repository.getCourses(activated: true);
+    if (result['success'] && mounted) {
+      final List<dynamic> courseData = result['data'] ?? [];
       setState(() {
         _courses = courseData.map((c) => PostCourse.fromJson(c)).toList();
       });
+      _updateSocialLinks();
     }
   }
 
-  Future<void> _loadSocialLinks() async {
+  void _updateSocialLinks() {
+    if (!mounted) return;
+
     if (_selectedFilter == 'All') {
-      setState(() {
-        _socialLinks = [];
-      });
-      return;
-    }
-
-    setState(() {
-      _isLoadingSocialLinks = true;
-    });
-
-    // Find the selected course ID
-    final selectedCourse = _courses.firstWhere(
-      (c) => c.attributes.title == _selectedFilter,
-      orElse: () => PostCourse(id: '', type: '', attributes: CourseAttributes(title: '', subTitle: '', description: '', thumbnail: '', objectives: '', price: '0', maxViewsPerStudent: 0, visibility: 'public', approval: 0, status: 0, reason: '')),
-    );
-
-    // Fetch all social links (no course filter on API)
-    final result = await _repository.getSocialLinks();
-
-    setState(() {
-      _isLoadingSocialLinks = false;
-      if (result['success']) {
-        final allLinks = result['data'] as List<SocialLink>;
-        // Filter client-side: show links where selected course is in the courses array
-        if (selectedCourse.id.isNotEmpty) {
-          _socialLinks = allLinks.where((link) =>
-            link.attributes.hasCourse(selectedCourse.id)
-          ).toList();
-        } else {
-          _socialLinks = [];
+      // Gather all unique active social links from all enrolled courses
+      final Map<String, SocialLink> uniqueLinks = {};
+      for (final course in _courses) {
+        for (final link in course.attributes.socialLinks) {
+          final key = link.id.isNotEmpty ? link.id : link.link;
+          if (key.isNotEmpty && !uniqueLinks.containsKey(key)) {
+            uniqueLinks[key] = link;
+          }
         }
       }
-    });
+      setState(() {
+        _socialLinks = uniqueLinks.values.toList();
+        _isLoadingSocialLinks = false;
+      });
+    } else {
+      final selectedCourse = _courses.where((c) => c.attributes.title == _selectedFilter).firstOrNull;
+      setState(() {
+        _socialLinks = selectedCourse?.attributes.socialLinks ?? [];
+        _isLoadingSocialLinks = false;
+      });
+    }
   }
 
   Future<void> _handleReaction(Post post, String reactionType) async {
@@ -126,21 +144,13 @@ class _CommunityScreenState extends State<CommunityScreen> {
       // Remove reaction
       final result = await _repository.removeReaction(post.id);
       if (result['success']) {
-        updatedPost = Post(
-          id: post.id,
-          type: post.type,
-          attributes: PostAttributes(
-            user: post.attributes.user,
-            course: post.attributes.course,
-            status: post.attributes.status,
-            postType: post.attributes.postType,
-            title: post.attributes.title,
-            content: post.attributes.content,
-            tags: post.attributes.tags,
-            reactionsCount: post.attributes.reactionsCount - 1,
+        final newCount = currentReaction != null
+            ? (post.attributes.reactionsCount > 0 ? post.attributes.reactionsCount - 1 : 0)
+            : post.attributes.reactionsCount;
+        updatedPost = post.copyWith(
+          attributes: post.attributes.copyWith(
+            reactionsCount: newCount,
             userReaction: null,
-            createdAt: post.attributes.createdAt,
-            updatedAt: post.attributes.updatedAt,
           ),
         );
       } else {
@@ -153,21 +163,10 @@ class _CommunityScreenState extends State<CommunityScreen> {
         final newCount = currentReaction != null
             ? post.attributes.reactionsCount
             : post.attributes.reactionsCount + 1;
-        updatedPost = Post(
-          id: post.id,
-          type: post.type,
-          attributes: PostAttributes(
-            user: post.attributes.user,
-            course: post.attributes.course,
-            status: post.attributes.status,
-            postType: post.attributes.postType,
-            title: post.attributes.title,
-            content: post.attributes.content,
-            tags: post.attributes.tags,
+        updatedPost = post.copyWith(
+          attributes: post.attributes.copyWith(
             reactionsCount: newCount,
             userReaction: reactionType,
-            createdAt: post.attributes.createdAt,
-            updatedAt: post.attributes.updatedAt,
           ),
         );
       } else {
@@ -276,28 +275,35 @@ class _CommunityScreenState extends State<CommunityScreen> {
         children: [
           _buildHeader(),
           Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (!_showSearchResults) ...[
-                    _buildFilterTabs(),
-                    _buildCommunityInfoCard(),
-                    if (_selectedFilter != 'All') _buildQuickLinks(),
+            child: RefreshIndicator(
+              onRefresh: () async {
+                await _loadCourses();
+                await _loadPosts();
+              },
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (!_showSearchResults) ...[
+                      _buildFilterTabs(),
+                      _buildCommunityInfoCard(),
+                      _buildQuickLinks(),
+                    ],
+                    _isSearching
+                        ? _buildSkeletonPosts()
+                        : _showSearchResults
+                            ? _buildSearchResultsList()
+                            : _isLoading
+                                ? _buildSkeletonPosts()
+                                : _errorMessage != null
+                                    ? _buildErrorWidget()
+                                    : _posts.isEmpty
+                                        ? _buildEmptyWidget()
+                                        : _buildPostsList(),
+                    const SizedBox(height: 80),
                   ],
-                  _isSearching
-                      ? _buildSkeletonPosts()
-                      : _showSearchResults
-                          ? _buildSearchResultsList()
-                          : _isLoading
-                              ? _buildSkeletonPosts()
-                              : _errorMessage != null
-                                  ? _buildErrorWidget()
-                                  : _posts.isEmpty
-                                      ? _buildEmptyWidget()
-                                      : _buildPostsList(),
-                  const SizedBox(height: 80),
-                ],
+                ),
               ),
             ),
           ),
@@ -429,8 +435,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
                   setState(() {
                     _selectedFilter = filter;
                   });
+                  _updateSocialLinks();
                   _loadPosts();
-                  _loadSocialLinks();
                 },
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -503,7 +509,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
   Widget _buildQuickLinks() {
     if (_isLoadingSocialLinks) {
       return Container(
-        margin: const EdgeInsets.all(20),
+        margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
         child: Row(
           children: [
             Expanded(child: _buildSkeletonQuickLink()),
@@ -523,16 +529,58 @@ class _CommunityScreenState extends State<CommunityScreen> {
     }
 
     return Container(
-      margin: const EdgeInsets.all(20),
-      child: Row(
-        children: activeLinks.map((link) {
-          return Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(right: activeLinks.last == link ? 0 : 12),
-              child: _buildQuickLinkCard(link),
-            ),
-          );
-        }).toList(),
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const FaIcon(
+                FontAwesomeIcons.shareNodes,
+                size: 14,
+                color: AppColors.primaryBlue,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _selectedFilter == 'All'
+                    ? 'روابط ومجموعات الكورسات'
+                    : 'روابط ومجموعات $_selectedFilter',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textDark,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          activeLinks.length > 2
+              ? SizedBox(
+                  height: 110,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    physics: const BouncingScrollPhysics(),
+                    itemCount: activeLinks.length,
+                    separatorBuilder: (_, index) => const SizedBox(width: 12),
+                    itemBuilder: (context, index) => SizedBox(
+                      width: 155,
+                      child: _buildQuickLinkCard(activeLinks[index]),
+                    ),
+                  ),
+                )
+              : Row(
+                  children: activeLinks.map((link) {
+                    return Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.only(
+                          right: activeLinks.last == link ? 0 : 12,
+                        ),
+                        child: _buildQuickLinkCard(link),
+                      ),
+                    );
+                  }).toList(),
+                ),
+        ],
       ),
     );
   }
@@ -569,8 +617,17 @@ class _CommunityScreenState extends State<CommunityScreen> {
     );
   }
 
+  FaIconData _getSocialIconData(SocialLink link) {
+    final target = '${link.link} ${link.attributes.title} ${link.attributes.subtitle}'.toLowerCase();
+    if (target.contains('youtu')) return FontAwesomeIcons.youtube;
+    if (target.contains('telegram') || target.contains('t.me')) return FontAwesomeIcons.telegram;
+    if (target.contains('whatsapp') || target.contains('wa.me')) return FontAwesomeIcons.whatsapp;
+    if (target.contains('facebook') || target.contains('fb.com')) return FontAwesomeIcons.facebook;
+    return FontAwesomeIcons.link;
+  }
+
   Widget _buildQuickLinkCard(SocialLink link) {
-    // Build gradient colors from custom color or use default
+    // Build gradient colors from custom color or platform detection or default
     List<Color> gradientColors = [
       AppColors.primaryBlue,
       const Color(0xFF5A75FF),
@@ -583,27 +640,48 @@ class _CommunityScreenState extends State<CommunityScreen> {
           colorStr = '0xFF${colorStr.substring(1)}';
         }
         final baseColor = Color(int.parse(colorStr));
-        // Create a lighter version for gradient
+        final a = (baseColor.a * 255.0).round();
+        final r = (baseColor.r * 255.0).round();
+        final g = (baseColor.g * 255.0).round();
+        final b = (baseColor.b * 255.0).round();
         final lighterColor = Color.fromARGB(
-          baseColor.alpha,
-          (baseColor.red + 40).clamp(0, 255),
-          (baseColor.green + 40).clamp(0, 255),
-          (baseColor.blue + 60).clamp(0, 255),
+          a,
+          (r + 40).clamp(0, 255),
+          (g + 40).clamp(0, 255),
+          (b + 60).clamp(0, 255),
         );
         gradientColors = [baseColor, lighterColor];
       } catch (_) {
         // Keep default gradient
       }
+    } else {
+      final target = '${link.link} ${link.attributes.title} ${link.attributes.subtitle}'.toLowerCase();
+      if (target.contains('youtu')) {
+        gradientColors = [const Color(0xFFCC181E), const Color(0xFFFF4B4B)];
+      } else if (target.contains('telegram') || target.contains('t.me')) {
+        gradientColors = [const Color(0xFF0088CC), const Color(0xFF29B6F6)];
+      } else if (target.contains('whatsapp') || target.contains('wa.me')) {
+        gradientColors = [const Color(0xFF1EBE5D), const Color(0xFF4ADE80)];
+      } else if (target.contains('facebook') || target.contains('fb.com')) {
+        gradientColors = [const Color(0xFF1877F2), const Color(0xFF4292F7)];
+      }
     }
 
     return GestureDetector(
       onTap: () async {
-        final url = Uri.parse(link.link);
-        if (await canLaunchUrl(url)) {
-          await launchUrl(url, mode: LaunchMode.externalApplication);
-        } else {
+        String urlStr = link.link.trim();
+        if (urlStr.isEmpty) return;
+        if (!urlStr.startsWith('http://') && !urlStr.startsWith('https://')) {
+          urlStr = 'https://$urlStr';
+        }
+        final url = Uri.tryParse(urlStr);
+        if (url != null) {
           try {
-            await launchUrl(url, mode: LaunchMode.externalApplication);
+            if (await canLaunchUrl(url)) {
+              await launchUrl(url, mode: LaunchMode.externalApplication);
+            } else {
+              await launchUrl(url, mode: LaunchMode.platformDefault);
+            }
           } catch (e) {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -615,7 +693,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
       },
       behavior: HitTestBehavior.opaque,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 10),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
@@ -625,15 +703,10 @@ class _CommunityScreenState extends State<CommunityScreen> {
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: gradientColors[0].withValues(alpha: 0.4),
-              blurRadius: 12,
-              offset: const Offset(0, 6),
-              spreadRadius: -2,
-            ),
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.08),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
+              color: gradientColors[0].withValues(alpha: 0.35),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+              spreadRadius: -1,
             ),
           ],
         ),
@@ -641,53 +714,61 @@ class _CommunityScreenState extends State<CommunityScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              padding: const EdgeInsets.all(10),
+              padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: 0.2),
                 shape: BoxShape.circle,
               ),
               child: link.attributes.icon.isNotEmpty
-                ? ClipOval(
-                    child: Image.network(
-                      link.attributes.icon,
-                      width: 28,
-                      height: 28,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return const FaIcon(
-                          FontAwesomeIcons.link,
-                          color: Colors.white,
-                          size: 24,
-                        );
-                      },
+                  ? ClipOval(
+                      child: Image.network(
+                        link.attributes.icon,
+                        width: 24,
+                        height: 24,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) {
+                          return FaIcon(
+                            _getSocialIconData(link),
+                            color: Colors.white,
+                            size: 18,
+                          );
+                        },
+                      ),
+                    )
+                  : FaIcon(
+                      _getSocialIconData(link),
+                      color: Colors.white,
+                      size: 18,
                     ),
-                  )
-                : const FaIcon(
-                    FontAwesomeIcons.link,
-                    color: Colors.white,
-                    size: 24,
-                  ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Text(
               link.attributes.title.isNotEmpty ? link.attributes.title : link.attributes.subtitle,
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: 12,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.bold,
                 color: Colors.white,
-                height: 1.3,
-                shadows: [
-                  Shadow(
-                    color: Colors.black26,
-                    blurRadius: 2,
-                    offset: Offset(0, 1),
-                  ),
-                ],
+                height: 1.2,
               ),
-              maxLines: 2,
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
+            if (link.attributes.title.isNotEmpty && link.attributes.subtitle.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(
+                link.attributes.subtitle,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.normal,
+                  color: Colors.white.withValues(alpha: 0.85),
+                  height: 1.2,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
           ],
         ),
       ),
@@ -925,7 +1006,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
               post: post,
               isPinned: false,
             );
-          }).toList(),
+          }),
         ],
       ),
     );
@@ -1013,7 +1094,10 @@ class _CommunityScreenState extends State<CommunityScreen> {
     bool isPinned = false,
   }) {
     final user = post.attributes.user;
-    final course = post.attributes.course;
+    final course = post.attributes.course ??
+        (post.attributes.courseId != null
+            ? _courses.where((c) => c.id == post.attributes.courseId).firstOrNull
+            : null);
     final userName = user?.attributes.fullName ?? 'Unknown User';
     final isInstructor = user?.attributes.role.toLowerCase() == 'admin' ||
         user?.attributes.role.toLowerCase() == 'instructor';
@@ -1172,6 +1256,56 @@ class _CommunityScreenState extends State<CommunityScreen> {
               runSpacing: 8,
               children: post.attributes.tags.map((tag) => _buildTagChip('#$tag')).toList(),
             ),
+          // Post course social links
+          Builder(
+            builder: (context) {
+              final postSocialLinks = _getSocialLinksForPost(post);
+              if (postSocialLinks.isEmpty) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const FaIcon(
+                            FontAwesomeIcons.shareNodes,
+                            size: 11,
+                            color: AppColors.primaryBlue,
+                          ),
+                          const SizedBox(width: 6),
+                          const Text(
+                            'روابط ومجموعات الكورس',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textDark,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: postSocialLinks
+                            .map((link) => _buildPostSocialChip(link))
+                            .toList(),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
           const SizedBox(height: 12),
           Row(
             children: [
@@ -1202,27 +1336,12 @@ class _CommunityScreenState extends State<CommunityScreen> {
                   ],
                 ),
               ),
-              // const SizedBox(width: 16),
-              // FaIcon(
-              //   FontAwesomeIcons.comment,
-              //   color: AppColors.textGray,
-              //   size: 16,
-              // ),
-              const SizedBox(width: 6),
-              // Text(
-              //   '0',
-              //   style: TextStyle(
-              //     fontSize: 13,
-              //     color: AppColors.textGray,
-              //   ),
-              // ),
-              // const Spacer(),
-            //   FaIcon(
-            //     FontAwesomeIcons.share,
-            //     color: AppColors.textGray,
-            //     size: 16,
-            //   ),
             ],
+          ),
+          PostCommentsSection(
+            post: post,
+            currentUserId: _currentUserId,
+            onChanged: _loadPosts,
           ),
         ],
       ),
@@ -1242,6 +1361,121 @@ class _CommunityScreenState extends State<CommunityScreen> {
           fontSize: 12,
           fontWeight: FontWeight.w500,
           color: AppColors.textGray,
+        ),
+      ),
+    );
+  }
+
+  List<SocialLink> _getSocialLinksForPost(Post post) {
+    // 1. If post itself has socialLinks parsed
+    if (post.attributes.socialLinks.isNotEmpty) {
+      final links = post.attributes.socialLinks.where((l) => l.attributes.status).toList();
+      if (links.isNotEmpty) return links;
+    }
+    // 2. If post's course has socialLinks
+    if (post.attributes.course?.attributes.socialLinks.isNotEmpty == true) {
+      final links = post.attributes.course!.attributes.socialLinks.where((l) => l.attributes.status).toList();
+      if (links.isNotEmpty) return links;
+    }
+    // 3. Match post courseId against loaded enrolled _courses
+    final courseId = post.attributes.courseId ?? post.attributes.course?.id;
+    if (courseId != null && courseId.isNotEmpty) {
+      final matched = _courses.where((c) => c.id == courseId).toList();
+      if (matched.isNotEmpty && matched.first.attributes.socialLinks.isNotEmpty) {
+        return matched.first.attributes.socialLinks.where((l) => l.attributes.status).toList();
+      }
+    }
+    // 4. Match post course title against loaded enrolled _courses
+    final courseTitle = post.attributes.course?.attributes.title;
+    if (courseTitle != null && courseTitle.isNotEmpty) {
+      final matched = _courses.where((c) => c.attributes.title == courseTitle).toList();
+      if (matched.isNotEmpty && matched.first.attributes.socialLinks.isNotEmpty) {
+        return matched.first.attributes.socialLinks.where((l) => l.attributes.status).toList();
+      }
+    }
+    return [];
+  }
+
+  Widget _buildPostSocialChip(SocialLink link) {
+    List<Color> gradientColors = [
+      AppColors.primaryBlue,
+      const Color(0xFF5A75FF),
+    ];
+    final target = '${link.link} ${link.attributes.title} ${link.attributes.subtitle}'.toLowerCase();
+    if (target.contains('youtu')) {
+      gradientColors = [const Color(0xFFCC181E), const Color(0xFFFF4B4B)];
+    } else if (target.contains('telegram') || target.contains('t.me')) {
+      gradientColors = [const Color(0xFF0088CC), const Color(0xFF29B6F6)];
+    } else if (target.contains('whatsapp') || target.contains('wa.me')) {
+      gradientColors = [const Color(0xFF1EBE5D), const Color(0xFF4ADE80)];
+    } else if (target.contains('facebook') || target.contains('fb.com')) {
+      gradientColors = [const Color(0xFF1877F2), const Color(0xFF4292F7)];
+    }
+
+    final title = link.attributes.title.isNotEmpty
+        ? link.attributes.title
+        : link.attributes.subtitle;
+
+    return GestureDetector(
+      onTap: () async {
+        String urlStr = link.link.trim();
+        if (urlStr.isEmpty) return;
+        if (!urlStr.startsWith('http://') && !urlStr.startsWith('https://')) {
+          urlStr = 'https://$urlStr';
+        }
+        final url = Uri.tryParse(urlStr);
+        if (url != null) {
+          try {
+            if (await canLaunchUrl(url)) {
+              await launchUrl(url, mode: LaunchMode.externalApplication);
+            } else {
+              await launchUrl(url, mode: LaunchMode.platformDefault);
+            }
+          } catch (_) {}
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: gradientColors,
+          ),
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: [
+            BoxShadow(
+              color: gradientColors[0].withValues(alpha: 0.25),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            FaIcon(
+              _getSocialIconData(link),
+              color: Colors.white,
+              size: 12,
+            ),
+            if (title.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 180),
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );

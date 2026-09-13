@@ -3,7 +3,6 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pull_to_refresh/pull_to_refresh.dart';
-import 'package:intl/intl.dart';
 import 'package:learnoo/features/home/presentation/bloc/notification_bloc.dart';
 import 'package:learnoo/features/home/presentation/bloc/notification_event.dart';
 import 'package:learnoo/features/home/presentation/bloc/notification_state.dart';

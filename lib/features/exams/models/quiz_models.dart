@@ -1,3 +1,6 @@
+import '../../../core/utils/coerce.dart';
+import '../domain/quiz_activation_lock.dart';
+
 // Quiz/Exam Model
 enum QuizStatus { upcoming, available, expired, noAttempts }
 
@@ -16,7 +19,22 @@ class Quiz {
   final Chapter? chapter;
   final int? courseId;
   final DateTime createdAt;
-  final bool isPublic;
+
+  /// Three-way visibility. `is_public` is not a boolean: the API also sends
+  /// the string `"included"`, which the old `bool` field could not hold — and
+  /// assigning it threw at runtime.
+  final QuizVisibility visibility;
+
+  /// The backend already granted this student access to the exam.
+  final bool hasActivation;
+
+  /// Every course the exam belongs to (`courses_ids` / `courses` / `course_id`).
+  final List<String> courseIds;
+
+  /// Raw `attributes`, so the shared gate in `quiz_activation_lock.dart` can be
+  /// applied without re-parsing.
+  final Map<String, dynamic> attributes;
+
   final bool canView;
   final bool canWatch;
 
@@ -35,34 +53,74 @@ class Quiz {
     this.chapter,
     this.courseId,
     required this.createdAt,
-    this.isPublic = false,
+    this.visibility = QuizVisibility.unknown,
+    this.hasActivation = false,
+    this.courseIds = const [],
+    this.attributes = const {},
     this.canView = false,
     this.canWatch = false,
   });
 
+  /// Open to everyone, no gate. Kept for call sites that only need the boolean.
+  bool get isPublic => visibility == QuizVisibility.public;
+
+  /// Bundled with a course: unlocks once that course is activated.
+  bool get isIncluded => visibility == QuizVisibility.included;
+
   factory Quiz.fromJson(Map<String, dynamic> json) {
-    final attributes = json['attributes'] ?? {};
+    final rawAttributes = json['attributes'];
+    final nestedAttributes = rawAttributes is Map
+        ? Map<String, dynamic>.from(rawAttributes)
+        : <String, dynamic>{};
+
+    // The course-detail endpoint nests each exam under `course.attributes.exams`
+    // as a JSON:API resource, but some of its fields — `remaining_attempts`,
+    // `current_attempts`, `max_attempts`/`maxAttempts`, `has_activation` — can
+    // ride on the *top level* of that exam object instead of inside
+    // `attributes`. The web's own `examAttrsForQuizPolicy` reads
+    // `attributes.field ?? topLevel.field` for exactly this reason; this app
+    // read only `attributes`, so an exam shaped that way parsed with a zero
+    // quiz id and a locked-looking gate and effectively vanished from the tab.
+    // `id`/`type` are excluded from the fallback because they mean something
+    // different at the JSON:API envelope level (resource id/type) than inside
+    // `attributes` (this quiz's numeric id / exam vs. homework).
+    final topLevelFallback = Map<String, dynamic>.from(json)
+      ..remove('id')
+      ..remove('type')
+      ..remove('attributes');
+    final attributes = <String, dynamic>{
+      ...topLevelFallback,
+      ...nestedAttributes,
+    };
+
     final chapterData = attributes['chapter']?['data'];
 
     return Quiz(
       id: json['id']?.toString() ?? '',
-      quizId: attributes['id'] ?? 0,
-      title: attributes['title'] ?? '',
-      maxAttempts: attributes['max_attempts'] ?? 1,
-      currentAttempts: attributes['current_attempts'] ?? 0,
-      remainingAttempts: attributes['remaining_attempts'] ?? 0,
-      type: attributes['type'] ?? 'exam',
-      startTime: DateTime.tryParse(attributes['start_time'] ?? '') ?? DateTime.now(),
-      endTime: DateTime.tryParse(attributes['end_time'] ?? '') ?? DateTime.now(),
-      duration: attributes['duration'] ?? 0,
-
-      chapterId: attributes['chapter_id'],
+      quizId: coerceInt(attributes['id'] ?? json['id']),
+      title: attributes['title']?.toString() ?? '',
+      maxAttempts: coerceInt(attributes['max_attempts'], fallback: 1),
+      currentAttempts: coerceInt(attributes['current_attempts']),
+      remainingAttempts: readRemainingAttempts(attributes) ?? 0,
+      type: attributes['type']?.toString() ?? 'exam',
+      startTime:
+          DateTime.tryParse(attributes['start_time']?.toString() ?? '') ??
+              DateTime.now(),
+      endTime: DateTime.tryParse(attributes['end_time']?.toString() ?? '') ??
+          DateTime.now(),
+      duration: coerceInt(attributes['duration']),
+      chapterId: coercePositiveInt(attributes['chapter_id']),
       chapter: chapterData != null ? Chapter.fromJson(chapterData) : null,
-      courseId: attributes['course_id'] != null ? int.tryParse(attributes['course_id'].toString()) : null,
-      createdAt: DateTime.tryParse(attributes['created_at'] ?? '') ?? DateTime.now(),
-      isPublic: attributes['is_public'] ?? false,
-      canView: attributes['can_view'] ?? false,
-      canWatch: attributes['can_watch'] ?? false,
+      courseId: coercePositiveInt(attributes['course_id']),
+      createdAt:
+          DateTime.tryParse(attributes['created_at']?.toString() ?? '') ??
+              DateTime.now(),
+      visibility: readQuizVisibility(attributes),
+      hasActivation: coerceFlagOrNull(attributes['has_activation']) == true,
+      courseIds: readQuizCourseIds(attributes),
+      attributes: attributes,
+      canView: coerceFlag(attributes['can_view']),
+      canWatch: coerceFlag(attributes['can_watch']),
     );
   }
 

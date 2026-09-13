@@ -142,6 +142,8 @@ class OfflineQueueService {
         return '${action.type}_${payload['content']}_${payload['lecture_id'] ?? payload['course_id']}';
       case PendingActionTypes.reaction:
         return '${action.type}_${payload['post_id']}_${payload['type']}';
+      case PendingActionTypes.chapterView:
+        return '${action.type}_${action.id}';
       default:
         return '${action.type}_${jsonEncode(payload)}';
     }

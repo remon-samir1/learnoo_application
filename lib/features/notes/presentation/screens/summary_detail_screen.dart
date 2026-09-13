@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import '../widgets/note_attachment_preview.dart';
 import 'package:intl/intl.dart';
 
 class SummaryDetailScreen extends StatelessWidget {
@@ -71,6 +72,7 @@ class SummaryDetailScreen extends StatelessWidget {
     final createdAt = attributes['created_at']?.toString();
     final updatedAt = attributes['updated_at']?.toString();
     final courseId = attributes['course_id']?.toString();
+    final attachment = attributes['attachment'];
 
     final styles = _getTypeStyles(type);
     final displayDate = _formatDate(updatedAt ?? createdAt);
@@ -124,6 +126,13 @@ class SummaryDetailScreen extends StatelessWidget {
                       _buildContentSection(content)
                     else
                       _buildContentSection('No content available'),
+                    // Images and clips render inline, like the web note card.
+                    if (attachment is Map) ...[
+                      const SizedBox(height: 20),
+                      NoteAttachmentPreview(
+                        attachment: Map<String, dynamic>.from(attachment),
+                      ),
+                    ],
                     const SizedBox(height: 32),
                   ],
                 ),

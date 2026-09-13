@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'core/services/screen_protection_service.dart';
 import 'core/services/notification_service.dart';
+import 'core/network/api_client.dart';
 import 'core/services/websocket_service.dart';
 import 'core/services/feature_service.dart';
 import 'core/services/feature_manager.dart';
@@ -11,6 +13,7 @@ import 'core/local/hive_service.dart';
 import 'core/sync/sync_service.dart';
 import 'core/sync/sync_processors.dart';
 import 'core/widgets/back_button_handler.dart';
+import 'features/auth/presentation/screens/login_screen.dart';
 import 'features/auth/presentation/screens/splash_screen.dart';
 
 void main() async {
@@ -29,6 +32,11 @@ void main() async {
   // Register all sync processors for pending actions
   // This enables offline queue to sync comments, progress, posts, etc.
   SyncProcessors.registerAll(syncService);
+
+  // Sync any pending offline actions if online on startup
+  if (syncService.isOnline && syncService.pendingCount > 0) {
+    unawaited(syncService.syncPendingActions());
+  }
 
   // Parallelize independent service initializations for faster startup
   // These services don't depend on each other, so we can load them simultaneously
@@ -92,12 +100,14 @@ class _HomeAppState extends State<LearnooApp> with WidgetsBindingObserver {
     super.initState();
     widget.featureManager.addListener(_onFeaturesChanged);
     WidgetsBinding.instance.addObserver(this);
+    ApiClient.onUnauthorized = _onSessionRevoked;
   }
 
   @override
   void dispose() {
     widget.featureManager.removeListener(_onFeaturesChanged);
     WidgetsBinding.instance.removeObserver(this);
+    ApiClient.onUnauthorized = null;
     _webSocketService.disconnect();
     super.dispose();
   }
@@ -128,7 +138,14 @@ class _HomeAppState extends State<LearnooApp> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final locale = context.locale;
+
+    // Every API request carries this as the `lang` header, so the backend
+    // returns content in the language the student is actually reading —
+    // matching how the web dashboard sends its `locale` cookie.
+    ApiClient.locale = locale.languageCode;
+
     return MaterialApp(
+      navigatorKey: appNavigatorKey,
       localizationsDelegates: context.localizationDelegates,
       supportedLocales: context.supportedLocales,
       locale: locale,
@@ -141,15 +158,31 @@ class _HomeAppState extends State<LearnooApp> with WidgetsBindingObserver {
       ),
       builder: (context, child) {
         return Directionality(
-          textDirection: locale.languageCode == 'ar' 
-              ? TextDirection.rtl 
+          textDirection: locale.languageCode == 'ar'
+              ? TextDirection.rtl
               : TextDirection.ltr,
           child: child!,
         );
       },
     );
   }
+
+  /// Wired to [ApiClient.onUnauthorized]: any 401 that is not a business rule
+  /// drops the session and returns the student to sign-in, from wherever they
+  /// were. The web does the same in `handleResponse`.
+  void _onSessionRevoked() {
+    _webSocketService.disconnect();
+    final navigator = appNavigatorKey.currentState;
+    if (navigator == null) return;
+    navigator.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
+  }
 }
+
+/// Lets services outside the widget tree drive navigation (session expiry).
+final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
 // Helper functions for parallel service initialization
 Future<ScreenProtectionService> screenProtectionInitialization() async {

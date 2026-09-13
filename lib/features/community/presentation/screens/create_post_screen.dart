@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -88,6 +89,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     );
 
     final result = await _repository.createPost(request);
+    if (!mounted) return;
 
     setState(() {
       _isSubmitting = false;
@@ -97,7 +99,11 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       Navigator.of(context).pop(true);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result['message'] ?? 'Failed to create post')),
+        SnackBar(
+          content: Text(
+            result['message']?.toString() ?? 'community.post_failed'.tr(),
+          ),
+        ),
       );
     }
   }

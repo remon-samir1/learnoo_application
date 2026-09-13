@@ -752,6 +752,51 @@ internal class BetterPlayer(
         setAudioAttributes(exoPlayer, mixWithOthers)
     }
 
+    fun takeSnapshot(result: MethodChannel.Result) {
+        val s = surface
+        if (s == null || !s.isValid) {
+            result.error("NO_SURFACE", "Surface is not available or valid", null)
+            return
+        }
+
+        val videoSize = exoPlayer?.videoSize
+        val width = if (videoSize != null && videoSize.width > 0) videoSize.width else 1280
+        val height = if (videoSize != null && videoSize.height > 0) videoSize.height else 720
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try {
+                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                android.view.PixelCopy.request(s, bitmap, { copyResult ->
+                    if (copyResult == android.view.PixelCopy.SUCCESS) {
+                        try {
+                            val stream = java.io.ByteArrayOutputStream()
+                            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+                            val byteArray = stream.toByteArray()
+                            bitmap.recycle()
+                            Handler(Looper.getMainLooper()).post {
+                                result.success(byteArray)
+                            }
+                        } catch (e: Exception) {
+                            bitmap.recycle()
+                            Handler(Looper.getMainLooper()).post {
+                                result.error("COMPRESSION_FAILED", e.message, null)
+                            }
+                        }
+                    } else {
+                        bitmap.recycle()
+                        Handler(Looper.getMainLooper()).post {
+                            result.error("PIXEL_COPY_FAILED", "PixelCopy failed with code: $copyResult", null)
+                        }
+                    }
+                }, Handler(Looper.getMainLooper()))
+            } catch (e: Exception) {
+                result.error("SNAPSHOT_FAILED", e.message, null)
+            }
+        } else {
+            result.error("UNSUPPORTED", "Android version not supported for PixelCopy", null)
+        }
+    }
+
     fun dispose() {
         disposeMediaSession()
         disposeRemoteNotifications()

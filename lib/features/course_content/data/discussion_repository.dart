@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path/path.dart';
+import '../../../core/network/api_client.dart';
 import '../../../core/network/api_constants.dart';
 import '../../../core/offline/offline_first_repository.dart';
 import '../../../core/local/hive_boxes.dart';
@@ -69,6 +70,8 @@ class DiscussionRepository with OfflineFirstRepository {
     required int moment,
     int? parentId,
     File? voiceFile,
+    int? durationSeconds,
+    File? screenshotFile,
   }) async {
     final token = await _getToken();
     if (token == null) return {'success': false, 'message': 'No token found'};
@@ -81,13 +84,31 @@ class DiscussionRepository with OfflineFirstRepository {
         voiceFile: voiceFile,
         moment: moment,
         parentId: parentId,
+        durationSeconds: durationSeconds,
+        screenshotFile: screenshotFile,
       );
     }
 
-    // Build payload for text comments
+    // A text comment with a captured frame has to go up as multipart.
+    if (screenshotFile != null) {
+      return _postDiscussionWithImage(
+        chapterId: chapterId,
+        content: content,
+        moment: moment,
+        parentId: parentId,
+        screenshotFile: screenshotFile,
+      );
+    }
+
+    // Build payload for text comments.
+    //
+    // `discussion_type` mirrors `type`: the web sends both fields on every
+    // discussion (`ChapterWatchView.tsx`), and the backend reads whichever it
+    // has. Sending only `type` meant app comments could come back untyped.
     final payload = {
       'chapter_id': chapterId,
       'type': type,
+      'discussion_type': type,
       'content': content,
       'moment': moment,
       if (parentId != null) 'parent_id': parentId,
@@ -202,11 +223,17 @@ class DiscussionRepository with OfflineFirstRepository {
 
   /// Post voice discussion - requires online connection
   /// Voice files cannot be easily queued offline due to file handling
+  ///
+  /// The audio travels in the `content` field, not a separate `voice` key —
+  /// that is the backend contract the web also uses. `duration` and the
+  /// captured video frame are sent alongside it.
   Future<Map<String, dynamic>> _postVoiceDiscussion({
     required int chapterId,
     required File voiceFile,
     required int moment,
     int? parentId,
+    int? durationSeconds,
+    File? screenshotFile,
   }) async {
     final token = await _getToken();
     if (token == null) return {'success': false, 'message': 'No token found'};
@@ -228,13 +255,18 @@ class DiscussionRepository with OfflineFirstRepository {
       request.headers.addAll({
         'Accept': 'application/json',
         'Authorization': 'Bearer $token',
+        'lang': ApiClient.locale,
       });
 
       request.fields['chapter_id'] = chapterId.toString();
       request.fields['type'] = 'voice';
+      request.fields['discussion_type'] = 'voice';
       request.fields['moment'] = moment.toString();
       if (parentId != null) {
         request.fields['parent_id'] = parentId.toString();
+      }
+      if (durationSeconds != null) {
+        request.fields['duration'] = durationSeconds.toString();
       }
 
       request.files.add(await http.MultipartFile.fromPath(
@@ -243,6 +275,15 @@ class DiscussionRepository with OfflineFirstRepository {
         filename: basename(voiceFile.path),
         contentType: MediaType('audio', 'm4a'),
       ));
+
+      if (screenshotFile != null) {
+        request.files.add(await http.MultipartFile.fromPath(
+          'image',
+          screenshotFile.path,
+          filename: basename(screenshotFile.path),
+          contentType: MediaType('image', 'jpeg'),
+        ));
+      }
 
       var streamedResponse = await request.send();
       var response = await http.Response.fromStream(streamedResponse);
@@ -256,6 +297,76 @@ class DiscussionRepository with OfflineFirstRepository {
           'message': data['message'] ?? 'Failed to post voice discussion',
         };
       }
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  /// Text discussion carrying a captured video frame.
+  ///
+  /// The web snapshots the player when the student taps "ask about this
+  /// moment" and attaches it as `image`, so the instructor sees exactly what
+  /// was on screen. Requires a connection — a queued multipart upload would
+  /// have to hold the file open indefinitely.
+  Future<Map<String, dynamic>> _postDiscussionWithImage({
+    required int chapterId,
+    required String content,
+    required int moment,
+    int? parentId,
+    required File screenshotFile,
+  }) async {
+    final token = await _getToken();
+    if (token == null) return {'success': false, 'message': 'No token found'};
+
+    final hasConnection = await ConnectivityService().hasConnection();
+    if (!hasConnection) {
+      // Fall back to a plain queued text comment rather than losing it.
+      return postDiscussion(
+        chapterId: chapterId,
+        type: 'text',
+        content: content,
+        moment: moment,
+        parentId: parentId,
+      );
+    }
+
+    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.discussion}');
+
+    try {
+      final request = http.MultipartRequest('POST', url);
+      request.headers.addAll({
+        'Accept': 'application/json',
+        'Authorization': 'Bearer $token',
+        'lang': ApiClient.locale,
+      });
+
+      request.fields['chapter_id'] = chapterId.toString();
+      request.fields['type'] = 'text';
+      request.fields['discussion_type'] = 'text';
+      request.fields['content'] = content;
+      request.fields['moment'] = moment.toString();
+      if (parentId != null) {
+        request.fields['parent_id'] = parentId.toString();
+      }
+
+      request.files.add(await http.MultipartFile.fromPath(
+        'image',
+        screenshotFile.path,
+        filename: basename(screenshotFile.path),
+        contentType: MediaType('image', 'jpeg'),
+      ));
+
+      final streamed = await request.send();
+      final response = await http.Response.fromStream(streamed);
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        return {'success': true, 'data': data['data']};
+      }
+      return {
+        'success': false,
+        'message': data['message'] ?? 'Failed to post discussion',
+      };
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};
     }

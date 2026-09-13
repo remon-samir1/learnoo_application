@@ -1,3 +1,5 @@
+import '../../../../core/utils/coerce.dart';
+
 class SocialLink {
   final String id;
   final String type;
@@ -12,11 +14,14 @@ class SocialLink {
   });
 
   factory SocialLink.fromJson(Map<String, dynamic> json) {
+    final rawAttrs = json['attributes'];
+    final Map<String, dynamic> attrs = rawAttrs is Map
+        ? Map<String, dynamic>.from(rawAttrs)
+        : <String, dynamic>{};
     return SocialLink(
       id: json['id']?.toString() ?? '',
       type: json['type']?.toString() ?? 'social-links',
-      attributes: SocialLinkAttributes.fromJson(json['attributes'] ?? {}),
-      
+      attributes: SocialLinkAttributes.fromJson(attrs),
     );
   }
 }
@@ -47,13 +52,18 @@ class SocialLinkAttributes {
   factory SocialLinkAttributes.fromJson(Map<String, dynamic> json) {
     final coursesList = json['courses'] as List<dynamic>?;
     return SocialLinkAttributes(
-      courses: coursesList?.map((c) => SocialLinkCourse.fromJson(c)).toList() ?? [],
+      courses: coursesList?.map((c) {
+        if (c is Map) {
+          return SocialLinkCourse.fromJson(Map<String, dynamic>.from(c));
+        }
+        return SocialLinkCourse.fromJson(<String, dynamic>{});
+      }).toList() ?? [],
       icon: json['icon']?.toString() ?? '',
       title: json['title']?.toString() ?? '',
       subtitle: json['subtitle']?.toString() ?? '',
       color: json['color']?.toString(),
       link: json['link']?.toString() ?? '',
-      status: json['status'] ?? false,
+      status: coerceFlag(json['status']),
       createdAt: DateTime.tryParse(json['created_at']?.toString() ?? '') ?? DateTime.now(),
       updatedAt: DateTime.tryParse(json['updated_at']?.toString() ?? '') ?? DateTime.now(),
     );

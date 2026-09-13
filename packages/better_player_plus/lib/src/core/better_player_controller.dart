@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:better_player_plus/better_player_plus.dart';
 import 'package:better_player_plus/src/configuration/better_player_controller_event.dart';
@@ -604,6 +605,14 @@ class BetterPlayerController {
 
     await videoPlayerController!.pause();
     _postEvent(BetterPlayerEvent(BetterPlayerEventType.pause));
+  }
+
+  /// Takes a snapshot of the current video frame as JPEG bytes.
+  Future<Uint8List?> takeSnapshot() async {
+    if (videoPlayerController == null) {
+      return null;
+    }
+    return videoPlayerController!.takeSnapshot();
   }
 
   ///Move player to specific position/moment of the video.

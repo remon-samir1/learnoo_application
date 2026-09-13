@@ -599,4 +599,29 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         setPictureInPicture(false)
         disposed = true
     }
+
+    public func takeSnapshot(completion: @escaping (Data?) -> Void) {
+        guard let item = player.currentItem else {
+            completion(nil)
+            return
+        }
+        let imageGenerator = AVAssetImageGenerator(asset: item.asset)
+        imageGenerator.appliesPreferredTrackTransform = true
+        imageGenerator.requestedTimeToleranceBefore = .zero
+        imageGenerator.requestedTimeToleranceAfter = .zero
+        let time = player.currentTime()
+        imageGenerator.generateCGImagesAsynchronously(forTimes: [NSValue(time: time)]) { _, image, _, result, _ in
+            if result == .succeeded, let image = image {
+                let uiImage = UIImage(cgImage: image)
+                let data = uiImage.jpegData(compressionQuality: 0.85)
+                DispatchQueue.main.async {
+                    completion(data)
+                }
+            } else {
+                DispatchQueue.main.async {
+                    completion(nil)
+                }
+            }
+        }
+    }
 }

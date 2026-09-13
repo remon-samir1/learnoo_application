@@ -2,7 +2,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:learnoo/features/academic/presentation/widgets/academic_picker_fields.dart';
 import 'package:learnoo/features/auth/data/auth_repository.dart';
+import 'package:learnoo/features/auth/domain/student_profile.dart';
 
 class EditProfileScreen extends StatefulWidget {
   final Map<String, dynamic>? userData;
@@ -25,6 +27,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   File? _selectedImage;
   String? _currentImageUrl;
 
+  // Academic selection, editable here exactly like the web profile form.
+  String? _universityId;
+  String? _centerId;
+  String? _facultyId;
+  String? _departmentId;
+
   @override
   void initState() {
     super.initState();
@@ -34,6 +42,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _emailController.text = (attributes?['email'] ?? '').toString();
     _phoneController.text = (attributes?['phone'] ?? attributes?['phone_number'] ?? '').toString();
     _currentImageUrl = attributes?['image']?.toString();
+
+    final profile = StudentProfile.fromAttributes(
+      attributes is Map ? Map<String, dynamic>.from(attributes) : null,
+    );
+    _universityId = profile.universityId;
+    _centerId = profile.centerId;
+    _facultyId = profile.facultyId;
+    _departmentId = profile.departmentId;
   }
 
   @override
@@ -177,6 +193,27 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
+  /// The academic half of the update body, matching the web's
+  /// `buildStudentAcademicUpdatePayload`: a `centers[]` entry alongside the
+  /// singular `center_id`, and `department_id` only when one is chosen.
+  Map<String, dynamic> _academicPayload() {
+    final university = _universityId;
+    final center = _centerId;
+    final faculty = _facultyId;
+    if (university == null || center == null || faculty == null) {
+      return const {};
+    }
+    final department = _departmentId;
+    return {
+      'university_id': university,
+      'faculty_id': faculty,
+      'centers[]': center,
+      'center_id': center,
+      if (department != null && department.isNotEmpty)
+        'department_id': department,
+    };
+  }
+
   Future<void> _handleSave() async {
     setState(() => _isLoading = true);
 
@@ -185,6 +222,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'first_name': _firstNameController.text,
         'last_name': _lastNameController.text,
         'email': _emailController.text,
+        ..._academicPayload(),
       },
       imageFile: _selectedImage,
     );
@@ -338,7 +376,29 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 style: TextStyle(color: Colors.grey, fontSize: 12),
               ),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: 24),
+            AcademicPickerFields(
+              universityId: _universityId,
+              centerId: _centerId,
+              facultyId: _facultyId,
+              departmentId: _departmentId,
+              enabled: !_isLoading,
+              showDepartment: false,
+              onChanged: ({
+                String? universityId,
+                String? centerId,
+                String? facultyId,
+                String? departmentId,
+              }) {
+                setState(() {
+                  _universityId = universityId;
+                  _centerId = centerId;
+                  _facultyId = facultyId;
+                  _departmentId = departmentId;
+                });
+              },
+            ),
+            const SizedBox(height: 8),
             SizedBox(
               width: double.infinity,
               height: 56,

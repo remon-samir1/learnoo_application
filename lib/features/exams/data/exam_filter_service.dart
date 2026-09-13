@@ -117,15 +117,20 @@ class ExamFilterService {
         continue;
       }
 
+      // Check if any of exam.courseIds belongs to allowed courses
+      if (exam.courseIds.any((cid) => allowedCourseIds.contains(int.tryParse(cid)))) {
+        filteredExams.add(exam);
+        continue;
+      }
+
       // Check if exam has chapter match
       if (exam.chapterId != null && allowedChapterIds.contains(exam.chapterId)) {
         filteredExams.add(exam);
         continue;
       }
 
-      // Handle edge case: chapter-only exam (no course_id, has chapter_id)
-      // Resolve chapter to course and check if that course is allowed
-      if (exam.chapterId != null && exam.courseId == null) {
+      // Handle edge case: chapter exam - resolve chapter to course
+      if (exam.chapterId != null) {
         final resolvedCourseId = await resolveChapterToCourse(exam.chapterId!);
         if (resolvedCourseId != null && allowedCourseIds.contains(resolvedCourseId)) {
           filteredExams.add(exam);
@@ -140,6 +145,7 @@ class ExamFilterService {
   /// 
   /// Shows exams where:
   /// - exam.course_id == courseId
+  /// - OR exam.courseIds contains courseId
   /// - OR exam.chapter_id belongs to this course
   static Future<List<Quiz>> filterExamsByCourse({
     required List<Quiz> exams,
@@ -155,43 +161,37 @@ class ExamFilterService {
       }
     }
 
-    print('[ExamFilterService] Filtering exams for course $courseId');
-    print('[ExamFilterService] Chapter IDs found: $chapterIds');
-    print('[ExamFilterService] Total exams to filter: ${exams.length}');
-
+    final courseIdStr = courseId.toString();
     final filteredExams = <Quiz>{};
 
     for (final exam in exams) {
-      print('[ExamFilterService] Exam: ${exam.title}, courseId: ${exam.courseId}, chapterId: ${exam.chapterId}');
-      
       // Check direct course match
       if (exam.courseId != null && exam.courseId == courseId) {
-        print('[ExamFilterService] Matched by direct course ID');
+        filteredExams.add(exam);
+        continue;
+      }
+
+      // Check courseIds list match
+      if (exam.courseIds.contains(courseIdStr)) {
         filteredExams.add(exam);
         continue;
       }
 
       // Check chapter match (exam's chapter belongs to this course)
       if (exam.chapterId != null && chapterIds.contains(exam.chapterId)) {
-        print('[ExamFilterService] Matched by chapter ID');
         filteredExams.add(exam);
         continue;
       }
 
-      // Handle edge case: exam has chapter but course_id is null
       // Resolve chapter to course and check if it matches
-      if (exam.chapterId != null && exam.courseId == null) {
-        print('[ExamFilterService] Attempting to resolve chapter ${exam.chapterId} to course');
+      if (exam.chapterId != null) {
         final resolvedCourseId = await resolveChapterToCourse(exam.chapterId!);
-        print('[ExamFilterService] Resolved course ID: $resolvedCourseId');
         if (resolvedCourseId == courseId) {
-          print('[ExamFilterService] Matched by resolved chapter-to-course');
           filteredExams.add(exam);
         }
       }
     }
 
-    print('[ExamFilterService] Filtered exams count: ${filteredExams.length}');
     return filteredExams.toList();
   }
 

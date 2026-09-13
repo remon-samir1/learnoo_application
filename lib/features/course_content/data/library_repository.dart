@@ -10,11 +10,19 @@ class LibraryRepository {
     return await _storage.read(key: 'auth_token');
   }
 
-  Future<Map<String, dynamic>> getLibraries() async {
+  /// `GET /v1/library`, optionally scoped to one course.
+  ///
+  /// [courseId] mirrors `getCourseLibrary` on the web, which the course
+  /// details page's Library tab calls with `?course_id=`.
+  Future<Map<String, dynamic>> getLibraries({int? courseId}) async {
     final token = await getToken();
     if (token == null) return {'success': false, 'message': 'No token found'};
 
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.libraries}');
+    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.libraries}')
+        .replace(
+      queryParameters:
+          courseId == null ? null : {'course_id': courseId.toString()},
+    );
     try {
       final response = await http.get(
         url,

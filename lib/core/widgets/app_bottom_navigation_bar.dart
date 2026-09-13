@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:learnoo/features/exams/presentation/screens/exams_list_screen.dart';
-import 'package:learnoo/features/home/presentation/screens/home_screen.dart';
 import 'package:learnoo/features/home/presentation/screens/my_courses_screen.dart';
 import 'package:learnoo/features/community/presentation/screens/community_screen.dart';
 import 'package:learnoo/features/course_content/presentation/screens/live_sessions_screen.dart';

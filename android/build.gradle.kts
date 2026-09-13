@@ -2,6 +2,9 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // Jitsi Meet SDK artifacts (jitsi_meet_flutter_sdk) are published here,
+        // not to Maven Central.
+        maven { url = uri("https://github.com/jitsi/jitsi-maven-repository/raw/master/releases") }
     }
 }
 

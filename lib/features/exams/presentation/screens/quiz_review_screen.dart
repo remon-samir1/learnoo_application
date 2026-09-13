@@ -65,18 +65,6 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
     }
   }
 
-  String? get _watermarkText {
-    final config = _featureManager.getWatermarkConfig('exams');
-    final parts = <String>[];
-    if (config.useStudentCode && _studentCode.isNotEmpty) {
-      parts.add(_studentCode);
-    }
-    if (config.usePhoneNumber && _phoneNumber.isNotEmpty) {
-      parts.add(_phoneNumber);
-    }
-    if (parts.isNotEmpty) return parts.join(' | ');
-    return config.text.isNotEmpty ? config.text : null;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -99,7 +87,8 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
       ),
       body: WatermarkWrapper(
         type: WatermarkType.exams,
-        studentCode: _watermarkText,
+        studentCode: _studentCode,
+        phone: _phoneNumber,
         featureManager: _featureManager,
         child: Column(
           children: [

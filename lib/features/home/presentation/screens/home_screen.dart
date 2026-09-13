@@ -3,8 +3,9 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../../../../core/services/student_scope.dart';
+import '../../../../core/utils/coerce.dart';
 import '../../../../core/theme/app_colors.dart';
-import '../../../../core/services/feature_manager.dart';
 import '../../../../core/widgets/feature_provider.dart';
 import '../../../auth/data/auth_repository.dart';
 import 'notifications_screen.dart';
@@ -13,23 +14,30 @@ import '../../../course_content/data/library_repository.dart';
 import '../../../course_content/presentation/screens/course_detail_screen.dart';
 import '../../../course_content/presentation/screens/electronic_library_screen.dart';
 import '../../../course_content/presentation/screens/lecture_detail_screen.dart';
-import '../../../course_content/presentation/screens/subject_detail_screen.dart';
 import '../../../course_content/presentation/screens/unlock_material_screen.dart';
 import '../../../course_content/presentation/screens/pdf_viewer_screen.dart';
+import '../../../course_content/presentation/screens/pdf_reviewer_screen.dart';
+import '../../../course_content/domain/chapter_access.dart';
+import '../../../../core/network/api_constants.dart';
 import '../../../course_content/presentation/screens/live_sessions_screen.dart';
 import '../../../course_content/presentation/screens/live_stream_screen.dart';
 import '../../../course_content/data/chapter_repository.dart';
 import '../../../course_content/data/live_room_repository.dart';
 import '../../../course_content/data/models/live_room.dart';
+import '../../../community/data/models/post_model.dart';
+import '../../../community/data/repositories/community_repository.dart';
+import '../../../community/presentation/screens/community_screen.dart';
+import '../../../exams/data/exam_repository.dart';
+import '../../../exams/domain/usecases/exam_access_usecase.dart';
+import '../../../exams/models/quiz_models.dart';
+import '../../../exams/presentation/screens/exams_list_screen.dart';
 import '../../../notes/data/notes_repository.dart';
 import '../../../notes/presentation/screens/summaries_list_screen.dart';
 import '../../../notes/presentation/screens/summary_detail_screen.dart';
 import '../../../profile/presentation/screens/my_profile_screen.dart';
 import '../../data/department_repository.dart';
-import '../../data/department_filter_service.dart';
 import '../../../search/data/search_repository.dart';
-import 'sub_departments_screen.dart';
-import 'department_options_screen.dart';
+import 'package:learnoo/features/category_tree/presentation/screens/category_tree_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -47,6 +55,9 @@ class _HomeScreenState extends State<HomeScreen> {
   final _chapterRepository = ChapterRepository();
   final _searchRepository = SearchRepository();
   final _liveRoomRepository = LiveRoomRepository();
+  final _communityRepository = CommunityRepository();
+  final _examRepository = ExamRepository();
+  final _examAccessUseCase = ExamAccessUseCase();
   bool _isLoading = true;
   bool _isContinueWatchingLoading = true;
   bool _isCoursesLoading = true;
@@ -73,6 +84,17 @@ class _HomeScreenState extends State<HomeScreen> {
   List<dynamic> _continueWatchingList = [];
   List<LiveRoom> _liveClasses = [];
   bool _isLiveClassesLoading = true;
+
+  /// Latest general community posts and upcoming exams — the home page's
+  /// `LatestPostsSection` and `NewestExams`, which the app was missing.
+  List<Post> _latestPosts = const [];
+  bool _isLatestPostsLoading = true;
+  List<Quiz> _latestExams = const [];
+  bool _isLatestExamsLoading = true;
+
+  /// Which courses this student may see and which they activated. Every
+  /// section on this screen is narrowed through it, matching the web.
+  StudentScope _scope = const StudentScope.empty();
 
   // Search state variables
   final TextEditingController _searchController = TextEditingController();
@@ -124,11 +146,112 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    // The scope has to land before the sections that filter through it, so
+    // nothing flashes content from a course the student is not enrolled in.
+    _loadScopeThenSections();
     _loadUserData();
-    _loadLiveClasses();
-    _loadNotes();
-    _loadLibraries();
-    _loadContinueWatching();
+  }
+
+  /// Loads the student's course scope, then every section that filters by it.
+  ///
+  /// The web builds `enrolledCourseIds` once and narrows continue-watching,
+  /// notes, library, live sessions and the subject tree through it
+  /// (`app/[locale]/student/page.tsx`). Without this the app showed material
+  /// for courses the student never activated.
+  Future<void> _loadScopeThenSections() async {
+    try {
+      final scope = await StudentScopeService().load();
+      if (mounted) setState(() => _scope = scope);
+    } catch (_) {
+      // Fall through with an empty scope; sections handle it below.
+    }
+
+    if (!mounted) return;
+    await Future.wait([
+      _loadLiveClasses(),
+      _loadNotes(),
+      _loadLibraries(),
+      _loadContinueWatching(),
+      _loadLatestPosts(),
+      _loadLatestExams(),
+    ]);
+  }
+
+  /// Filters a list by the course id each item carries.
+  ///
+  /// Once the scope has loaded this is strict, exactly like the web: an item
+  /// with no course id, or one pointing at a course the student has not
+  /// activated, is dropped — and a student enrolled in nothing sees empty
+  /// sections rather than the whole catalogue. Only a scope that never loaded
+  /// (offline, or the call failed) lets the list through untouched.
+  List<dynamic> _keepEnrolled(
+    List<dynamic> items,
+    dynamic Function(dynamic item) courseIdOf,
+  ) {
+    if (!_scope.isLoaded) return items;
+    return items.where((item) => _scope.isEnrolled(courseIdOf(item))).toList();
+  }
+
+  /// The three newest general posts, matching `getLatestGeneralPosts`:
+  /// top-level (no parent), published, and attached to no course.
+  Future<void> _loadLatestPosts() async {
+    setState(() => _isLatestPostsLoading = true);
+    try {
+      final result = await _communityRepository.getPosts();
+      if (result['success'] == true && mounted) {
+        final all = (result['data'] as List<Post>?) ?? const <Post>[];
+        final general = all
+            .where((post) =>
+                post.attributes.parentId == null &&
+                post.attributes.status == 'published' &&
+                post.attributes.courseId == null)
+            .toList()
+          ..sort((a, b) =>
+              b.attributes.createdAt.compareTo(a.attributes.createdAt));
+
+        setState(() {
+          _latestPosts = general.take(3).toList();
+          _isLatestPostsLoading = false;
+        });
+      } else if (mounted) {
+        setState(() => _isLatestPostsLoading = false);
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLatestPostsLoading = false);
+    }
+  }
+
+  /// The newest non-expired exams for the student's own courses, matching
+  /// `getLatestStudentExams` plus the home page's enrolled-course filter.
+  Future<void> _loadLatestExams() async {
+    setState(() => _isLatestExamsLoading = true);
+    try {
+      final result = await _examRepository.getQuizzes(perPage: 100);
+      if (result['success'] == true && mounted) {
+        final all = (result['data'] as List<Quiz>?) ?? const <Quiz>[];
+
+        final upcoming = all.where((quiz) {
+          if (quiz.isExpired) return false;
+          if (!_scope.isLoaded) return true;
+          final ids = <dynamic>[
+            ...quiz.courseIds,
+            if (quiz.courseId != null) quiz.courseId,
+          ];
+          // An exam attached to no course at all is hidden, like on the web.
+          return ids.isNotEmpty && _scope.isAnyEnrolled(ids);
+        }).toList()
+          ..sort((a, b) => b.startTime.compareTo(a.startTime));
+
+        setState(() {
+          _latestExams = upcoming.take(3).toList();
+          _isLatestExamsLoading = false;
+        });
+      } else if (mounted) {
+        setState(() => _isLatestExamsLoading = false);
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLatestExamsLoading = false);
+    }
   }
 
   Future<void> _loadLibraries() async {
@@ -136,8 +259,12 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final result = await _libraryRepository.getLibraries();
       if (result['success'] && mounted) {
+        final all = (result['data'] ?? []) as List<dynamic>;
         setState(() {
-          _libraries = result['data'] ?? [];
+          _libraries = _keepEnrolled(all, (item) {
+            final attrs = item is Map ? (item['attributes'] ?? item) : null;
+            return attrs is Map ? attrs['course_id'] : null;
+          });
           _isLibrariesLoading = false;
         });
       } else if (mounted) {
@@ -155,8 +282,12 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final result = await _notesRepository.getNotes();
       if (result['success'] && mounted) {
+        final all = (result['data'] ?? []) as List<dynamic>;
         setState(() {
-          _notes = result['data'] ?? [];
+          _notes = _keepEnrolled(all, (item) {
+            final attrs = item is Map ? (item['attributes'] ?? item) : null;
+            return attrs is Map ? attrs['course_id'] : null;
+          });
           _isNotesLoading = false;
         });
       } else if (mounted) {
@@ -217,8 +348,18 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final result = await _liveRoomRepository.getLiveRooms();
       if (result['success'] && mounted) {
+        final all = result['data'] as List<LiveRoom>;
         setState(() {
-          _liveClasses = result['data'] as List<LiveRoom>;
+          // A session can belong to several courses; keep it when any of them
+          // is one the student activated. A session attached to no course at
+          // all is dropped, which is what the web does.
+          _liveClasses = !_scope.isLoaded
+              ? all
+              : all
+                  .where((room) =>
+                      _scope.isAnyEnrolled(room.courseIds) ||
+                      (room.courseId != null && _scope.isEnrolled(room.courseId)))
+                  .toList();
           _isLiveClassesLoading = false;
         });
       } else if (mounted) {
@@ -505,13 +646,54 @@ class _HomeScreenState extends State<HomeScreen> {
                           ],
                         ),
                       ),
-                      _buildSectionHeader('home.my_subjects'.tr()),
+                      _buildSectionHeaderWithAction(
+                        'home.my_subjects'.tr(),
+                        'home.view_all'.tr(),
+                        () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const CategoryTreeScreen(),
+                            ),
+                          );
+                        },
+                      ),
                       const SizedBox(height: 20),
                       _buildSubjectsList(),
                       const SizedBox(height: 32),
                       _buildSectionHeader('home.my_courses_title'.tr()),
                       const SizedBox(height: 20),
                       _buildCoursesList(),
+                      const SizedBox(height: 32),
+                      _buildSectionHeaderWithAction(
+                        'home.latest_posts'.tr(),
+                        'home.view_all'.tr(),
+                        () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const CommunityScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 20),
+                      _buildLatestPostsList(),
+                      const SizedBox(height: 32),
+                      _buildSectionHeaderWithAction(
+                        'home.newest_exams'.tr(),
+                        'home.view_all'.tr(),
+                        () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const ExamsListScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 20),
+                      _buildNewestExamsList(),
                       const SizedBox(height: 32),
                       _buildSectionHeader('home.upcoming_live_classes'.tr()),
                       const SizedBox(height: 20),
@@ -1117,6 +1299,37 @@ class _HomeScreenState extends State<HomeScreen> {
     // Get max_views from chapter data if available
     final maxViews = int.tryParse(attributes['max_views']?.toString() ?? '');
 
+    if (chapterIsPdfOnly(chapter)) {
+      final pdfs = chapterPdfAttachments(chapter);
+      dynamic chosenPdf = pdfs.isNotEmpty ? pdfs.first : null;
+      final rawAtts = attributes['attachments'];
+      if (chosenPdf == null && rawAtts is List && rawAtts.isNotEmpty) {
+        chosenPdf = rawAtts.first;
+      }
+      if (chosenPdf != null) {
+        final attAttrs = chosenPdf['attributes'] is Map ? chosenPdf['attributes'] as Map : chosenPdf;
+        String pdfPath = attAttrs['path']?.toString() ?? '';
+        final pdfName = attAttrs['name']?.toString() ?? title;
+        if (pdfPath.isNotEmpty) {
+          if (!pdfPath.startsWith('http')) {
+            pdfPath = pdfPath.replaceAll('\\', '/');
+            if (!pdfPath.startsWith('/')) pdfPath = '/$pdfPath';
+            pdfPath = '${ApiConstants.baseUrl}$pdfPath';
+          }
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => PdfReviewerScreen(
+                pdfUrl: pdfPath,
+                title: pdfName,
+              ),
+            ),
+          );
+          return;
+        }
+      }
+    }
+
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -1229,13 +1442,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final chapterAttributes = chapterData['attributes'] ?? {};
 
     final chapterTitle = chapterAttributes['title']?.toString() ?? 'Chapter';
-    final thumbnail =
-        chapterAttributes['thumbnail']?.toString() ??
-        'https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=400';
+    final thumbnail = chapterAttributes['thumbnail']?.toString() ?? '';
     final duration = chapterAttributes['duration']?.toString() ?? '00:00';
     final progressSeconds =
         (attributes['progress_seconds'] as num?)?.toInt() ?? 0;
-    final isCompleted = attributes['is_completed'] as bool? ?? false;
+    // The API sends 1 / "1" as often as true, which an `as bool?` cast turns
+    // into false.
+    final isCompleted = coerceFlag(attributes['is_completed']);
 
     // Calculate progress percentage from duration and progress_seconds
     double progress = 0.0;
@@ -1631,11 +1844,12 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Row(
         children: List.generate(3, (index) {
           return Container(
-            width: 280,
-            margin: const EdgeInsets.only(right: 16),
+            width: _subjectCardWidth,
+            height: _subjectCardHeight,
+            margin: const EdgeInsets.only(right: 12),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(16),
             ),
             child: Shimmer.fromColors(
               baseColor: Colors.grey[300]!,
@@ -1644,23 +1858,23 @@ class _HomeScreenState extends State<HomeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    height: 160,
+                    height: _subjectThumbnailHeight,
                     width: double.infinity,
                     decoration: const BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.vertical(
-                        top: Radius.circular(20),
+                        top: Radius.circular(16),
                       ),
                     ),
                   ),
                   Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Container(
                           width: double.infinity,
-                          height: 18,
+                          height: 14,
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(4),
@@ -1668,8 +1882,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         const SizedBox(height: 8),
                         Container(
-                          width: 150,
-                          height: 14,
+                          width: 80,
+                          height: 11,
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(4),
@@ -1697,36 +1911,43 @@ class _HomeScreenState extends State<HomeScreen> {
   ) {
     final firstLetter = title.isNotEmpty ? title[0].toUpperCase() : '?';
 
+    final attributes = subject is Map ? (subject['attributes'] ?? {}) : {};
+    final stats = attributes is Map ? attributes['stats'] : null;
+    final coursesCount = stats is Map ? coerceInt(stats['courses']) : 0;
+    final studentsCount = stats is Map ? coerceInt(stats['students']) : 0;
+
     return Container(
-      width: 280,
-      margin: const EdgeInsets.only(right: 16),
+      width: _subjectCardWidth,
+      height: _subjectCardHeight,
+      margin: const EdgeInsets.only(right: 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 15,
-            offset: const Offset(0, 5),
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
           ),
         ],
       ),
       child: InkWell(
         onTap: () =>
             _navigateToSubjectDetail(subject, subjectId, title, imageUrl),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ClipRRect(
               borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(20),
+                top: Radius.circular(16),
               ),
               child: imageUrl.isNotEmpty
                   ? CachedNetworkImage(
                       imageUrl: imageUrl,
                       width: double.infinity,
-                      height: 160,
+                      height: _subjectThumbnailHeight,
                       fit: BoxFit.cover,
                       memCacheWidth: 400,
                       memCacheHeight: 320,
@@ -1743,32 +1964,41 @@ class _HomeScreenState extends State<HomeScreen> {
                     )
                   : _buildSubjectIconFallback(firstLetter, iconColor),
             ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      color: iconColor,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 18,
-                      letterSpacing: -0.5,
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: iconColor,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                        height: 1.25,
+                        letterSpacing: -0.3,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 4),
-                  Container(
-                    height: 4,
-                    width: 40,
-                    decoration: BoxDecoration(
-                      color: iconColor.withValues(alpha: 0.3),
-                      borderRadius: BorderRadius.circular(2),
+                    const Spacer(),
+                    // Same two counters the web card shows under the title.
+                    Row(
+                      children: [
+                        _subjectStat(
+                          Icons.menu_book_outlined,
+                          '$coursesCount',
+                        ),
+                        const SizedBox(width: 12),
+                        _subjectStat(
+                          Icons.people_alt_outlined,
+                          '$studentsCount',
+                        ),
+                      ],
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ],
@@ -1777,10 +2007,35 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Department card metrics.
+  ///
+  /// The old card was 280x260 with a 160px thumbnail, which on a phone left
+  /// barely one card visible and pushed the rest of the home screen down. These
+  /// are sized so two cards fit side by side on a 360dp screen, and the fixed
+  /// height keeps every card in the row the same size no matter how long its
+  /// title is.
+  static const double _subjectCardWidth = 168;
+  static const double _subjectThumbnailHeight = 104;
+  static const double _subjectCardHeight = 184;
+
+  Widget _subjectStat(IconData icon, String value) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: const Color(0xFF9CA3AF)),
+        const SizedBox(width: 4),
+        Text(
+          value,
+          style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
+        ),
+      ],
+    );
+  }
+
   Widget _buildSubjectIconFallback(String letter, Color color) {
     return Container(
       width: double.infinity,
-      height: 160,
+      height: _subjectThumbnailHeight,
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.1),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
@@ -1804,60 +2059,14 @@ class _HomeScreenState extends State<HomeScreen> {
     String title,
     String imageUrl,
   ) {
-    // Check if this department has children (sub-departments)
-    final hasChildren = _hasChildren(subject);
-
-    // Extract childrens array if available
-    final attributes = subject['attributes'] as Map<String, dynamic>?;
-    final children = attributes?['childrens'] as List<dynamic>?;
-
-    // Check if this department has courses
-    final stats = attributes?['stats'] as Map<String, dynamic>?;
-    final coursesCount = stats?['courses'] as int? ?? 0;
-    final hasCourses = coursesCount > 0;
-
-    if (hasChildren && hasCourses) {
-      // Department has both courses and children - show options screen
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => DepartmentOptionsScreen(
-            departmentId: subjectId,
-            departmentTitle: title,
-            departmentImage: imageUrl,
-            allDepartments: _allDepartments,
-            children: children,
-            coursesCount: coursesCount,
-          ),
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CategoryTreeScreen(
+          initialSelectedId: subjectId,
         ),
-      );
-    } else if (hasChildren) {
-      // Navigate to sub-departments screen
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => SubDepartmentsScreen(
-            parentId: subjectId,
-            parentTitle: title,
-            parentImage: imageUrl,
-            allDepartments: _allDepartments,
-            children: children,
-          ),
-        ),
-      );
-    } else {
-      // Navigate directly to subject detail
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => SubjectDetailScreen(
-            subjectId: subjectId,
-            subjectTitle: title,
-            subjectImage: imageUrl,
-          ),
-        ),
-      );
-    }
+      ),
+    );
   }
 
   Widget _buildCoursesList() {
@@ -1897,9 +2106,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ?.toString() ??
               attributes['instructor_name']?.toString() ??
               'Unknown Instructor';
-          final thumbnail =
-              attributes['thumbnail']?.toString() ??
-              'https://images.unsplash.com/photo-1554224155-26032ffc0d07?w=400';
+          final thumbnail = attributes['thumbnail']?.toString() ?? '';
           final accentColor = const Color(0xFF2137D6);
 
           return _buildCourseCard(
@@ -2067,6 +2274,342 @@ class _HomeScreenState extends State<HomeScreen> {
       final attributes = note['attributes'] ?? {};
       return attributes['type'] == 'summary';
     }).toList();
+  }
+
+  // -----------------------------------------------------------------------
+  // Latest community posts — the web's `LatestPostsSection`.
+  // -----------------------------------------------------------------------
+
+  Widget _buildLatestPostsList() {
+    if (_isLatestPostsLoading) {
+      return Column(
+        children: [_buildFeedShimmerCard(), _buildFeedShimmerCard()],
+      );
+    }
+
+    if (_latestPosts.isEmpty) {
+      return _buildFeedEmptyState('home.no_posts'.tr());
+    }
+
+    return Column(children: _latestPosts.map(_buildLatestPostCard).toList());
+  }
+
+  Widget _buildLatestPostCard(Post post) {
+    final attrs = post.attributes;
+    final author = attrs.user?.attributes;
+    final authorName = author == null || author.fullName.trim().isEmpty
+        ? 'community.unknown_user'.tr()
+        : author.fullName.trim();
+    final title = attrs.title.trim().isEmpty ? attrs.content : attrs.title;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const CommunityScreen()),
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              height: 48,
+              width: 48,
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(
+                Icons.person_outline,
+                color: AppColors.primaryBlue,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                      color: Color(0xFF1F2937),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    authorName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF9CA3AF),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.chat_bubble_outline,
+                        size: 13,
+                        color: Color(0xFF9CA3AF),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '${attrs.commentsCount}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF9CA3AF),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      const Icon(
+                        Icons.thumb_up_outlined,
+                        size: 13,
+                        color: Color(0xFF9CA3AF),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '${attrs.reactionsCount}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF9CA3AF),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // Newest exams — the web's `NewestExams`.
+  // -----------------------------------------------------------------------
+
+  Widget _buildNewestExamsList() {
+    if (_isLatestExamsLoading) {
+      return Column(
+        children: [_buildFeedShimmerCard(), _buildFeedShimmerCard()],
+      );
+    }
+
+    if (_latestExams.isEmpty) {
+      return _buildFeedEmptyState('home.no_exams'.tr());
+    }
+
+    return Column(children: _latestExams.map(_buildNewestExamCard).toList());
+  }
+
+  Widget _buildNewestExamCard(Quiz quiz) {
+    final isAvailable = quiz.isAvailable;
+    final title = quiz.title.trim().isEmpty
+        ? 'home.untitled_exam'.tr()
+        : quiz.title.trim();
+    final typeLabel = quiz.type == 'homework'
+        ? 'exams.type_homework'.tr()
+        : 'exams.type_exam'.tr();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                height: 48,
+                width: 48,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.assignment_outlined,
+                  color: AppColors.primaryBlue,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                        color: Color(0xFF1F2937),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 4,
+                      children: [
+                        _examMetaChip(Icons.description_outlined, typeLabel),
+                        if (quiz.duration > 0)
+                          _examMetaChip(
+                            Icons.schedule,
+                            'exams.duration_minutes'
+                                .tr(args: ['${quiz.duration}']),
+                          ),
+                        _examMetaChip(
+                          Icons.calendar_today_outlined,
+                          _formatExamDate(quiz.startTime),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isAvailable
+                      ? const Color(0xFFECFDF5)
+                      : const Color(0xFFFFF7ED),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  isAvailable
+                      ? 'exams.status_available'.tr()
+                      : 'exams.status_upcoming'.tr(),
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: isAvailable
+                        ? const Color(0xFF047857)
+                        : const Color(0xFFC2410C),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: isAvailable
+                  ? () => _examAccessUseCase.handleExamAccess(
+                        context: context,
+                        quiz: quiz,
+                        enrolledCourseIds: _scope.enrolledCourseIds,
+                      )
+                  : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryBlue,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: const Color(0xFFE5E7EB),
+                disabledForegroundColor: AppColors.textGray,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: Text(
+                isAvailable
+                    ? 'exams.btn_start_exam'.tr()
+                    : 'exams.btn_not_available'.tr(),
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _examMetaChip(IconData icon, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: const Color(0xFF9CA3AF)),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF)),
+        ),
+      ],
+    );
+  }
+
+  static const List<String> _monthAbbreviations = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  String _formatExamDate(DateTime value) {
+    final local = value.toLocal();
+    final month = _monthAbbreviations[local.month - 1];
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '${local.day.toString().padLeft(2, '0')} $month, ${local.hour}:$minute';
+  }
+
+  /// Shared empty state for the two feed sections above.
+  Widget _buildFeedEmptyState(String message) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F8FA),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Text(
+        message,
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 13, color: Color(0xFF9CA3AF)),
+      ),
+    );
+  }
+
+  Widget _buildFeedShimmerCard() {
+    return Shimmer.fromColors(
+      baseColor: const Color(0xFFEEEEEE),
+      highlightColor: const Color(0xFFF5F5F5),
+      child: Container(
+        height: 96,
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+      ),
+    );
   }
 
   Widget _buildNotesSummariesList() {
@@ -2816,8 +3359,16 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final result = await _chapterRepository.getUserProgress();
       if (result['success'] && mounted) {
+        final all = (result['data'] ?? []) as List<dynamic>;
         setState(() {
-          _continueWatchingList = result['data'] ?? [];
+          // Progress rows reach the course through the chapter they belong to.
+          _continueWatchingList = _keepEnrolled(all, (item) {
+            if (item is! Map) return null;
+            final attrs = item['attributes'];
+            if (attrs is! Map) return null;
+            final chapter = attrs['chapter']?['data']?['attributes'];
+            return chapter is Map ? chapter['course_id'] : null;
+          });
           _isContinueWatchingLoading = false;
         });
       } else if (mounted) {
@@ -2848,21 +3399,54 @@ class _HomeScreenState extends State<HomeScreen> {
     final progressSeconds =
         (attributes['progress_seconds'] as num?)?.toInt() ?? 0;
 
-    if (chapterId.isNotEmpty && lectureId.isNotEmpty) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => LectureDetailScreen(
-            lectureId: lectureId,
-            lectureTitle: lectureTitle,
-            chapterId: chapterId,
-            chapterTitle: chapterTitle,
-            courseId: courseId,
-            initialPosition: progressSeconds,
-            maxViews: maxViews,
+    if (chapterId.isNotEmpty) {
+      if (chapterIsPdfOnly(chapterData)) {
+        final pdfs = chapterPdfAttachments(chapterData);
+        dynamic chosenPdf = pdfs.isNotEmpty ? pdfs.first : null;
+        final rawAtts = chapterAttributes['attachments'];
+        if (chosenPdf == null && rawAtts is List && rawAtts.isNotEmpty) {
+          chosenPdf = rawAtts.first;
+        }
+        if (chosenPdf != null) {
+          final attAttrs = chosenPdf['attributes'] is Map ? chosenPdf['attributes'] as Map : chosenPdf;
+          String pdfPath = attAttrs['path']?.toString() ?? '';
+          final pdfName = attAttrs['name']?.toString() ?? chapterTitle;
+          if (pdfPath.isNotEmpty) {
+            if (!pdfPath.startsWith('http')) {
+              pdfPath = pdfPath.replaceAll('\\', '/');
+              if (!pdfPath.startsWith('/')) pdfPath = '/$pdfPath';
+              pdfPath = '${ApiConstants.baseUrl}$pdfPath';
+            }
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => PdfReviewerScreen(
+                  pdfUrl: pdfPath,
+                  title: pdfName,
+                ),
+              ),
+            );
+            return;
+          }
+        }
+      }
+
+      if (lectureId.isNotEmpty) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => LectureDetailScreen(
+              lectureId: lectureId,
+              lectureTitle: lectureTitle,
+              chapterId: chapterId,
+              chapterTitle: chapterTitle,
+              courseId: courseId,
+              initialPosition: progressSeconds,
+              maxViews: maxViews,
+            ),
           ),
-        ),
-      );
+        );
+      }
     }
   }
 }

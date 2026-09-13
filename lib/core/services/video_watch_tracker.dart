@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:better_player_plus/better_player_plus.dart';
 
@@ -41,17 +40,16 @@ class VideoWatchTracker extends ChangeNotifier {
     required this.chapterId,
     required this.viewByMinute,
     this.onThresholdReached,
-  }) {
-    if (viewByMinute <= 0) {
-      debugPrint(
-        '[VideoWatchTracker] Warning: viewByMinute is $viewByMinute, '
-        'threshold is 10s',
-      );
-    }
-  }
+  });
+
+  /// `view_by_minute <= 0` means "count the view as soon as playback starts",
+  /// which is how the web reads it (`useChapterViewRecording.ts`). The old
+  /// 10-second grace period here meant a student who opened and closed a
+  /// chapter within ten seconds was never charged a view the web would charge.
+  bool get _countsImmediately => viewByMinute <= 0;
 
   int get watchedSeconds => _watchedSeconds;
-  int get requiredSeconds => viewByMinute > 0 ? viewByMinute * 60 : 10;
+  int get requiredSeconds => _countsImmediately ? 0 : viewByMinute * 60;
   int get remainingSeconds =>
       (requiredSeconds - _watchedSeconds).clamp(0, requiredSeconds);
   bool get viewCounted => _viewCounted;
@@ -229,6 +227,15 @@ class VideoWatchTracker extends ChangeNotifier {
       debugPrint(
         '[VideoWatchTracker] _startTracking() early return: vc=$vc, isPlaying=$isPlaying',
       );
+      return;
+    }
+
+    // No minimum watch time: the view is registered on the first play.
+    if (_countsImmediately) {
+      debugPrint(
+        '[VideoWatchTracker] view_by_minute<=0 → counting view on first play',
+      );
+      _markAsViewed();
       return;
     }
 

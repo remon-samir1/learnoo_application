@@ -325,20 +325,13 @@ class ChapterRepository with OfflineFirstRepository {
       final url =
           '${ApiConstants.baseUrl}${ApiConstants.chapters}/$chapterId/view';
       debugPrint('[ChapterRepository] incrementViewCount: POST $url');
-      debugPrint(
-        '[ChapterRepository] Body: {"watched_minutes": $watchedMinutes}',
-      );
 
-      final response = await http.post(
-        Uri.parse(url),
-        headers: headers,
-        // body: jsonEncode({
-        //   'watched_minutes': watchedMinutes,
-        // }),
-      );
+      // No body, matching the web's `chaptersApi.recordView`: the server
+      // derives the watched time from its own view record. The log used to
+      // claim a `watched_minutes` payload that was never sent.
+      final response = await http.post(Uri.parse(url), headers: headers);
 
       debugPrint('[ChapterRepository] Response Status: ${response.statusCode}');
-      debugPrint('[ChapterRepository] Response Body: ${response.body}');
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = jsonDecode(response.body);

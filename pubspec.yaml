@@ -116,9 +116,7 @@ dependencies:
 
   syncfusion_flutter_pdf: ^33.1.47
 
-  peerdart: ^0.5.6
 
-  flutter_webrtc: ^1.4.1
 
   screen_capture_event: ^1.0.0+1
 
@@ -160,6 +158,8 @@ dependencies:
   # Real-time notifications
   web_socket_channel: ^3.0.3
   pull_to_refresh: ^2.0.0
+  jitsi_meet_flutter_sdk: ^13.1.1
+  cryptography: ^2.9.0
 
 
 dev_dependencies:
@@ -289,8 +289,4 @@ flutter_icons:
   adaptive_icon_foreground: "assets/images/Logo.jpeg"
 
 
-
-dependency_overrides:
-
-  flutter_webrtc: ^1.4.1
 

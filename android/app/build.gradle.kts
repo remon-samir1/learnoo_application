@@ -41,7 +41,8 @@ android {
         applicationId = "com.example.learnoo"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // Jitsi Meet SDK 13.x requires API 26 or newer.
+        minSdk = maxOf(flutter.minSdkVersion, 26)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -61,6 +62,25 @@ android {
     lint {
         disable += "Instantiatable"
     }
+
+    packaging {
+        jniLibs {
+            // The Jitsi Meet SDK (react-android) and flutter_pdfview (pdfium)
+            // each bundle the shared C++ runtime. It is the same library, so
+            // taking the first one is correct — without this the native-lib
+            // merge fails on a duplicate path.
+            pickFirsts += "lib/**/libc++_shared.so"
+        }
+    }
+}
+
+// The Jitsi Meet SDK ships its own copy of the media3 RTSP classes inside
+// react-native-video. video_player_android pulls the standalone
+// `media3-exoplayer-rtsp` artifact in transitively, and having both makes
+// `checkDuplicateClasses` fail. Chapter video is HLS/MP4 — the app never plays
+// RTSP — so the standalone artifact is dropped and Jitsi's copy is used.
+configurations.all {
+    exclude(group = "androidx.media3", module = "media3-exoplayer-rtsp")
 }
 
 flutter {
@@ -74,6 +94,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
     implementation("androidx.media3:media3-exoplayer-dash:1.4.1")
-    implementation("androidx.media3:media3-exoplayer-rtsp:1.4.1")
     implementation("androidx.media3:media3-session:1.4.1")
+    // media3-exoplayer-rtsp is deliberately absent: the Jitsi Meet SDK bundles
+    // the same RTSP classes through react-native-video, and having both makes
+    // the duplicate-class check fail. Chapter video is HLS/MP4, never RTSP.
 }

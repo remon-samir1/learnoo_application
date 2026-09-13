@@ -49,6 +49,11 @@ class WatermarkConfig {
   final bool voiceEnabled;
   final int voiceInterval;
 
+  /// `watermark_{type}_movement_pattern`. Only the admin preview varies with
+  /// it on the web, but it is carried through so the two clients read the same
+  /// settings and a future player can honour it.
+  final String movementPattern;
+
   // Color property
   final Color? color;
 
@@ -68,6 +73,7 @@ class WatermarkConfig {
     required this.easingType,
     required this.voiceEnabled,
     required this.voiceInterval,
+    this.movementPattern = 'random',
     this.color,
   });
 
@@ -112,7 +118,8 @@ class WatermarkConfig {
       case 'bottomright': return WatermarkPosition.bottomRight;
       case 'center': return WatermarkPosition.center;
       case 'full': return WatermarkPosition.full;
-      default: return WatermarkPosition.center;
+      // The web's DEFAULT_WATERMARK_CONFIG.position is `full`.
+      default: return WatermarkPosition.full;
     }
   }
 

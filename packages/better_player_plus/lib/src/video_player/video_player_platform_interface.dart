@@ -157,6 +157,11 @@ abstract class VideoPlayerPlatform {
     throw UnimplementedError('setMixWithOthers() has not been implemented.');
   }
 
+  /// Takes a snapshot of the current video frame as JPEG bytes.
+  Future<Uint8List?> takeSnapshot(int? textureId) {
+    throw UnimplementedError('takeSnapshot() has not been implemented.');
+  }
+
   Future<void> clearCache() {
     throw UnimplementedError('clearCache() has not been implemented.');
   }

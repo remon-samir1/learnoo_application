@@ -183,6 +183,12 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
   );
 
   @override
+  Future<Uint8List?> takeSnapshot(int? textureId) => _channel.invokeMethod<Uint8List>(
+    'takeSnapshot',
+    <String, dynamic>{'textureId': textureId},
+  );
+
+  @override
   Future<void> clearCache() => _channel.invokeMethod<void>('clearCache', <String, dynamic>{});
 
   @override

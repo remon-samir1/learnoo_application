@@ -26,11 +26,16 @@ class NotesRepository {
     return defaultMessage;
   }
 
-  Future<Map<String, dynamic>> getNotes() async {
+  /// `GET /v1/note`, optionally scoped to one course.
+  Future<Map<String, dynamic>> getNotes({int? courseId}) async {
     final token = await _authRepository.getToken();
     if (token == null) return {'success': false, 'message': 'No token found'};
 
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.notes}');
+    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.notes}')
+        .replace(
+      queryParameters:
+          courseId == null ? null : {'course_id': courseId.toString()},
+    );
 
     try {
       final response = await http.get(

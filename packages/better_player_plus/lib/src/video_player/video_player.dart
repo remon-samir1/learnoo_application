@@ -419,6 +419,14 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
     await _applyPlayPause();
   }
 
+  /// Takes a snapshot of the current video frame as JPEG bytes.
+  Future<Uint8List?> takeSnapshot() async {
+    if (!_created || _isDisposed) {
+      return null;
+    }
+    return _videoPlayerPlatform.takeSnapshot(_textureId);
+  }
+
   Future<void> _applyLooping() async {
     if (!_created || _isDisposed) {
       return;

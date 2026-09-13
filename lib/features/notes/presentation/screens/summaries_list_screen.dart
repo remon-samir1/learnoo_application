@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:shimmer/shimmer.dart';
+import '../../../../core/services/student_scope.dart';
 import '../../data/notes_repository.dart';
 import 'summary_detail_screen.dart';
 
@@ -14,6 +15,7 @@ class SummariesListScreen extends StatefulWidget {
 
 class _SummariesListScreenState extends State<SummariesListScreen> {
   final NotesRepository _notesRepository = NotesRepository();
+
   bool _isLoading = true;
   bool _hasError = false;
   String _errorMessage = '';
@@ -33,10 +35,20 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
     });
 
     try {
+      final scope = await StudentScopeService().load();
       final result = await _notesRepository.getNotes();
       if (result['success'] && mounted) {
+        final all = (result['data'] as List?) ?? const [];
         setState(() {
-          _notes = result['data'] ?? [];
+          _notes = scope.isLoaded
+              ? all.where((note) {
+                  final attributes =
+                      note is Map ? (note['attributes'] ?? note) : null;
+                  final courseId =
+                      attributes is Map ? attributes['course_id'] : null;
+                  return scope.isEnrolled(courseId);
+                }).toList()
+              : all;
           _isLoading = false;
         });
       } else if (mounted) {

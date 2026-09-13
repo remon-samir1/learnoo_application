@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:shimmer/shimmer.dart';
+import '../../../../core/services/student_scope.dart';
+import '../../../../core/widgets/pagination_bar.dart';
 import '../../data/live_room_repository.dart';
 import '../../data/models/live_room.dart' as lr;
 import 'widgets/session_detail_modal.dart';
@@ -22,55 +25,160 @@ class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
   bool _isLoading = true;
   String? _errorMessage;
 
+  // Pagination & Search state
+  final TextEditingController _searchController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  Timer? _debounceTimer;
+  int _currentPage = 1;
+  int _lastPage = 1;
+  static const int _perPage = 15;
+  bool _hasNextPage = false;
+  bool _isSearching = false;
+  String _searchQuery = '';
+  StudentScope _scope = const StudentScope.empty();
+
   @override
   void initState() {
     super.initState();
     _loadLiveRooms();
   }
 
-  Future<void> _loadLiveRooms() async {
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _searchController.dispose();
+    _debounceTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadLiveRooms({int page = 1}) async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
+      _currentPage = page;
     });
 
     try {
-      final result = await _liveRoomRepository.getLiveRooms();
-      if (mounted) {
-        if (result['success']) {
-          setState(() {
-            _sessions = result['data'] as List<lr.LiveRoom>;
-            _isLoading = false;
-          });
-        } else {
-          setState(() {
-            _errorMessage = result['message'];
-            _isLoading = false;
-          });
+      final results = await Future.wait([
+        _liveRoomRepository.getLiveRooms(
+          page: page,
+          perPage: _perPage,
+          search: _searchQuery.isNotEmpty ? _searchQuery : null,
+        ),
+        StudentScopeService().load(),
+      ]);
+
+      if (!mounted) return;
+
+      final result = results[0] as Map<String, dynamic>;
+      _scope = results[1] as StudentScope;
+
+      if (result['success']) {
+        final List<lr.LiveRoom> allRooms = result['data'] as List<lr.LiveRoom>;
+        final filtered = _filterByScope(allRooms);
+        final meta = result['meta'] as Map<String, dynamic>?;
+
+        setState(() {
+          _sessions = filtered;
+          _currentPage = (meta?['current_page'] as num?)?.toInt() ?? page;
+          _lastPage = (meta?['last_page'] as num?)?.toInt() ?? 1;
+          _hasNextPage =
+              result['hasNextPage'] as bool? ?? (_currentPage < _lastPage);
+          _isLoading = false;
+          _isSearching = false;
+        });
+
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            0,
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+          );
         }
+      } else {
+        setState(() {
+          _errorMessage = result['message'];
+          _isLoading = false;
+          _isSearching = false;
+        });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _errorMessage = 'course.failed_load_live_rooms'.tr();
           _isLoading = false;
+          _isSearching = false;
         });
       }
     }
   }
 
+  /// Narrows the list the way `filterLiveRoomsByFacultyCourses` does on the
+  /// web: a session attached to no course at all is general and shown to every
+  /// student, and an unloaded scope leaves the list untouched rather than
+  /// emptying the screen.
+  List<lr.LiveRoom> _filterByScope(List<lr.LiveRoom> rooms) {
+    if (_scope.visibleCourseIds.isEmpty) return rooms;
+    return rooms.where((room) {
+      final hasCourse =
+          room.courseId != null || room.courseIds.isNotEmpty;
+      if (!hasCourse) return true;
+
+      if (room.courseId != null && _scope.isVisible(room.courseId)) {
+        return true;
+      }
+      return room.courseIds.any(_scope.isVisible);
+    }).toList();
+  }
+
+  void _onSearchChanged(String query) {
+    _debounceTimer?.cancel();
+    setState(() {
+      _isSearching = true;
+      _searchQuery = query.trim();
+    });
+
+    _debounceTimer = Timer(const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+      _loadLiveRooms(page: 1);
+    });
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    _debounceTimer?.cancel();
+    setState(() {
+      _searchQuery = '';
+      _isSearching = false;
+    });
+    _loadLiveRooms(page: 1);
+  }
+
   List<lr.LiveRoom> get _filteredSessions {
-    if (_selectedFilter == 'All') return _sessions;
+    var list = _sessions;
     if (_selectedFilter == 'Live Now') {
-      return _sessions.where((s) => s.status == lr.SessionStatus.now).toList();
+      list = list.where((s) => s.status == lr.SessionStatus.now).toList();
+    } else if (_selectedFilter == 'Upcoming') {
+      list = list.where((s) => s.status == lr.SessionStatus.upcoming).toList();
+    } else if (_selectedFilter == 'Recorded') {
+      list = list.where((s) => s.status == lr.SessionStatus.recorded).toList();
     }
-    if (_selectedFilter == 'Upcoming') {
-      return _sessions.where((s) => s.status == lr.SessionStatus.upcoming).toList();
+
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      list = list.where((s) {
+        final title = s.title.toLowerCase();
+        final instructor = s.instructorName.toLowerCase();
+        final course = (s.courseTitle ?? '').toLowerCase();
+        final desc = s.description.toLowerCase();
+        return title.contains(q) ||
+            instructor.contains(q) ||
+            course.contains(q) ||
+            desc.contains(q);
+      }).toList();
     }
-    if (_selectedFilter == 'Recorded') {
-      return _sessions.where((s) => s.status == lr.SessionStatus.recorded).toList();
-    }
-    return _sessions;
+
+    return list;
   }
 
   SessionStatus _mapToModalStatus(lr.SessionStatus status) {
@@ -159,7 +267,7 @@ class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
           _buildFilterTabs(),
           Expanded(
             child: RefreshIndicator(
-              onRefresh: _loadLiveRooms,
+              onRefresh: () => _loadLiveRooms(page: 1),
               color: const Color(0xFF4A68F6),
               backgroundColor: Colors.white,
               child: _isLoading
@@ -169,14 +277,24 @@ class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
                       : _filteredSessions.isEmpty
                           ? _buildEmptyWidget()
                           : ListView.builder(
+                              controller: _scrollController,
                               padding: const EdgeInsets.all(16),
                               physics: const AlwaysScrollableScrollPhysics(),
                               itemCount: _filteredSessions.length,
                               itemBuilder: (context, index) {
-                                return _buildSessionCard(_filteredSessions[index]);
+                                return _buildSessionCard(
+                                    _filteredSessions[index]);
                               },
                             ),
             ),
+          ),
+          PaginationBar(
+            currentPage: _currentPage,
+            lastPage: _lastPage,
+            hasNextPage: _hasNextPage,
+            isLoading: _isLoading,
+            onPageChanged: (newPage) => _loadLiveRooms(page: newPage),
+            primaryColor: const Color(0xFF4A68F6),
           ),
         ],
       ),
@@ -359,27 +477,88 @@ class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
           bottomRight: Radius.circular(24),
         ),
       ),
-      child: Column(
-        children: [
-          SafeArea(
-            bottom: false,
-            child: Padding(
-             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 50),
-              child: Column(
-                children: [
-                  Text(
-                    'course.live_sessions'.tr(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+          child: Column(
+            children: [
+              Text(
+                'course.live_sessions'.tr(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
+              const SizedBox(height: 16),
+              _buildSearchBar(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Container(
+      height: 48,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
         ],
+      ),
+      child: TextField(
+        controller: _searchController,
+        onChanged: _onSearchChanged,
+        style: const TextStyle(fontSize: 14, color: Color(0xFF1F2937)),
+        decoration: InputDecoration(
+          hintText: 'course.search_live_sessions_hint'.tr(),
+          hintStyle: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
+          prefixIcon: const Padding(
+            padding: EdgeInsets.all(12),
+            child: FaIcon(
+              FontAwesomeIcons.magnifyingGlass,
+              color: Color(0xFF9CA3AF),
+              size: 16,
+            ),
+          ),
+          suffixIcon: _isSearching
+              ? const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Color(0xFF4A68F6),
+                      ),
+                    ),
+                  ),
+                )
+              : _searchController.text.isNotEmpty
+                  ? GestureDetector(
+                      onTap: _clearSearch,
+                      child: const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: FaIcon(
+                          FontAwesomeIcons.xmark,
+                          color: Color(0xFF9CA3AF),
+                          size: 16,
+                        ),
+                      ),
+                    )
+                  : null,
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(vertical: 14),
+        ),
       ),
     );
   }

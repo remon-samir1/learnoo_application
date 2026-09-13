@@ -38,8 +38,14 @@ class _ElectronicLibraryScreenState extends State<ElectronicLibraryScreen> {
       final result = await _libraryRepository.getLibraries();
       if (mounted) {
         if (result['success']) {
+          final all = (result['data'] as List?) ?? const [];
           setState(() {
-            _libraries = result['data'] ?? [];
+            // The web's library page keeps only published materials
+            // (`isStudentLibraryPublished`); the app listed drafts too.
+            _libraries = all.where((item) {
+              final attrs = item is Map ? (item['attributes'] ?? item) : null;
+              return !(attrs is Map && attrs['is_publish'] == false);
+            }).toList();
             _isLoading = false;
           });
         } else {

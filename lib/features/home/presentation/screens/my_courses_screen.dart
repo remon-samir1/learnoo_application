@@ -560,8 +560,8 @@ class _MyCoursesScreenState extends State<MyCoursesScreen> {
     final instructor = attributes['instructor']?['data']?['attributes']?['full_name']?.toString() ??
         attributes['instructor_name']?.toString() ??
         'home.unknown_instructor'.tr();
-    final thumbnail = attributes['thumbnail']?.toString() ??
-        'https://images.unsplash.com/photo-1554224155-26032ffc0d07?w=400';
+    // Empty falls through to the local placeholder in `errorBuilder`.
+    final thumbnail = attributes['thumbnail']?.toString() ?? '';
     final lectures = attributes['lectures_count']?.toString() ?? '0';
     final students = attributes['students_count']?.toString() ?? '0';
     // Calculate progress from user progress API (viewed chapters / total chapters)

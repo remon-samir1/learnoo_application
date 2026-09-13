@@ -10,11 +10,20 @@ class ExamActivationModal extends StatelessWidget {
   final Function(Quiz updatedQuiz) onSuccess;
   final Function(String message)? onError;
 
+  /// Overrides the title. Used for the "attempts exhausted, enter a new code"
+  /// case, which is a different situation from a first activation.
+  final String? headline;
+
+  /// Overrides the explanatory line under the title.
+  final String? message;
+
   const ExamActivationModal({
     super.key,
     required this.quiz,
     required this.onSuccess,
     this.onError,
+    this.headline,
+    this.message,
   });
 
   @override
@@ -25,6 +34,8 @@ class ExamActivationModal extends StatelessWidget {
         quiz: quiz,
         onSuccess: onSuccess,
         onError: onError,
+        headline: headline,
+        message: message,
       ),
     );
   }
@@ -34,11 +45,15 @@ class _ExamActivationModalContent extends StatefulWidget {
   final Quiz quiz;
   final Function(Quiz updatedQuiz) onSuccess;
   final Function(String message)? onError;
+  final String? headline;
+  final String? message;
 
   const _ExamActivationModalContent({
     required this.quiz,
     required this.onSuccess,
     this.onError,
+    this.headline,
+    this.message,
   });
 
   @override
@@ -117,7 +132,7 @@ class _ExamActivationModalContentState
 
                   // Title
                   Text(
-                    'exams.activation_title'.tr(),
+                    widget.headline ?? 'exams.activation_title'.tr(),
                     style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w600,
@@ -129,7 +144,7 @@ class _ExamActivationModalContentState
 
                   // Subtitle with exam name
                   Text(
-                    '${'exams.activation_subtitle'.tr()}\n${widget.quiz.title}',
+                    '${widget.message ?? 'exams.activation_subtitle'.tr()}\n${widget.quiz.title}',
                     style: TextStyle(
                       fontSize: 14,
                       color: Colors.grey.shade600,

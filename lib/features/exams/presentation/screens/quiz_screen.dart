@@ -1,7 +1,5 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:cached_network_image/cached_network_image.dart';
@@ -10,7 +8,6 @@ import '../../data/exam_repository.dart';
 import '../../models/quiz_models.dart';
 import 'exam_results_screen.dart';
 import 'exams_list_screen.dart';
-import 'quiz_review_screen.dart';
 import '../../../../core/widgets/watermark_wrapper.dart';
 import '../../../../core/widgets/image_preview_screen.dart';
 import '../../../../core/services/feature_manager.dart';
@@ -53,6 +50,16 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
   static const int maxAllowedPauses =
       1; // Maximum allowed app switches before auto-submit
 
+  /// questionId → the `/v1/quiz-user-answer` row created for it.
+  ///
+  /// The web persists every answer as the student works: POST the first time,
+  /// PUT on each later change. Without those rows an instructor cannot grade
+  /// short-answer questions, because the attempt only carries a total score.
+  final Map<int, Object> _answerRowIds = {};
+
+  /// Debounce for short-answer typing, so we do not POST on every keystroke.
+  Timer? _shortAnswerDebounce;
+
   @override
   void initState() {
     super.initState();
@@ -94,21 +101,6 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// Get combined watermark text based on feature settings
-  String? get _watermarkText {
-    final config = _featureManager.getWatermarkConfig('exams');
-    final parts = <String>[];
-
-    if (config.useStudentCode && _studentCode.isNotEmpty) {
-      parts.add(_studentCode);
-    }
-    if (config.usePhoneNumber && _phoneNumber.isNotEmpty) {
-      parts.add(_phoneNumber);
-    }
-
-    return parts.isNotEmpty ? parts.join(' | ') : null;
-  }
-
   Future<void> _initializeProtection() async {
     // Initialize screen protection service
     await _screenProtection.initialize();
@@ -146,6 +138,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _shortAnswerDebounce?.cancel();
     // Disable global protection when leaving exam
     _screenProtection.disableGlobalProtection();
     super.dispose();
@@ -307,6 +300,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
     setState(() {
       _questions[_currentQuestionIndex].selectedAnswerId = answerId;
     });
+    _persistAnswer(currentQuestion);
   }
 
   // Handle multiple choice answer selection
@@ -323,6 +317,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
       }
       _questions[_currentQuestionIndex].selectedAnswerIds = selectedIds;
     });
+    _persistAnswer(currentQuestion);
   }
 
   // Handle short answer text input
@@ -333,6 +328,77 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
     setState(() {
       _questions[_currentQuestionIndex].textAnswer = text;
     });
+
+    // Typing fires on every character; wait for a pause before saving.
+    _shortAnswerDebounce?.cancel();
+    _shortAnswerDebounce = Timer(
+      const Duration(milliseconds: 700),
+      () => _persistAnswer(currentQuestion),
+    );
+  }
+
+  /// The answer as text, in the shape the backend stores.
+  ///
+  /// Choice questions send the selected answers' **text**, comma-joined —
+  /// matching the web, so a grader sees the same string from either client.
+  String _answerTextFor(QuizQuestion question) {
+    if (question.isShortAnswer) {
+      return question.textAnswer?.trim() ?? '';
+    }
+
+    final selectedIds = question.isMultipleChoice
+        ? question.selectedAnswerIds
+        : (question.selectedAnswerId == null
+            ? const <int>[]
+            : [question.selectedAnswerId!]);
+
+    if (selectedIds.isEmpty) return '';
+
+    final texts = <String>[];
+    for (final id in selectedIds) {
+      for (final answer in question.answers) {
+        if (answer.answerId == id) {
+          final text = answer.text.trim();
+          if (text.isNotEmpty) texts.add(text);
+          break;
+        }
+      }
+    }
+    return texts.join(', ');
+  }
+
+  /// Sends one question's answer to `/v1/quiz-user-answer`.
+  ///
+  /// Best-effort: a failed save is logged but never blocks the student, and the
+  /// final score still goes up with the attempt.
+  Future<void> _persistAnswer(QuizQuestion question) async {
+    final text = _answerTextFor(question);
+    if (text.isEmpty) return;
+
+    final attemptId = widget.attempt.id;
+    if (attemptId.isEmpty) return;
+
+    final result = await _examRepository.saveAnswer(
+      attemptId: attemptId,
+      questionId: question.questionId,
+      answerText: text,
+      existingAnswerId: _answerRowIds[question.questionId],
+    );
+
+    final rowId = result['id'];
+    if (result['success'] == true && rowId != null) {
+      _answerRowIds[question.questionId] = rowId;
+    }
+  }
+
+  /// Flushes every answered question. Run before submitting so a pending
+  /// debounce or an unsaved selection is not lost.
+  Future<void> _persistAllAnswers() async {
+    _shortAnswerDebounce?.cancel();
+    for (final question in _questions) {
+      if (_answerTextFor(question).isEmpty) continue;
+      await _persistAnswer(question);
+    }
   }
 
   // Check if current question has been answered
@@ -432,6 +498,10 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
       _isSubmitting = true;
     });
     _timer?.cancel();
+
+    // Make sure every answer reached the server before the attempt closes —
+    // the attempt only carries a total, so anything unsaved here is lost.
+    await _persistAllAnswers();
 
     // Prepare answers based on question type
     final answers = <Map<String, dynamic>>[];
@@ -1033,7 +1103,8 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
           // Watermark overlay for exam protection - controlled by API
           WatermarkWrapper(
             type: WatermarkType.exams,
-            studentCode: _watermarkText,
+            studentCode: _studentCode,
+        phone: _phoneNumber,
             featureManager: _featureManager,
             child:
                 Container(), // Empty child as the watermark is positioned fill

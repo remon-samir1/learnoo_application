@@ -3,7 +3,7 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/app_bottom_navigation_bar.dart';
-import '../../../course_content/presentation/screens/subject_detail_screen.dart';
+import 'package:learnoo/features/category_tree/presentation/screens/category_tree_screen.dart';
 import 'sub_departments_screen.dart';
 
 class DepartmentOptionsScreen extends StatelessWidget {
@@ -28,10 +28,8 @@ class DepartmentOptionsScreen extends StatelessWidget {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => SubjectDetailScreen(
-          subjectId: departmentId,
-          subjectTitle: departmentTitle,
-          subjectImage: departmentImage,
+        builder: (context) => CategoryTreeScreen(
+          initialSelectedId: departmentId,
         ),
       ),
     );

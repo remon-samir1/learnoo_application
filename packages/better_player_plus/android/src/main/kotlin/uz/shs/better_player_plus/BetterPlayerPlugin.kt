@@ -248,6 +248,10 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
                 }
             }
 
+            TAKE_SNAPSHOT_METHOD -> {
+                player.takeSnapshot(result)
+            }
+
             DISPOSE_METHOD -> {
                 dispose(player, textureId)
                 result.success(null)
@@ -582,6 +586,7 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
         private const val DISABLE_PICTURE_IN_PICTURE_METHOD = "disablePictureInPicture"
         private const val IS_PICTURE_IN_PICTURE_SUPPORTED_METHOD = "isPictureInPictureSupported"
         private const val SET_MIX_WITH_OTHERS_METHOD = "setMixWithOthers"
+        private const val TAKE_SNAPSHOT_METHOD = "takeSnapshot"
         private const val CLEAR_CACHE_METHOD = "clearCache"
         private const val DISPOSE_METHOD = "dispose"
         private const val PRE_CACHE_METHOD = "preCache"

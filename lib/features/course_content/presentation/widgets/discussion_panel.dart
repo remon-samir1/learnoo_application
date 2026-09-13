@@ -1,7 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:shimmer/shimmer.dart';
-import 'package:intl/intl.dart';
 
 class DiscussionPanel extends StatefulWidget {
   final int currentPositionSeconds;
@@ -24,7 +25,22 @@ class DiscussionPanel extends StatefulWidget {
   final VoidCallback onDeleteRecorded;
   final Function(String url) onPlayPauseAudio;
   final Future<void> Function() onPlayRecorded;
-  final VoidCallback onAddReply; // If needed
+  final VoidCallback onAddReply;
+  
+  /// Called when user submits a reply. [parentId] is the root discussion ID.
+  final Future<void> Function(int parentId, String content) onPostReply;
+  
+  /// Frame snapshotted when the student tapped "ask about this moment".
+  final File? momentFrame;
+  
+  /// True while the frame is being captured.
+  final bool isCapturingFrame;
+  
+  /// Drops the attached frame; the comment then posts without an image.
+  final VoidCallback? onDismissFrame;
+  
+  /// Base URL for resolving relative image paths returned by the API.
+  final String apiBaseUrl;
 
   const DiscussionPanel({
     super.key,
@@ -49,6 +65,11 @@ class DiscussionPanel extends StatefulWidget {
     required this.onPlayPauseAudio,
     required this.onPlayRecorded,
     required this.onAddReply,
+    required this.onPostReply,
+    this.momentFrame,
+    this.isCapturingFrame = false,
+    this.onDismissFrame,
+    this.apiBaseUrl = 'https://api.learnoo.app',
   });
 
   @override
@@ -56,6 +77,42 @@ class DiscussionPanel extends StatefulWidget {
 }
 
 class _DiscussionPanelState extends State<DiscussionPanel> {
+  final Set<String> _expandedReplies = {};
+  final Set<String> _showReplyInput = {};
+  final Map<String, TextEditingController> _replyControllers = {};
+  final Set<String> _postingReply = {};
+
+  @override
+  void dispose() {
+    for (final c in _replyControllers.values) c.dispose();
+    super.dispose();
+  }
+
+  TextEditingController _getReplyController(String id) =>
+      _replyControllers.putIfAbsent(id, () => TextEditingController());
+
+  List<dynamic> _getRootDiscussions() => widget.discussions.where((d) {
+        final parentId = (d['attributes'] ?? d)['parent_id'];
+        return parentId == null;
+      }).toList();
+
+  List<dynamic> _getReplies(String discussionId) =>
+      widget.discussions.where((d) {
+        final parentId = (d['attributes'] ?? d)['parent_id'];
+        return parentId != null && parentId.toString() == discussionId;
+      }).toList();
+
+  String _resolveUrl(String? url) {
+    if (url == null || url.trim().isEmpty) return '';
+    final clean = url.trim().replaceAll('\\', '/');
+    if (clean.startsWith('http://') || clean.startsWith('https://')) return clean;
+    final normalized = clean.replaceAll(RegExp(r'^/+'), '');
+    if (normalized.startsWith('storage/')) {
+      return '${widget.apiBaseUrl}/$normalized';
+    }
+    return '${widget.apiBaseUrl}/storage/$normalized';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -90,21 +147,43 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                     padding: const EdgeInsets.fromLTRB(24, 8, 8, 0),
                     child: Row(
                       children: [
-                        Text(
-                          'course.ask_about_moment_title'.tr(),
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF1F2937),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'course.ask_about_moment_title'.tr(),
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF1F2937),
+                                ),
+                              ),
+                              if (widget.currentPositionSeconds > 0) ...[
+                                const SizedBox(height: 4),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFEEF2FF),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    _formatMoment(widget.currentPositionSeconds),
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Color(0xFF3451E5),
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
-                        const Spacer(),
                         IconButton(
                           onPressed: widget.onClose,
-                          icon: const Icon(
-                            Icons.close,
-                            color: Color(0xFF9CA3AF),
-                          ),
+                          icon: const Icon(Icons.close, color: Color(0xFF9CA3AF)),
                         ),
                       ],
                     ),
@@ -114,9 +193,9 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                   Expanded(
                     child: widget.isLoading
                         ? _buildDiscussionSkeleton()
-                        : widget.discussions.isEmpty
-                        ? _buildEmptyDiscussions()
-                        : _buildDiscussionsList(),
+                        : _getRootDiscussions().isEmpty
+                            ? _buildEmptyDiscussions()
+                            : _buildDiscussionsList(),
                   ),
                 ],
               ),
@@ -129,7 +208,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
 
   Widget _buildDiscussionTabs() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: const Color(0xFFF3F4F6),
@@ -146,11 +225,12 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
   }
 
   Widget _buildTabItem(String label, String tab) {
-    bool isSelected = widget.currentTab == tab;
+    final isSelected = widget.currentTab == tab;
     return Expanded(
       child: GestureDetector(
         onTap: () => widget.onTabChanged(tab),
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
             color: isSelected ? Colors.white : Colors.transparent,
@@ -171,9 +251,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
             style: TextStyle(
               fontSize: 13,
               fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-              color: isSelected
-                  ? const Color(0xFF3451E5)
-                  : const Color(0xFF6B7280),
+              color: isSelected ? const Color(0xFF3451E5) : const Color(0xFF6B7280),
             ),
           ),
         ),
@@ -183,7 +261,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
 
   Widget _buildDiscussionInput() {
     return Container(
-      margin: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+      margin: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -229,25 +307,19 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
               const Spacer(),
               GestureDetector(
                 onTap: () => widget.onTabChanged('all'),
-                child: const Icon(
-                  Icons.close,
-                  size: 18,
-                  color: Color(0xFF9CA3AF),
-                ),
+                child: const Icon(Icons.close, size: 18, color: Color(0xFF9CA3AF)),
               ),
             ],
           ),
           const SizedBox(height: 16),
+          _buildMomentFramePreview(),
           if (widget.currentTab == 'comment')
             TextField(
               controller: widget.commentController,
               maxLines: 4,
               decoration: InputDecoration(
                 hintText: 'course.write_comment_moment'.tr(),
-                hintStyle: const TextStyle(
-                  color: Color(0xFF9CA3AF),
-                  fontSize: 14,
-                ),
+                hintStyle: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
                 filled: true,
                 fillColor: const Color(0xFFF9FAFB),
                 border: OutlineInputBorder(
@@ -268,9 +340,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                 backgroundColor: const Color(0xFF3451E5),
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 elevation: 0,
               ),
               child: Text(
@@ -281,6 +351,101 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMomentFramePreview() {
+    if (widget.isCapturingFrame) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF9FAFB),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF3451E5)),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              'course.capturing_moment'.tr(),
+              style: const TextStyle(color: Color(0xFF6B7280), fontSize: 13),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final frame = widget.momentFrame;
+    if (frame == null) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFB),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.file(
+              frame,
+              width: 84,
+              height: 52,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(
+                width: 84,
+                height: 52,
+                color: const Color(0xFFE5E7EB),
+                child: const Icon(
+                  Icons.image_not_supported_outlined,
+                  size: 18,
+                  color: Color(0xFF9CA3AF),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'course.frame_attached'.tr(),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF111827),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _formatMoment(widget.currentPositionSeconds),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF6B7280),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (widget.onDismissFrame != null)
+            IconButton(
+              icon: const Icon(Icons.close, size: 18),
+              color: const Color(0xFF9CA3AF),
+              tooltip: 'course.remove_frame'.tr(),
+              onPressed: widget.onDismissFrame,
+            ),
         ],
       ),
     );
@@ -300,19 +465,13 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
           Icon(
             widget.isRecording ? Icons.mic : Icons.mic_none,
             size: 48,
-            color: widget.isRecording
-                ? const Color(0xFF3451E5)
-                : const Color(0xFF9CA3AF),
+            color: widget.isRecording ? const Color(0xFF3451E5) : const Color(0xFF9CA3AF),
           ),
           const SizedBox(height: 12),
           Text(
-            widget.isRecording
-                ? 'course.recording'.tr()
-                : 'course.tap_to_record'.tr(),
+            widget.isRecording ? 'course.recording'.tr() : 'course.tap_to_record'.tr(),
             style: TextStyle(
-              color: widget.isRecording
-                  ? const Color(0xFF3451E5)
-                  : const Color(0xFF6B7280),
+              color: widget.isRecording ? const Color(0xFF3451E5) : const Color(0xFF6B7280),
               fontSize: 14,
               fontWeight: FontWeight.w500,
             ),
@@ -373,7 +532,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
               GestureDetector(
                 onTap: widget.onPlayRecorded,
                 child: Icon(
-                  widget.currentlyPlayingUrl == 'recorded' // Using a special string for recorded player state
+                  widget.currentlyPlayingUrl == 'recorded'
                       ? Icons.pause_rounded
                       : Icons.play_arrow_rounded,
                   color: const Color(0xFF3451E5),
@@ -390,13 +549,10 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                       builder: (context, position, child) {
                         return LinearProgressIndicator(
                           value: totalDuration.inMilliseconds > 0
-                              ? position.inMilliseconds /
-                                    totalDuration.inMilliseconds
+                              ? position.inMilliseconds / totalDuration.inMilliseconds
                               : 0.0,
                           backgroundColor: const Color(0xFFE5E7EB),
-                          valueColor: const AlwaysStoppedAnimation<Color>(
-                            Color(0xFF3451E5),
-                          ),
+                          valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF3451E5)),
                           borderRadius: BorderRadius.circular(4),
                         );
                       },
@@ -426,11 +582,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
             children: [
               IconButton(
                 onPressed: widget.onDeleteRecorded,
-                icon: const Icon(
-                  Icons.delete_outline_rounded,
-                  color: Colors.red,
-                  size: 28,
-                ),
+                icon: const Icon(Icons.delete_outline_rounded, color: Colors.red, size: 28),
               ),
               Material(
                 color: Colors.transparent,
@@ -460,11 +612,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                       color: const Color(0xFF3451E5),
                       borderRadius: BorderRadius.circular(16),
                     ),
-                    child: const Icon(
-                      Icons.send_rounded,
-                      color: Colors.white,
-                      size: 24,
-                    ),
+                    child: const Icon(Icons.send_rounded, color: Colors.white, size: 24),
                   ),
                 ),
               ),
@@ -495,11 +643,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                   children: [
                     Container(height: 12, width: 100, color: Colors.white),
                     const SizedBox(height: 8),
-                    Container(
-                      height: 10,
-                      width: double.infinity,
-                      color: Colors.white,
-                    ),
+                    Container(height: 10, width: double.infinity, color: Colors.white),
                     const SizedBox(height: 4),
                     Container(height: 10, width: 150, color: Colors.white),
                   ],
@@ -517,136 +661,397 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(
-            Icons.chat_bubble_outline,
-            size: 48,
-            color: Color(0xFFD1D5DB),
-          ),
+          const Icon(Icons.chat_bubble_outline, size: 48, color: Color(0xFFD1D5DB)),
           const SizedBox(height: 16),
-          Text(
-            'course.no_discussions_yet'.tr(),
-            style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 16),
-          ),
+          Text('course.no_discussions_yet'.tr(),
+              style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 16)),
           const SizedBox(height: 8),
-          Text(
-            'course.be_the_first_discussion'.tr(),
-            style: const TextStyle(color: Color(0xFFD1D5DB), fontSize: 13),
-          ),
+          Text('course.be_the_first_discussion'.tr(),
+              style: const TextStyle(color: Color(0xFFD1D5DB), fontSize: 13)),
         ],
       ),
     );
   }
 
   Widget _buildDiscussionsList() {
+    final roots = _getRootDiscussions();
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      itemCount: widget.discussions.length,
-      itemBuilder: (context, index) {
-        final discussion = widget.discussions[index];
-        final attributes = discussion['attributes'] ?? {};
-        final user = attributes['user']?['data']?['attributes'] ?? {};
-        final firstName = user['first_name'] ?? '';
-        final lastName = user['last_name'] ?? '';
+      itemCount: roots.length,
+      itemBuilder: (context, index) => _buildRootDiscussionItem(roots[index]),
+    );
+  }
 
-        final content = attributes['content'] ?? '';
-        final type = attributes['type'] ?? 'text';
-        final moment = attributes['moment'] ?? 0;
-        final createdAt = attributes['created_at'] ?? '';
-        final replies = attributes['replies'] as List? ?? [];
+  Widget _buildRootDiscussionItem(dynamic discussion) {
+    final id = discussion['id']?.toString() ?? '';
+    final attrs = discussion['attributes'] ?? {};
+    final user = attrs['user']?['data']?['attributes'] ?? {};
+    final firstName = (user['first_name'] ?? '').toString();
+    final lastName = (user['last_name'] ?? '').toString();
+    final content = (attrs['content'] ?? '').toString();
+    final type = (attrs['type'] ?? 'text').toString();
+    final momentRaw = attrs['moment'] ?? 0;
+    final moment = momentRaw is int ? momentRaw : int.tryParse(momentRaw.toString()) ?? 0;
+    final createdAt = (attrs['created_at'] ?? '').toString();
+    final imageUrl = _resolveUrl(attrs['image']?.toString());
 
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 24),
+    final fromList = _getReplies(id);
+    final fromAttrs = (attrs['replies'] as List? ?? []);
+    final allReplies = [
+      ...fromList,
+      ...fromAttrs.where((r) {
+        final rId = r['id']?.toString() ?? '';
+        return !fromList.any((lr) => lr['id']?.toString() == rId);
+      }),
+    ];
+
+    final replyCount = allReplies.length;
+    final isExpanded = _expandedReplies.contains(id);
+    final showReplyInput = _showReplyInput.contains(id);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildDiscussionCard(
+            firstName: firstName,
+            lastName: lastName,
+            content: content,
+            type: type,
+            moment: moment,
+            createdAt: createdAt,
+            imageUrl: imageUrl,
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 48, top: 8),
+            child: Wrap(
+              spacing: 8,
+              children: [
+                _buildActionChip(
+                  icon: Icons.reply,
+                  label: 'course.reply'.tr(),
+                  onTap: () => setState(() {
+                    if (showReplyInput) {
+                      _showReplyInput.remove(id);
+                    } else {
+                      _showReplyInput.add(id);
+                    }
+                  }),
+                  active: showReplyInput,
+                ),
+                if (replyCount > 0)
+                  _buildActionChip(
+                    icon: isExpanded ? Icons.expand_less : Icons.expand_more,
+                    label: isExpanded
+                        ? 'course.hide_replies'.tr()
+                        : 'course.show_replies'.tr(args: [replyCount.toString()]),
+                    onTap: () => setState(() {
+                      if (isExpanded) {
+                        _expandedReplies.remove(id);
+                      } else {
+                        _expandedReplies.add(id);
+                      }
+                    }),
+                    active: false,
+                  ),
+              ],
+            ),
+          ),
+          if (showReplyInput) _buildReplyComposer(id),
+          if (isExpanded && allReplies.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 56, top: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 2,
+                    margin: const EdgeInsets.only(right: 12, top: 4),
+                    color: const Color(0xFFE5E7EB),
+                  ),
+                  Expanded(
+                    child: Column(
+                      children: allReplies.map((r) => _buildReplyCard(r)).toList(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDiscussionCard({
+    required String firstName,
+    required String lastName,
+    required String content,
+    required String type,
+    required int moment,
+    required String createdAt,
+    required String imageUrl,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CircleAvatar(
+          radius: 18,
+          backgroundColor: const Color(0xFFE5E7EB),
+          child: Text(
+            firstName.isNotEmpty ? firstName[0].toUpperCase() : 'U',
+            style: const TextStyle(
+              color: Color(0xFF6B7280),
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  CircleAvatar(
-                    radius: 18,
-                    backgroundColor: const Color(0xFFE5E7EB),
+                  Expanded(
                     child: Text(
-                      firstName.isNotEmpty ? firstName[0].toUpperCase() : 'U',
+                      '$firstName $lastName'.trim().isEmpty
+                          ? 'User'
+                          : '$firstName $lastName'.trim(),
                       style: const TextStyle(
-                        color: Color(0xFF6B7280),
-                        fontSize: 12,
                         fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        color: Color(0xFF1F2937),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Row(
-                      children: [
-                        Text(
-                          '$firstName $lastName',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                            color: Color(0xFF1F2937),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          _formatDate(createdAt),
-                          style: const TextStyle(
-                            color: Color(0xFF9CA3AF),
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                    ),
+                  Text(
+                    _formatDate(createdAt),
+                    style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 11),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.only(left: 48),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    RichText(
-                      text: TextSpan(
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Color(0xFF4B5563),
-                          height: 1.5,
-                        ),
-                        children: [
-                          TextSpan(
-                            text: '${_formatMoment(moment)} ',
-                            style: const TextStyle(
-                              color: Color(0xFF3451E5),
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          TextSpan(
-                            text: type == 'text'
-                                ? content
-                                : 'course.voice_question_linked'.tr(),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (type == 'voice') ...[
-                      const SizedBox(height: 12),
-                      _buildAudioPlayer(content),
-                    ],
-                    if (replies.isNotEmpty) ...[
-                      const SizedBox(height: 16),
-                      ...replies.map((reply) => _buildReplyItem(reply)),
-                    ],
-                  ],
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEEF2FF),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _formatMoment(moment),
+                  style: const TextStyle(
+                    color: Color(0xFF3451E5),
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
+              const SizedBox(height: 8),
+              if (type == 'text' && content.isNotEmpty)
+                Text(content,
+                    style: const TextStyle(
+                        fontSize: 14, color: Color(0xFF4B5563), height: 1.5)),
+              if (type == 'voice' && content.isNotEmpty) _buildAudioPlayer(content),
+              if (type == 'voice' && content.isEmpty)
+                Text('course.voice_question_linked'.tr(),
+                    style: const TextStyle(color: Color(0xFF6B7280), fontSize: 13)),
+              if (imageUrl.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                _buildNetworkImage(imageUrl, height: 160),
+              ],
             ],
           ),
-        );
-      },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReplyCard(dynamic reply) {
+    final attrs = reply['attributes'] ?? reply;
+    final user = attrs['user']?['data']?['attributes'] ?? {};
+    final firstName = (user['first_name'] ?? '').toString();
+    final lastName = (user['last_name'] ?? '').toString();
+    final role = (user['role'] ?? '').toString();
+    final content = (attrs['content'] ?? '').toString();
+    final type = (attrs['type'] ?? 'text').toString();
+    final createdAt = (attrs['created_at'] ?? '').toString();
+    final imageUrl = _resolveUrl(attrs['image']?.toString());
+    final isInstructor =
+        role.toLowerCase() == 'admin' || role.toLowerCase() == 'instructor';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8F9FF),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 14,
+                  backgroundColor:
+                      isInstructor ? const Color(0xFF3451E5) : const Color(0xFFE5E7EB),
+                  child: Text(
+                    firstName.isNotEmpty ? firstName[0].toUpperCase() : 'U',
+                    style: TextStyle(
+                      color: isInstructor ? Colors.white : const Color(0xFF6B7280),
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '$firstName $lastName'.trim().isEmpty
+                        ? 'User'
+                        : '$firstName $lastName'.trim(),
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                      color: isInstructor ? const Color(0xFF3451E5) : const Color(0xFF1F2937),
+                    ),
+                  ),
+                ),
+                if (isInstructor)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF3451E5),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text('course.instructor'.tr(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        )),
+                  ),
+                const SizedBox(width: 6),
+                Text(_formatDate(createdAt),
+                    style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 10)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (type == 'text' && content.isNotEmpty)
+              Text(content,
+                  style: const TextStyle(
+                      fontSize: 13, color: Color(0xFF4B5563), height: 1.5)),
+            if (type == 'voice' && content.isNotEmpty) _buildAudioPlayer(content),
+            if (imageUrl.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _buildNetworkImage(imageUrl, height: 120),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReplyComposer(String discussionId) {
+    final controller = _getReplyController(discussionId);
+    final isPosting = _postingReply.contains(discussionId);
+    final parentIdInt = int.tryParse(discussionId);
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 48, top: 10, bottom: 4),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF9FAFB),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            TextField(
+              controller: controller,
+              maxLines: 3,
+              minLines: 1,
+              decoration: InputDecoration(
+                hintText: 'course.write_reply'.tr(),
+                hintStyle: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 13),
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: Color(0xFF3451E5), width: 1.5),
+                ),
+                contentPadding: const EdgeInsets.all(12),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () {
+                    controller.clear();
+                    setState(() => _showReplyInput.remove(discussionId));
+                  },
+                  child: Text('course.cancel_reply'.tr(),
+                      style: const TextStyle(color: Color(0xFF6B7280))),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: (isPosting || parentIdInt == null)
+                      ? null
+                      : () async {
+                          final text = controller.text.trim();
+                          if (text.isEmpty) return;
+                          setState(() => _postingReply.add(discussionId));
+                          await widget.onPostReply(parentIdInt, text);
+                          controller.clear();
+                          if (!mounted) return;
+                          setState(() {
+                            _postingReply.remove(discussionId);
+                            _showReplyInput.remove(discussionId);
+                            _expandedReplies.add(discussionId);
+                          });
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF3451E5),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    elevation: 0,
+                  ),
+                  child: isPosting
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : Text('course.post_reply'.tr(),
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 
   Widget _buildAudioPlayer(String url) {
-    bool isPlaying = widget.currentlyPlayingUrl == url;
+    final isPlaying = widget.currentlyPlayingUrl == url;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
@@ -681,13 +1086,10 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                   builder: (context, position, child) {
                     return LinearProgressIndicator(
                       value: isPlaying && totalDuration.inMilliseconds > 0
-                          ? position.inMilliseconds /
-                                totalDuration.inMilliseconds
+                          ? position.inMilliseconds / totalDuration.inMilliseconds
                           : 0.0,
                       backgroundColor: Colors.white.withValues(alpha: 0.5),
-                      valueColor: const AlwaysStoppedAnimation<Color>(
-                        Color(0xFF3451E5),
-                      ),
+                      valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF3451E5)),
                       borderRadius: BorderRadius.circular(4),
                     );
                   },
@@ -714,82 +1116,63 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
     );
   }
 
-  Widget _buildReplyItem(dynamic reply) {
-    final attributes = reply['attributes'] ?? {};
-    final user = attributes['user']?['data']?['attributes'] ?? {};
-    final firstName = user['first_name'] ?? '';
-    final lastName = user['last_name'] ?? '';
-    final role = user['role'] ?? '';
-    final content = attributes['content'] ?? '';
-    bool isInstructor =
-        role.toLowerCase() == 'admin' || role.toLowerCase() == 'instructor';
-
-    return Container(
-      margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF3F4FF),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              CircleAvatar(
-                radius: 14,
-                backgroundColor: const Color(0xFF3451E5),
-                child: Text(
-                  firstName.isNotEmpty ? firstName[0].toUpperCase() : 'I',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+  Widget _buildNetworkImage(String url, {required double height}) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: Image.network(
+        url,
+        height: height,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+        loadingBuilder: (_, child, progress) {
+          if (progress == null) return child;
+          return Container(
+            height: height,
+            width: double.infinity,
+            color: const Color(0xFFF3F4F6),
+            child: const Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Color(0xFF3451E5),
               ),
-              const SizedBox(width: 10),
-              Text(
-                '$firstName $lastName',
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                  color: Color(0xFF3451E5),
-                ),
-              ),
-              if (isInstructor) ...[
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF3451E5),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    'course.instructor'.tr(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 8,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            content,
-            style: const TextStyle(
-              fontSize: 13,
-              color: Color(0xFF4B5563),
-              height: 1.5,
             ),
-          ),
-        ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildActionChip({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    required bool active,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: active ? const Color(0xFF3451E5) : const Color(0xFFEEF2FF),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: active ? Colors.white : const Color(0xFF3451E5)),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: active ? Colors.white : const Color(0xFF3451E5),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -802,9 +1185,9 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
   }
 
   String _formatMoment(int seconds) {
-    final minutes = seconds ~/ 60;
-    final remainingSeconds = seconds % 60;
-    return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
+    final m = seconds ~/ 60;
+    final s = seconds % 60;
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
   String _formatDate(String dateStr) {

@@ -11,13 +11,31 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/app_logo.dart';
 import '../../../../core/services/connectivity_service.dart';
 import '../../../../core/services/feature_manager.dart';
-import 'profile_screen.dart';
-import 'verification_method_screen.dart';
+import 'login_screen.dart';
+import '../../domain/splash_router.dart';
+import '../../../academic/presentation/screens/university_selection_screen.dart';
 import '../../data/auth_repository.dart';
+import '../../../parent/presentation/screens/parent_dashboard_screen.dart';
 import '../../../../features/home/presentation/screens/main_screen.dart';
 
 class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key});
+  const SplashScreen({
+    super.key,
+    this.router,
+    this.checkForUpdate,
+    this.splashDelay = const Duration(seconds: 2),
+  });
+
+  /// Decides the entry screen. Defaults to the production router built from
+  /// [AuthRepository] and [ConnectivityService]; tests supply their own so no
+  /// request leaves the process.
+  final SplashRouter? router;
+
+  /// The OTA check. Injectable for the same reason.
+  final Future<Map<String, dynamic>?> Function()? checkForUpdate;
+
+  /// How long the branding is held before routing.
+  final Duration splashDelay;
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
@@ -27,6 +45,14 @@ class _SplashScreenState extends State<SplashScreen> {
   final _authRepository = AuthRepository();
   final _featureManager = FeatureManager();
   final Dio _dio = Dio();
+
+  late final SplashRouter _router = widget.router ??
+      SplashRouter(
+        readToken: _authRepository.getToken,
+        hasConnection: ConnectivityService().hasConnection,
+        fetchProfile: _authRepository.getProfile,
+        clearToken: _authRepository.deleteToken,
+      );
   bool _isDownloading = false;
   double _downloadProgress = 0.0;
   String _downloadStatus = '';
@@ -40,9 +66,17 @@ class _SplashScreenState extends State<SplashScreen> {
   /// First check for app updates, then proceed with auth
   Future<void> _checkForUpdates() async {
     // Artificial delay for splash effect
-    await Future.delayed(const Duration(seconds: 2));
+    await Future.delayed(widget.splashDelay);
 
-    final updateInfo = await _authRepository.checkForUpdate();
+    Map<String, dynamic>? updateInfo;
+    try {
+      updateInfo = await (widget.checkForUpdate == null
+          ? _authRepository.checkForUpdate()
+          : widget.checkForUpdate!());
+    } catch (_) {
+      // An unreachable OTA endpoint must never strand the user here.
+      updateInfo = null;
+    }
 
     if (updateInfo != null && updateInfo['hasUpdate'] == true) {
       if (mounted) {
@@ -71,11 +105,12 @@ class _SplashScreenState extends State<SplashScreen> {
         fileSize: fileSize,
         downloadUrl: downloadUrl,
         onSkip: () async {
+          final navigator = Navigator.of(context);
           // Save this version as acknowledged so we don't prompt again
           if (versionCode != null) {
             await _authRepository.saveLastAcknowledgedVersionCode(versionCode);
           }
-          Navigator.of(context).pop();
+          if (navigator.canPop()) navigator.pop();
           _checkAuth();
         },
         onUpdate: (url, progress) => _downloadAndInstallApkWithPermission(url, progress, versionCode),
@@ -322,87 +357,41 @@ class _SplashScreenState extends State<SplashScreen> {
     }
   }
 
+  /// Decides the entry screen.
+  ///
+  /// A stored token now means "verified" — it is only written after the OTP is
+  /// accepted — so there is no unverified-session branch any more. What remains
+  /// is the web's profile gate: an authenticated student whose academic
+  /// selection is incomplete goes to onboarding, everyone else to the app.
   Future<void> _checkAuth() async {
-    final token = await _authRepository.getToken();
-    
-    // No token found → go to login/register
-    if (token == null) {
-      _navigateToProfile();
-      return;
-    }
+    final destination = await _router.resolve();
+    if (!mounted) return;
 
-    // Check internet connectivity
-    final hasInternet = await ConnectivityService().hasConnection();
-    
-    // No internet but token exists → allow entry (offline mode)
-    if (!hasInternet) {
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const MainScreen()),
-        );
-      }
-      return;
-    }
-
-    // Internet available → validate token with API
-    final result = await _authRepository.getProfile();
-    if (result['success']) {
-      final profileData = result['data'];
-
-      // Check if the user has verified their email or phone.
-      // If both are null, the account is unverified — send to verification flow.
-      final attributes = profileData?['attributes'] ?? profileData;
-      final emailVerifiedAt = attributes?['email_verified_at'];
-      final phoneVerifiedAt = attributes?['phone_verified_at'];
-      final isVerified = emailVerifiedAt != null || phoneVerifiedAt != null;
-
-      // Check if OTP verification is enabled globally
-      final otpEnabled = _featureManager.isOtpVerificationEnabled;
-
-      if (otpEnabled && !isVerified) {
-        // User registered but never verified — redirect to verification
-        if (mounted) {
-          final email = profileData?['email'] ?? '';
-          final phone = profileData?['phone'] ?? '';
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => VerificationMethodScreen(
-                token: token,
-                email: email,
-                phone: phone,
-              ),
-            ),
-          );
-        }
-        return;
-      }
-
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const MainScreen()),
-        );
-      }
-    } else {
-      // API validation failed (401/403) → token is invalid, logout and go to login
-      final statusCode = result['statusCode'];
-      if (statusCode == 401 || statusCode == 403) {
-        await _authRepository.deleteToken();
-      }
-      _navigateToProfile();
+    switch (destination) {
+      case SplashDestination.login:
+        _navigateToLogin();
+        break;
+      case SplashDestination.onboarding:
+        _navigateTo(const UniversitySelectionScreen());
+        break;
+      case SplashDestination.studentHome:
+        _navigateTo(const MainScreen());
+        break;
+      case SplashDestination.parentDashboard:
+        _navigateTo(const ParentDashboardScreen());
+        break;
     }
   }
 
-  void _navigateToProfile() {
-    if (mounted) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const ProfileScreen()),
-      );
-    }
+  void _navigateTo(Widget screen) {
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => screen),
+    );
   }
+
+  void _navigateToLogin() => _navigateTo(const LoginScreen());
 
   @override
   Widget build(BuildContext context) {

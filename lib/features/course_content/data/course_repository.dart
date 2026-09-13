@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../../../core/network/api_client.dart';
 import '../../../core/network/api_constants.dart';
 import '../../../core/offline/offline_first_repository.dart';
 import '../../../core/local/hive_boxes.dart';
@@ -117,8 +118,9 @@ class CourseRepository with OfflineFirstRepository {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'Authorization': 'Bearer $token',
+            'lang': ApiClient.locale,
           },
-        );
+        ).timeout(const Duration(seconds: 15));
 
         final data = jsonDecode(response.body);
         if (response.statusCode == 200) {

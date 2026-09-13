@@ -1,16 +1,34 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:learnoo/core/network/api_constants.dart';
-import 'package:learnoo/core/services/device_service.dart';
-import 'package:learnoo/core/local/hive_boxes.dart';
+import 'package:http/http.dart' as http;
 
+import 'package:learnoo/core/local/hive_boxes.dart';
+import 'package:learnoo/core/network/api_client.dart';
+import 'package:learnoo/core/network/api_constants.dart';
+import 'package:learnoo/core/network/api_exception.dart';
+import 'package:learnoo/core/services/device_service.dart';
+import 'package:learnoo/core/session/session_manager.dart';
+
+/// Auth + account repository.
+///
+/// Rewritten to match the Next.js student dashboard's model:
+///
+///  * Students sign in with a **phone number only** — no password field
+///    anywhere in login or registration (`app/(auth)/login/page.tsx`).
+///  * The login token is held as a *pending* session and is promoted to
+///    persistent storage only after the OTP is verified, so closing the app
+///    mid-verification returns the student to login rather than into the app.
+///  * OTP verification is **mandatory on every sign-in**; the old
+///    `phone_verified_at` / feature-flag bypasses are gone.
 class AuthRepository {
-  final _storage = const FlutterSecureStorage();
+  final ApiClient _api = ApiClient();
+  final SessionManager _session = SessionManager();
+
+  /// Device name sent with login/registration. The web sends `learnoo-web`.
+  static const String _fallbackDeviceName = 'learnoo-mobile';
 
   // Current app version code - update this with each release
   static const int currentVersionCode = 1;
@@ -19,8 +37,40 @@ class AuthRepository {
   static const String _cachedStudentCodeKey = 'cached_student_code';
   static const String _cachedPhoneKey = 'cached_phone';
 
-  /// Check for OTA (Over-The-Air) app updates
-  /// Returns update info if a newer version is available, null otherwise
+  // ---------------------------------------------------------------------
+  // Result helpers — screens still consume `{success, message, data, errors}`
+  // ---------------------------------------------------------------------
+
+  Map<String, dynamic> _ok({
+    String? message,
+    dynamic data,
+    Map<String, dynamic>? extra,
+  }) =>
+      {
+        'success': true,
+        if (message != null) 'message': message,
+        if (data != null) 'data': data,
+        ...?extra,
+      };
+
+  Map<String, dynamic> _fail(Object error, String fallback) {
+    if (error is ApiException) {
+      return {
+        'success': false,
+        'message': error.display(fallback),
+        'errors': error.errors,
+        'statusCode': error.status,
+      };
+    }
+    return {'success': false, 'message': fallback, 'statusCode': 0};
+  }
+
+  // ---------------------------------------------------------------------
+  // OTA update check (unauthenticated, custom key header)
+  // ---------------------------------------------------------------------
+
+  /// Check for OTA (Over-The-Air) app updates.
+  /// Returns update info if a newer version is available, null otherwise.
   Future<Map<String, dynamic>?> checkForUpdate() async {
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.otaLatest}');
 
@@ -30,7 +80,8 @@ class AuthRepository {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'X-OTA-Key':"196716f9c69164c7b8ef9e2a4bfb9bced668065997b3e987cc900803c7b78c43"
+          'X-OTA-Key':
+              '196716f9c69164c7b8ef9e2a4bfb9bced668065997b3e987cc900803c7b78c43',
         },
       );
 
@@ -47,12 +98,10 @@ class AuthRepository {
         final releaseNotes = attributes['release_notes'];
         final fileSizeHuman = attributes['file_size_human'];
 
-        // Check if update is needed
         if (versionCode != null && versionCode > currentVersionCode) {
-          // Check if user has already acknowledged this version (updated or skipped)
           final lastAcknowledgedVersion = await getLastAcknowledgedVersionCode();
-          if (lastAcknowledgedVersion != null && versionCode <= lastAcknowledgedVersion) {
-            // User has already seen this version, don't prompt again
+          if (lastAcknowledgedVersion != null &&
+              versionCode <= lastAcknowledgedVersion) {
             return null;
           }
 
@@ -74,406 +123,358 @@ class AuthRepository {
     }
   }
 
-  Future<void> saveToken(String token) async {
-    await _storage.write(key: 'auth_token', value: token);
-  }
+  // ---------------------------------------------------------------------
+  // Token / session
+  // ---------------------------------------------------------------------
 
-  Future<String?> getToken() async {
-    return await _storage.read(key: 'auth_token');
-  }
+  /// Persists a token directly. Prefer [activateSession] for the OTP flow.
+  Future<void> saveToken(String token) => _session.setActiveToken(token);
 
-  Future<void> deleteToken() async {
-    await _storage.delete(key: 'auth_token');
-  }
+  /// The verified token, or the pending one while OTP is in flight.
+  Future<String?> getToken() => _session.currentToken();
 
-  /// Get the last acknowledged version code (user updated or skipped this version)
+  Future<void> deleteToken() => _session.clear();
+
+  /// Promotes the pending login token into persistent storage.
+  Future<bool> activateSession() => _session.activateSession();
+
   Future<int?> getLastAcknowledgedVersionCode() async {
-    final value = await _storage.read(key: 'last_acknowledged_version_code');
-    return value != null ? int.tryParse(value) : null;
+    try {
+      final box = Hive.box<dynamic>(HiveBoxes.userProfile);
+      final value = box.get('last_acknowledged_version_code');
+      return value == null ? null : int.tryParse(value.toString());
+    } catch (_) {
+      return null;
+    }
   }
 
-  /// Save the last acknowledged version code
   Future<void> saveLastAcknowledgedVersionCode(int versionCode) async {
-    await _storage.write(key: 'last_acknowledged_version_code', value: versionCode.toString());
+    try {
+      final box = Hive.box<dynamic>(HiveBoxes.userProfile);
+      await box.put('last_acknowledged_version_code', versionCode.toString());
+    } catch (e) {
+      debugPrint('Error saving acknowledged version: $e');
+    }
   }
 
-  Map<String, dynamic> _handleError(dynamic data, String defaultMessage) {
-    if (data == null) {
-      return {'message': defaultMessage, 'errors': null};
-    }
+  // ---------------------------------------------------------------------
+  // Registration & sign-in — passwordless
+  // ---------------------------------------------------------------------
 
-    // Check if there's a direct message field
-    if (data['message'] != null) {
-      final message = data['message'].toString();
-      // Check for validation errors object
-      if (data['errors'] != null && data['errors'] is Map) {
-        return {'message': message, 'errors': data['errors'] as Map<String, dynamic>};
-      }
-      return {'message': message, 'errors': null};
-    }
+  /// Role id sent to `POST /v1/auth/register`, matching the web's
+  /// `role: role === "Parent" ? 3 : 1`.
+  static const int studentRoleId = 1;
+  static const int parentRoleId = 3;
 
-    // Check for validation errors object
-    if (data['errors'] != null && data['errors'] is Map) {
-      final errors = data['errors'] as Map<String, dynamic>;
-      final errorMessages = errors.values
-          .map((e) {
-            if (e is List) return e.join(', ');
-            return e.toString();
-          })
-          .join('\n');
-      return {'message': errorMessages, 'errors': errors};
-    }
-
-    return {'message': defaultMessage, 'errors': null};
-  }
-
+  /// `POST /v1/auth/register`.
+  ///
+  /// [password] and `role: 3` are sent for the Parent role only — students
+  /// register passwordless and verify by OTP. The returned token becomes the
+  /// *pending* session; the account is not signed in until either the OTP is
+  /// verified (student) or [activateSession] is called (parent, which the web
+  /// does immediately because parents skip verification).
   Future<Map<String, dynamic>> register({
     required String firstName,
     required String lastName,
     required String phone,
     required String email,
-    required String password,
+    String? password,
+    int role = studentRoleId,
   }) async {
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.register}');
-
-    final deviceName = await DeviceService.getDeviceName();
-
-    final body = {
-      'first_name': firstName,
-      'last_name': lastName,
-      'phone': phone,
-      'email': email,
-      'password': password,
-      'device_name': deviceName,
-    };
-
     try {
-      final response = await http.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
+      final deviceName = await _deviceName();
+
+      final payload = await _api.post(
+        ApiConstants.register,
+        includeAuth: false,
+        fallback: 'Registration failed',
+        body: {
+          'first_name': firstName,
+          'last_name': lastName,
+          'phone': normalizePhone(phone),
+          'email': email,
+          'device_name': deviceName,
+          'role': role,
+          if (password != null && password.isNotEmpty) 'password': password,
         },
-        body: jsonEncode(body),
       );
 
-      final data = jsonDecode(response.body);
+      _capturePendingAuth(payload);
 
-      if (response.statusCode == 201 || response.statusCode == 200) {
-        final token = data['meta']['token'];
-        if (token != null) {
-          await saveToken(token);
-        }
-        return {
-          'success': true,
-          'message': data['message'] ?? 'Registration succeeded',
-          'data': data,
-        };
-      } else {
-        final errorData = _handleError(data, 'Registration failed');
-        return {
-          'success': false,
-          'message': errorData['message'],
-          'errors': errorData['errors'],
-        };
-      }
+      return _ok(
+        message: payload?['message']?.toString() ?? 'Registration succeeded',
+        data: payload,
+      );
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Registration failed');
     }
   }
 
-  Future<Map<String, dynamic>> sendEmailVerification(String token) async {
-    final url = Uri.parse(
-      '${ApiConstants.baseUrl}${ApiConstants.emailVerificationNotification}',
+  /// `POST /v1/auth/login`.
+  ///
+  /// Students send the phone alone and verify by OTP, exactly like the web's
+  /// `/login`; parents send [password] as well and are signed in straight away,
+  /// like the web's `/parent-login`.
+  ///
+  /// The token lands in the pending session either way; [activateSession] is
+  /// what actually signs the account in.
+  Future<Map<String, dynamic>> login({
+    required String phone,
+    String? password,
+  }) async {
+    try {
+      final deviceName = await _deviceName();
+
+      final payload = await _api.post(
+        ApiConstants.login,
+        includeAuth: false,
+        fallback: 'Login failed',
+        body: {
+          'phone': normalizePhone(phone),
+          'device_name': deviceName,
+          if (password != null && password.isNotEmpty) 'password': password,
+        },
+      );
+
+      _capturePendingAuth(payload);
+
+      return _ok(
+        message: payload?['message']?.toString() ?? 'Login successful',
+        data: payload,
+      );
+    } catch (e) {
+      return _fail(e, 'Login failed');
+    }
+  }
+
+  /// Stores `meta.token` + `data` as the pending session.
+  void _capturePendingAuth(dynamic payload) {
+    if (payload is! Map) return;
+    final token = payload['meta']?['token']?.toString();
+    if (token == null || token.isEmpty) return;
+
+    final user = payload['data'];
+    _session.setPendingAuth(
+      token: token,
+      user: user is Map ? Map<String, dynamic>.from(user) : null,
     );
+  }
 
+  Future<String> _deviceName() async {
     try {
-      final response = await http.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      );
-
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        dynamic data;
-        if (response.body.isNotEmpty) {
-          data = jsonDecode(response.body);
-        }
-        return {
-          'success': true,
-          'message': data?['message'] ?? 'Verification email sent',
-        };
-      } else {
-        final data = response.body.isNotEmpty ? jsonDecode(response.body) : null;
-        final errorData = _handleError(data, 'Failed to send verification email');
-        return {
-          'success': false,
-          'message': errorData['message'],
-          'errors': errorData['errors'],
-        };
-      }
-    } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      final name = await DeviceService.getDeviceName();
+      return name.trim().isEmpty ? _fallbackDeviceName : name;
+    } catch (_) {
+      return _fallbackDeviceName;
     }
   }
 
-  Future<Map<String, dynamic>> sendPhoneVerification(String token) async {
-    final url = Uri.parse(
-      '${ApiConstants.baseUrl}${ApiConstants.phoneVerificationNotification}',
-    );
+  /// Strips spaces and leading zeros so `0100…` and `100…` both reach the API
+  /// in the same shape the web sends (`login/page.tsx`).
+  static String normalizePhone(String raw) {
+    return raw.trim().replaceAll(RegExp(r'\s+'), '').replaceFirst(RegExp(r'^0+'), '');
+  }
 
+  /// The user id from the pending session — needed to subscribe to the
+  /// private OTP channel before the student is signed in.
+  String? get pendingUserId {
+    final user = _session.pendingUser;
+    final id = user?['id'];
+    return id?.toString();
+  }
+
+  Map<String, dynamic>? get pendingUserAttributes {
+    final user = _session.pendingUser;
+    final attrs = user?['attributes'];
+    return attrs is Map ? Map<String, dynamic>.from(attrs) : null;
+  }
+
+  // ---------------------------------------------------------------------
+  // OTP
+  // ---------------------------------------------------------------------
+
+  /// `POST /v1/auth/phone/verification-notification`.
+  ///
+  /// The web calls this automatically when the code screen mounts and reads
+  /// `response.user.otp` to pre-fill the field, so we return it too.
+  /// [token] is accepted for call-site compatibility and ignored — the client
+  /// resolves the pending token itself.
+  Future<Map<String, dynamic>> sendPhoneVerification([String? token]) async {
     try {
-      final response = await http.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+      final payload = await _api.post(
+        ApiConstants.phoneVerificationNotification,
+        fallback: 'Failed to send verification code',
       );
 
-
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        dynamic data;
-        if (response.body.isNotEmpty) {
-          data = jsonDecode(response.body);
-        }
-        return {
-          'success': true,
-          'message': data?['message'] ?? 'Verification phone queued/sent',
-        };
-      } else {
-        final data = response.body.isNotEmpty ? jsonDecode(response.body) : null;
-        final errorData = _handleError(data, 'Failed to send verification phone');
-        return {
-          'success': false,
-          'message': errorData['message'],
-          'errors': errorData['errors'],
-        };
-      }
+      return _ok(
+        message: payload?['message']?.toString() ?? 'Verification code sent',
+        data: payload,
+        extra: {'otp': _readOtp(payload)},
+      );
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to send verification code');
     }
   }
 
-  Future<Map<String, dynamic>> verifyEmailOtp(String token, String code) async {
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.verifyEmail}');
-
+  Future<Map<String, dynamic>> sendEmailVerification([String? token]) async {
     try {
-      final response = await http.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({'code': code}),
+      final payload = await _api.post(
+        ApiConstants.emailVerificationNotification,
+        fallback: 'Failed to send verification email',
       );
 
-      final data = jsonDecode(response.body);
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        return {
-          'success': true,
-          'message': data['message'] ?? 'Email verified successfully',
-        };
-      } else {
-        final errorData = _handleError(data, 'Failed to verify email');
-        return {
-          'success': false,
-          'message': errorData['message'],
-          'errors': errorData['errors'],
-        };
-      }
+      return _ok(
+        message: payload?['message']?.toString() ?? 'Verification email sent',
+        data: payload,
+        extra: {'otp': _readOtp(payload)},
+      );
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to send verification email');
     }
   }
 
-  Future<Map<String, dynamic>> verifyPhoneOtp(String token, String code) async {
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.verifyPhone}');
+  /// Pulls the login code out of a verification-notification response.
+  ///
+  /// The endpoint answers {"message":"sent","code":"O0268A"} — a six character
+  /// **alphanumeric** code under `code`. The web reads `response.user.otp`,
+  /// which is not in that body at all, so its HTTP fill silently does nothing
+  /// and it depends on the websocket alone. Read `code` first and keep the
+  /// other shapes as fallbacks in case the broadcast payload is shaped
+  /// differently.
+  String? _readOtp(dynamic payload) {
+    if (payload is! Map) return null;
 
+    final user = payload['user'];
+    for (final candidate in [
+      payload['code'],
+      payload['otp'],
+      user is Map ? user['otp'] : null,
+      user is Map ? user['code'] : null,
+    ]) {
+      final s = candidate?.toString().trim();
+      if (s != null && s.isNotEmpty) return s;
+    }
+    return null;
+  }
+
+  /// `POST /v1/auth/phone/verify`, then promotes the pending session.
+  ///
+  /// A wrong code answers 401 — a business rule, not an expired session — so
+  /// the auth redirect is skipped and the student stays on the code screen.
+  Future<Map<String, dynamic>> verifyPhoneOtp(String code) async {
     try {
-      final response = await http.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({'code': code}),
+      final payload = await _api.post(
+        ApiConstants.verifyPhone,
+        body: {'code': code},
+        skipAuthRedirect: true,
+        fallback: 'Failed to verify phone',
       );
 
-      final data = jsonDecode(response.body);
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        return {
-          'success': true,
-          'message': data['message'] ?? 'Phone verified successfully',
-        };
-      } else {
-        final errorData = _handleError(data, 'Failed to verify phone');
+      final activated = await _session.activateSession();
+      if (!activated) {
         return {
           'success': false,
-          'message': errorData['message'],
-          'errors': errorData['errors'],
+          'message': 'Session expired, please sign in again',
+          'sessionLost': true,
         };
       }
+
+      return _ok(
+        message: payload?['message']?.toString() ?? 'Phone verified successfully',
+        data: payload,
+      );
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to verify phone');
     }
   }
 
-  Future<Map<String, dynamic>> getUniversities() async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    final url = Uri.parse(
-      '${ApiConstants.baseUrl}${ApiConstants.universities}',
-    );
+  Future<Map<String, dynamic>> verifyEmailOtp(String code) async {
     try {
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+      final payload = await _api.post(
+        ApiConstants.verifyEmail,
+        body: {'code': code},
+        skipAuthRedirect: true,
+        fallback: 'Failed to verify email',
       );
 
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        return {'success': true, 'data': data['data']};
-      } else {
-        final errorData = _handleError(data, 'Failed to fetch universities');
+      final activated = await _session.activateSession();
+      if (!activated) {
         return {
           'success': false,
-          'message': errorData['message'],
-          'errors': errorData['errors'],
+          'message': 'Session expired, please sign in again',
+          'sessionLost': true,
         };
       }
+
+      return _ok(
+        message: payload?['message']?.toString() ?? 'Email verified successfully',
+        data: payload,
+      );
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to verify email');
     }
   }
 
-  Future<Map<String, dynamic>> getCenters() async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+  // ---------------------------------------------------------------------
+  // Academic hierarchy
+  // ---------------------------------------------------------------------
 
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.centers}');
+  Future<Map<String, dynamic>> getUniversities() =>
+      _list(ApiConstants.universities, 'Failed to fetch universities');
+
+  Future<Map<String, dynamic>> getCenters() =>
+      _list(ApiConstants.centers, 'Failed to fetch centers');
+
+  Future<Map<String, dynamic>> getFaculties() =>
+      _list(ApiConstants.faculties, 'Failed to fetch faculties');
+
+  Future<Map<String, dynamic>> _list(String path, String fallback) async {
     try {
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      );
-
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        return {'success': true, 'data': data['data']};
-      } else {
-        final errorData = _handleError(data, 'Failed to fetch centers');
-        return {
-          'success': false,
-          'message': errorData['message'],
-          'errors': errorData['errors'],
-        };
-      }
+      final payload = await _api.get(path, fallback: fallback);
+      return _ok(data: unwrapList(payload));
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, fallback);
     }
   }
 
-  Future<Map<String, dynamic>> getFaculties() async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.faculties}');
-    try {
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      );
-
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        return {'success': true, 'data': data['data']};
-      } else {
-        final errorData = _handleError(data, 'Failed to fetch faculties');
-        return {
-          'success': false,
-          'message': errorData['message'],
-          'errors': errorData['errors'],
-        };
-      }
-    } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
-    }
-  }
-
+  /// `PUT /v1/auth/update` with the academic selection.
+  ///
+  /// Sends the same field set as `buildStudentAcademicUpdatePayload` on the
+  /// web: `centers[]` **and** the singular `center_id`, plus the optional
+  /// `department_id` the app used to omit entirely.
   Future<Map<String, dynamic>> updateAcademicProfile({
     required dynamic universityId,
-    required List<dynamic> centerIds,
+    required dynamic centerId,
     required dynamic facultyId,
-  }) async {
-    // Convert center IDs to list of integers
-    final centerIdsList = centerIds.map((id) => int.tryParse(id.toString()) ?? id).toList();
+    dynamic departmentId,
+  }) {
+    final center = int.tryParse(centerId.toString()) ?? centerId;
 
     return updateProfile({
       'university_id': universityId.toString(),
-      'centers': centerIdsList,
       'faculty_id': int.tryParse(facultyId.toString()) ?? facultyId,
+      'centers': [center],
+      'center_id': center,
+      if (departmentId != null && departmentId.toString().isNotEmpty)
+        'department_id':
+            int.tryParse(departmentId.toString()) ?? departmentId,
     });
   }
 
   Future<Map<String, dynamic>> updateProfile(Map<String, dynamic> body) async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    final url = Uri.parse(
-      '${ApiConstants.baseUrl}${ApiConstants.updateProfile}',
-    );
     try {
-      final response = await http.put(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode(body),
+      final payload = await _api.put(
+        ApiConstants.updateProfile,
+        body: body,
+        fallback: 'Failed to update profile',
       );
 
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        return {
-          'success': true,
-          'message': data['message'] ?? 'Profile updated successfully',
-          'data': data['data'],
-        };
-      } else {
-        final errorData = _handleError(data, 'Failed to update profile');
-        return {
-          'success': false,
-          'message': errorData['message'],
-          'errors': errorData['errors'],
-        };
-      }
+      return _ok(
+        message: payload?['message']?.toString() ?? 'Profile updated successfully',
+        data: payload?['data'],
+      );
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to update profile');
     }
   }
 
@@ -481,145 +482,41 @@ class AuthRepository {
     required Map<String, dynamic> profileData,
     File? imageFile,
   }) async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.updateProfile}');
-
     try {
-      final request = http.MultipartRequest('PUT', url);
-      request.headers['Authorization'] = 'Bearer $token';
-      request.headers['Accept'] = 'application/json';
-
-      // Add profile fields
-      profileData.forEach((key, value) {
-        if (value != null) {
-          request.fields[key] = value.toString();
-        }
-      });
-
-      // Add image file if provided
-      if (imageFile != null) {
-        final fileName = imageFile.path.split('/').last;
-        final extension = fileName.split('.').last.toLowerCase();
-        final contentType = extension == 'png'
-            ? MediaType('image', 'png')
-            : extension == 'jpg' || extension == 'jpeg'
-                ? MediaType('image', 'jpeg')
-                : MediaType('image', 'jpeg');
-
-        request.files.add(await http.MultipartFile.fromPath(
-          'image',
-          imageFile.path,
-          contentType: contentType,
-        ));
-      }
-
-      final streamedResponse = await request.send();
-      final response = await http.Response.fromStream(streamedResponse);
-
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        return {
-          'success': true,
-          'message': data['message'] ?? 'Profile updated successfully',
-          'data': data['data'],
-        };
-      } else {
-        final errorData = _handleError(data, 'Failed to update profile');
-        return {
-          'success': false,
-          'message': errorData['message'],
-          'errors': errorData['errors'],
-        };
-      }
-    } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
-    }
-  }
-
-  Future<Map<String, dynamic>> login({
-    required String identifier,
-    required String password,
-  }) async {
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.login}');
-    final deviceName = await DeviceService.getDeviceName();
-
-    final body = {
-      'phone_or_email': identifier,
-      'password': password,
-      'device_name': deviceName,
-    };
-
-    try {
-      final response = await http.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: jsonEncode(body),
+      final payload = await _api.multipart(
+        ApiConstants.updateProfile,
+        method: 'PUT',
+        fields: profileData,
+        files: imageFile == null ? const {} : {'image': imageFile.path},
+        fallback: 'Failed to update profile',
       );
 
-      final data = jsonDecode(response.body);
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final token = data['meta']['token'];
-        if (token != null) {
-          await saveToken(token);
-        }
-        return {
-          'success': true,
-          'message': data['message'] ?? 'Login successful',
-          'data': data,
-        };
-      } else {
-        final errorData = _handleError(data, 'Login failed');
-        return {
-          'success': false,
-          'message': errorData['message'],
-          'errors': errorData['errors'],
-        };
-      }
+      return _ok(
+        message: payload?['message']?.toString() ?? 'Profile updated successfully',
+        data: payload?['data'],
+      );
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to update profile');
     }
   }
+
+  // ---------------------------------------------------------------------
+  // Profile
+  // ---------------------------------------------------------------------
 
   Future<Map<String, dynamic>> getProfile() async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.me}');
     try {
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+      final payload = await _api.get(
+        ApiConstants.me,
+        fallback: 'Failed to fetch profile',
       );
 
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        // Cache watermark data for offline use
-        await _cacheWatermarkData(data['data']);
-        return {
-          'success': true,
-          'data': data['data'],
-        };
-      } else {
-        final errorData = _handleError(data, 'Failed to fetch profile');
-        return {
-          'success': false,
-          'message': errorData['message'],
-          'errors': errorData['errors'],
-          'statusCode': response.statusCode,
-        };
-      }
+      final data = payload is Map ? payload['data'] : null;
+      await _cacheWatermarkData(data is Map ? Map<String, dynamic>.from(data) : null);
+
+      return _ok(data: data);
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to fetch profile');
     }
   }
 
@@ -646,7 +543,6 @@ class AuthRepository {
   }
 
   /// Get cached watermark data for offline use
-  /// Returns map with 'student_code' and 'phone' keys, values may be null
   Map<String, String?> getCachedWatermarkData() {
     try {
       final box = Hive.box<dynamic>(HiveBoxes.userProfile);
@@ -660,7 +556,6 @@ class AuthRepository {
     }
   }
 
-  /// Clear cached watermark data (call on logout)
   Future<void> clearCachedWatermarkData() async {
     try {
       final box = Hive.box<dynamic>(HiveBoxes.userProfile);
@@ -671,37 +566,25 @@ class AuthRepository {
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Password reset — unchanged contract, matches the web exactly
+  // ---------------------------------------------------------------------
+
   Future<Map<String, dynamic>> requestPasswordReset(String phoneOrEmail) async {
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.passwordForgot}');
-
     try {
-      final response = await http.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: jsonEncode({'phone_or_email': phoneOrEmail}),
+      final payload = await _api.post(
+        ApiConstants.passwordForgot,
+        includeAuth: false,
+        body: {'phone_or_email': phoneOrEmail},
+        fallback: 'Failed to send password reset code',
       );
-
-      final data = jsonDecode(response.body);
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        return {
-          'success': true,
-          'message': data['message'] ?? 'Password reset code sent successfully',
-          'data': data,
-        };
-      } else {
-        final errorData = _handleError(data, 'Failed to send password reset code');
-        return {
-          'success': false,
-          'message': errorData['message'],
-          'errors': errorData['errors'],
-        };
-      }
+      return _ok(
+        message: payload?['message']?.toString() ??
+            'Password reset code sent successfully',
+        data: payload,
+      );
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to send password reset code');
     }
   }
 
@@ -709,40 +592,24 @@ class AuthRepository {
     required String phoneOrEmail,
     required String code,
   }) async {
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.passwordReset}');
-
     try {
-      final response = await http.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: jsonEncode({
+      final payload = await _api.post(
+        ApiConstants.passwordReset,
+        includeAuth: false,
+        skipAuthRedirect: true,
+        body: {
           'type': 'verify',
           'code': code,
           'phone_or_email': phoneOrEmail,
-        }),
+        },
+        fallback: 'Failed to verify code',
       );
-
-      final data = jsonDecode(response.body);
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        return {
-          'success': true,
-          'message': data['message'] ?? 'Code verified successfully',
-          'data': data,
-        };
-      } else {
-        final errorData = _handleError(data, 'Failed to verify code');
-        return {
-          'success': false,
-          'message': errorData['message'],
-          'errors': errorData['errors'],
-        };
-      }
+      return _ok(
+        message: payload?['message']?.toString() ?? 'Code verified successfully',
+        data: payload,
+      );
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to verify code');
     }
   }
 
@@ -752,78 +619,63 @@ class AuthRepository {
     required String password,
     required String passwordConfirmation,
   }) async {
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.passwordReset}');
-
     try {
-      final response = await http.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: jsonEncode({
+      final payload = await _api.post(
+        ApiConstants.passwordReset,
+        includeAuth: false,
+        skipAuthRedirect: true,
+        body: {
           'type': 'reset',
           'code': code,
           'phone_or_email': phoneOrEmail,
           'password': password,
           'password_confirmation': passwordConfirmation,
-        }),
+        },
+        fallback: 'Failed to reset password',
       );
-
-      final data = jsonDecode(response.body);
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        return {
-          'success': true,
-          'message': data['message'] ?? 'Password reset successfully',
-          'data': data,
-        };
-      } else {
-        final errorData = _handleError(data, 'Failed to reset password');
-        return {
-          'success': false,
-          'message': errorData['message'],
-          'errors': errorData['errors'],
-        };
-      }
+      return _ok(
+        message: payload?['message']?.toString() ?? 'Password reset successfully',
+        data: payload,
+      );
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to reset password');
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Logout
+  // ---------------------------------------------------------------------
+
+  /// `POST /v1/auth/logout`.
+  ///
+  /// 204 and 401 both count as success (the web treats an already-expired
+  /// token as a completed logout), and the local session is cleared either way.
   Future<Map<String, dynamic>> logout() async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.logout}');
+    String message = 'Logged out successfully';
     try {
-      final response = await http.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+      final payload = await _api.post(
+        ApiConstants.logout,
+        skipAuthRedirect: true,
+        fallback: 'Logout failed',
       );
-
-      // Clear token and cached watermark data regardless of API response
-      await deleteToken();
-      await clearCachedWatermarkData();
-
-      if (response.statusCode == 200 || response.statusCode == 204) {
-        return {'success': true, 'message': 'Logged out successfully'};
-      } else {
-        final data = response.body.isNotEmpty ? jsonDecode(response.body) : null;
-        return {
-          'success': true, // Still consider success since we cleared local token
-          'message': data?['message'] ?? 'Logged out locally',
-        };
+      final m = payload is Map ? payload['message']?.toString() : null;
+      if (m != null && m.isNotEmpty) message = m;
+    } on ApiException catch (e) {
+      if (!e.isUnauthorized) {
+        await _clearLocalSession();
+        return {'success': false, 'message': e.display('Logout failed')};
       }
-    } catch (e) {
-      // Even if API call fails, clear local token and cached watermark data
-      await deleteToken();
-      await clearCachedWatermarkData();
-      return {'success': true, 'message': 'Logged out locally'};
+      message = 'Session expired, logged out';
+    } catch (_) {
+      // Network failure — still clear locally so the student is not stuck.
     }
+
+    await _clearLocalSession();
+    return _ok(message: message);
+  }
+
+  Future<void> _clearLocalSession() async {
+    await clearCachedWatermarkData();
+    await _session.clear();
   }
 }

@@ -182,63 +182,25 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   }
 
   Future<void> _playOfflineVideo(DownloadedVideo video) async {
+    debugPrint('[OFFLINE_PLAY] _playOfflineVideo called for ${video.id}');
     // Check if views are already exhausted
-    if (video.currentViews >= video.maxViews) {
+    if (video.currentViews >= video.maxViews && video.maxViews > 0) {
       // Delete the video
       await _encryptedVideoService.deleteDownloadedVideo(video.id);
-      _loadDownloads();
+      await _loadDownloads();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Views exhausted. Video has been deleted.'),
-            backgroundColor: Color(0xFFFF4B4B),
+          SnackBar(
+            content: Text('course.maximum_views_reached'.tr()),
+            backgroundColor: const Color(0xFFFF4B4B),
           ),
         );
       }
       return;
-    }
-
-    // Increment view count before playing
-    final newViewCount = await _encryptedVideoService.incrementViewCount(video.id);
-
-    if (newViewCount < 0) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Error accessing video. Please try again.'),
-            backgroundColor: Color(0xFFFF4B4B),
-          ),
-        );
-      }
-      return;
-    }
-
-    // Check if this was the last view
-    final updatedVideo = _encryptedVideoService.getDownloadedVideo(video.id);
-    if (updatedVideo != null && updatedVideo.currentViews >= updatedVideo.maxViews) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('This was your last view (${updatedVideo.currentViews}/${updatedVideo.maxViews}). Video will be deleted after watching.'),
-            backgroundColor: const Color(0xFFFF9800),
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
-    } else if (updatedVideo != null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Views used: ${updatedVideo.currentViews}/${updatedVideo.maxViews}'),
-            backgroundColor: const Color(0xFF2DBC77),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
     }
 
     // Navigate to video player
-    final result = await Navigator.push(
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => LectureDetailScreen(
@@ -248,7 +210,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
           chapterTitle: video.chapterTitle,
           courseId: video.courseId,
           offlineVideoPath: video.encryptedFilePath,
-          offlineVideoKey: video.encryptionKey,
           maxViews: video.maxViews,
         ),
       ),
@@ -258,14 +219,15 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     await _loadDownloads();
 
     // Check if views are now exhausted and delete if needed
-    if (updatedVideo != null && updatedVideo.currentViews >= updatedVideo.maxViews) {
+    final current = _encryptedVideoService.getDownloadedVideo(video.id);
+    if (current != null && current.currentViews >= current.maxViews && current.maxViews > 0) {
       await _encryptedVideoService.deleteDownloadedVideo(video.id);
-      _loadDownloads();
+      await _loadDownloads();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Views exhausted. Video has been deleted.'),
-            backgroundColor: Color(0xFF2DBC77),
+          SnackBar(
+            content: Text('course.maximum_views_reached'.tr()),
+            backgroundColor: const Color(0xFFFF4B4B),
           ),
         );
       }

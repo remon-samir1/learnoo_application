@@ -1,136 +1,167 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+
 import '../../data/exam_repository.dart';
 import '../../models/quiz_models.dart';
-import '../../presentation/widgets/exam_activation_modal.dart';
-import '../../presentation/screens/quiz_screen.dart';
 import '../../presentation/screens/exam_notice_screen.dart';
+import '../../presentation/widgets/exam_activation_modal.dart';
+import '../quiz_activation_lock.dart';
 
-/// Enum representing exam access status
+/// Why an exam can or cannot be opened.
 enum ExamAccessStatus {
-  public,        // is_public == true, open directly
-  viewable,      // can_view == true, show notice then open
-  needsActivation, // can_view == false, show activation modal
-  error,         // API error occurred
+  /// Open to everyone (`is_public: true`).
+  public,
+
+  /// Gate satisfied — activated, or bundled with a course the student has.
+  viewable,
+
+  /// Bundled with a course the student has not activated yet.
+  courseNotEnrolled,
+
+  /// Private exam, or attempts exhausted: needs an activation code.
+  needsActivation,
+
+  /// Every attempt used on an exam the student had already activated.
+  attemptsExhausted,
+
+  error,
 }
 
-/// Use case for handling exam access control logic
+/// Decides what happens when a student taps an exam.
+///
+/// Rewritten on the shared gate in `quiz_activation_lock.dart` so the app and
+/// the web reach the same verdict. The old version had only three states and
+/// keyed off `can_view` / `can_watch`, which meant a course-bundled exam looked
+/// identical to a private one — the student was asked for a code they had no
+/// way to obtain.
 class ExamAccessUseCase {
-  final ExamRepository _examRepository;
-
   ExamAccessUseCase({ExamRepository? examRepository})
       : _examRepository = examRepository ?? ExamRepository();
 
-  /// Check if exam can be opened based on access properties
-  ExamAccessStatus checkExamAccess(Quiz quiz) {
-    // Step 1: Check if public
-    if (quiz.isPublic) {
-      return ExamAccessStatus.public;
+  final ExamRepository _examRepository;
+
+  /// [enrolledCourseIds] are the courses the student has activated. Pass the
+  /// same set the exams list built, so an `included` exam resolves identically
+  /// in the list and on tap.
+  ExamAccessStatus checkExamAccess(
+    Quiz quiz, {
+    Set<String> enrolledCourseIds = const {},
+  }) {
+    final attrs = quiz.attributes;
+
+    if (quizNeedsReactivation(attrs)) {
+      return ExamAccessStatus.attemptsExhausted;
     }
 
-    // Step 2: Check if user has view permission
-    if (quiz.canView) {
-      return ExamAccessStatus.viewable;
+    if (quizRequiresActivationWithEnrolled(attrs, enrolledCourseIds)) {
+      return readQuizVisibility(attrs) == QuizVisibility.included
+          ? ExamAccessStatus.courseNotEnrolled
+          : ExamAccessStatus.needsActivation;
     }
 
-    // Step 3: User needs activation
-    return ExamAccessStatus.needsActivation;
+    return quiz.isPublic
+        ? ExamAccessStatus.public
+        : ExamAccessStatus.viewable;
   }
 
-  /// Quick check if exam can be opened without activation
-  bool canOpenExam(Quiz quiz) {
-    return quiz.isPublic || quiz.canView;
+  bool canOpenExam(Quiz quiz, {Set<String> enrolledCourseIds = const {}}) {
+    final status = checkExamAccess(quiz, enrolledCourseIds: enrolledCourseIds);
+    return status == ExamAccessStatus.public ||
+        status == ExamAccessStatus.viewable;
   }
 
-  /// Handle exam access - main entry point with navigation logic
-  /// This should be called when user clicks on an exam
+  /// Entry point for a tap on an exam card.
   Future<void> handleExamAccess({
     required BuildContext context,
     required Quiz quiz,
+    Set<String> enrolledCourseIds = const {},
     QuizAttempt? existingAttempt,
   }) async {
-    final accessStatus = checkExamAccess(quiz);
+    final status = checkExamAccess(quiz, enrolledCourseIds: enrolledCourseIds);
 
-    switch (accessStatus) {
+    switch (status) {
       case ExamAccessStatus.public:
-        // Open exam directly - no need for notice
-        await _navigateToExamNotice(context, quiz, existingAttempt);
+      case ExamAccessStatus.viewable:
+        await _navigateToExamNotice(context, quiz);
         break;
 
-      case ExamAccessStatus.viewable:
-        // User can view, show notice screen
-        await _navigateToExamNotice(context, quiz, existingAttempt);
+      case ExamAccessStatus.courseNotEnrolled:
+        // No code will help here — the student needs to activate the course.
+        _showMessage(context, 'exams.activate_course_first'.tr());
         break;
 
       case ExamAccessStatus.needsActivation:
-        // Show activation modal
         await _showActivationModal(context, quiz);
         break;
 
+      case ExamAccessStatus.attemptsExhausted:
+        await _showActivationModal(
+          context,
+          quiz,
+          title: 'exams.reactivate_attempts_title'.tr(),
+          body: 'exams.reactivate_attempts_body'.tr(),
+        );
+        break;
+
       case ExamAccessStatus.error:
-        // Show error
-        _showAccessDeniedMessage(context);
+        _showMessage(context, 'exams.access_denied'.tr());
         break;
     }
   }
 
-  /// Navigate to exam notice screen
-  Future<void> _navigateToExamNotice(
-    BuildContext context,
-    Quiz quiz,
-    QuizAttempt? existingAttempt,
-  ) async {
+  Future<void> _navigateToExamNotice(BuildContext context, Quiz quiz) async {
     if (!context.mounted) return;
-
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => ExamNoticeScreen(
-          quiz: quiz,
-        ),
-      ),
+      MaterialPageRoute(builder: (context) => ExamNoticeScreen(quiz: quiz)),
     );
   }
 
-  /// Show activation code modal
-  Future<void> _showActivationModal(BuildContext context, Quiz quiz) async {
+  Future<void> _showActivationModal(
+    BuildContext context,
+    Quiz quiz, {
+    String? title,
+    String? body,
+  }) async {
     if (!context.mounted) return;
 
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => ExamActivationModal(
+      builder: (sheetContext) => ExamActivationModal(
         quiz: quiz,
+        headline: title,
+        message: body,
         onSuccess: (updatedQuiz) {
-          // After successful activation, navigate to exam notice
-          Navigator.pop(context); // Close modal
-          _navigateToExamNotice(context, updatedQuiz, null);
+          Navigator.pop(sheetContext);
+          _navigateToExamNotice(context, updatedQuiz);
         },
         onError: (message) {
-          // Error is handled within the modal
+          // Surfaced inside the modal.
         },
       ),
     );
   }
 
-  /// Show access denied message
-  void _showAccessDeniedMessage(BuildContext context) {
+  void _showMessage(BuildContext context, String message) {
     if (!context.mounted) return;
-
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('You do not have access to this quiz.'),
-        backgroundColor: Colors.red,
-      ),
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
     );
   }
 
-  /// Verify exam access with server before opening
-  /// This calls GET /quiz/{id} which validates access and returns questions
-  Future<Map<String, dynamic>> verifyExamAccess(int quizId) async {
+  /// Re-checks access against the server before opening.
+  ///
+  /// `GET /v1/quiz/{id}` both validates access and returns the questions, so a
+  /// stale list row cannot be used to slip into a locked exam.
+  Future<Map<String, dynamic>> verifyExamAccess(
+    int quizId, {
+    Set<String> enrolledCourseIds = const {},
+  }) async {
     final result = await _examRepository.getQuizById(quizId);
 
-    if (!result['success']) {
+    if (result['success'] != true) {
       return {
         'success': false,
         'accessStatus': ExamAccessStatus.error,
@@ -139,23 +170,26 @@ class ExamAccessUseCase {
     }
 
     final quiz = result['data'] as Quiz;
-    final accessStatus = checkExamAccess(quiz);
+    final status = checkExamAccess(quiz, enrolledCourseIds: enrolledCourseIds);
 
     return {
       'success': true,
       'quiz': quiz,
-      'accessStatus': accessStatus,
-      'canProceed': accessStatus == ExamAccessStatus.public ||
-                    accessStatus == ExamAccessStatus.viewable,
+      'accessStatus': status,
+      'canProceed': status == ExamAccessStatus.public ||
+          status == ExamAccessStatus.viewable,
     };
   }
 }
 
-/// Extension on Quiz for quick access checks
+/// Convenience checks on a quiz row.
 extension QuizAccessExtension on Quiz {
-  /// Check if exam is accessible without activation
-  bool get isAccessible => isPublic || canView || canWatch;
+  bool isAccessibleFor(Set<String> enrolledCourseIds) =>
+      !quizMustActivate(attributes, enrolledCourseIds);
 
-  /// Check if exam requires activation code
-  bool get requiresActivation => !isPublic && !canView && !canWatch;
+  bool requiresActivationFor(Set<String> enrolledCourseIds) =>
+      quizMustActivate(attributes, enrolledCourseIds);
+
+  QuizBucket bucketFor(Set<String> enrolledCourseIds) =>
+      classifyQuiz({'attributes': attributes}, enrolledCourseIds);
 }

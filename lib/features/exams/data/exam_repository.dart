@@ -1,463 +1,437 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+import 'package:flutter/foundation.dart';
+
+import '../../../core/network/api_client.dart';
 import '../../../core/network/api_constants.dart';
+import '../../../core/network/api_exception.dart';
+import '../../../core/session/session_manager.dart';
+import '../../../core/utils/coerce.dart';
 import '../models/quiz_models.dart';
 
+/// Exams data access.
+///
+/// Rewritten on [ApiClient] and aligned with the web's exam flow. The two
+/// behavioural changes:
+///
+///  * **Per-question answers are now sent to the server.** The old code
+///    computed a score locally and submitted only that total, with a comment
+///    saying individual answers are "NOT submitted to API anymore". That left
+///    `short_answer` questions ungradable for app students, because the
+///    instructor's review screen reads `/v1/quiz-user-answer` rows.
+///  * Attempt payloads match the web exactly: `{quiz_id}` to start,
+///    `{score, total_score}` to finish.
 class ExamRepository {
-  final _storage = const FlutterSecureStorage();
+  final ApiClient _api = ApiClient();
 
-  Future<String?> getToken() async {
-    return await _storage.read(key: 'auth_token');
+  Future<String?> getToken() => SessionManager().currentToken();
+
+  Map<String, dynamic> _fail(Object error, String fallback) {
+    if (error is ApiException) {
+      return {
+        'success': false,
+        'message': error.display(fallback),
+        'errors': error.errors,
+        'statusCode': error.status,
+      };
+    }
+    return {'success': false, 'message': fallback, 'statusCode': 0};
   }
 
-  String _handleError(dynamic data, String defaultMessage) {
-    if (data == null) return defaultMessage;
+  // ---------------------------------------------------------------------
+  // Listing
+  // ---------------------------------------------------------------------
 
-    if (data['message'] != null) {
-      return data['message'].toString();
-    }
-
-    if (data['errors'] != null && data['errors'] is Map) {
-      final errors = data['errors'] as Map<String, dynamic>;
-      return errors.values
-          .map((e) {
-            if (e is List) return e.join(', ');
-            return e.toString();
-          })
-          .join('\n');
-    }
-
-    return defaultMessage;
-  }
-
-  // Get all quizzes
-  Future<Map<String, dynamic>> getQuizzes() async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.quiz}');
+  /// `GET /v1/quiz` with pagination, per_page, course_id and title/search.
+  Future<Map<String, dynamic>> getQuizzes({
+    int page = 1,
+    int perPage = 500,
+    String? title,
+    int? courseId,
+  }) async {
     try {
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
+      final payload = await _api.get(
+        ApiConstants.quiz,
+        query: {
+          'page': page,
+          'per_page': perPage,
+          if (courseId != null) 'course_id': courseId,
+          if (title != null && title.trim().isNotEmpty) ...{
+            'title': title.trim(),
+            'search': title.trim(),
+          },
         },
+        fallback: 'Failed to fetch quizzes',
       );
 
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        final List<dynamic> quizData = data['data'] ?? [];
-        final quizzes = quizData.map((q) => Quiz.fromJson(q)).toList();
-        return {'success': true, 'data': quizzes};
-      } else {
-        return {
-          'success': false,
-          'message': _handleError(data, 'Failed to fetch quizzes'),
-        };
-      }
+      final quizzes = unwrapList(payload)
+          .whereType<Map>()
+          .map((q) => Quiz.fromJson(Map<String, dynamic>.from(q)))
+          .toList();
+
+      final meta = readMeta(payload);
+      final hasNextPage = (payload is Map && payload['links']?['next'] != null) ||
+          (meta != null &&
+              (meta['current_page'] ?? 1) < (meta['last_page'] ?? 1)) ||
+          (perPage < 500 && quizzes.length >= perPage);
+
+      return {
+        'success': true,
+        'data': quizzes,
+        'meta': meta,
+        'hasNextPage': hasNextPage,
+      };
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to fetch quizzes');
     }
   }
 
-  // Get quiz by ID
+  /// `GET /v1/quiz/{id}` — also the server-side access check.
+  ///
+  /// A 403 here is a business rule (exam not activated), so the session must
+  /// not be dropped.
   Future<Map<String, dynamic>> getQuizById(int quizId) async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.quiz}/$quizId');
     try {
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+      final payload = await _api.get(
+        '${ApiConstants.quiz}/$quizId',
+        skipAuthRedirect: true,
+        fallback: 'Failed to fetch quiz',
       );
 
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        final quiz = Quiz.fromJson(data['data']);
-        return {'success': true, 'data': quiz};
-      } else {
-        return {
-          'success': false,
-          'message': _handleError(data, 'Failed to fetch quiz'),
-        };
+      final data = unwrapMap(payload);
+      if (data == null) {
+        return {'success': false, 'message': 'Quiz not found'};
       }
+      return {'success': true, 'data': Quiz.fromJson(data)};
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to fetch quiz');
     }
   }
 
-  // Get questions for a quiz
   Future<Map<String, dynamic>> getQuizQuestions(int quizId) async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    final url = Uri.parse(
-      '${ApiConstants.baseUrl}${ApiConstants.quizQuestion}?quiz_id=$quizId',
-    );
     try {
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+      final payload = await _api.get(
+        ApiConstants.quizQuestion,
+        query: {'quiz_id': quizId},
+        skipAuthRedirect: true,
+        fallback: 'Failed to fetch quiz questions',
       );
 
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        final List<dynamic> questionData = data['data'] ?? [];
-        final questions = questionData.map((q) => QuizQuestion.fromJson(q)).toList();
-        return {'success': true, 'data': questions};
-      } else {
-        return {
-          'success': false,
-          'message': _handleError(data, 'Failed to fetch quiz questions'),
-        };
-      }
+      final questions = unwrapList(payload)
+          .whereType<Map>()
+          .map((q) => QuizQuestion.fromJson(Map<String, dynamic>.from(q)))
+          .toList();
+
+      return {'success': true, 'data': questions};
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to fetch quiz questions');
     }
   }
 
-  // Get all answers (for a specific question or all)
-  // DEPRECATED: Answers are now included in the questions API response
-  // This method is kept for backward compatibility but should not be used
   @Deprecated('Answers are now included in getQuizQuestions response')
   Future<Map<String, dynamic>> getQuizAnswers({int? questionId}) async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    var urlString = '${ApiConstants.baseUrl}${ApiConstants.quizAnswer}';
-    if (questionId != null) {
-      urlString += '?quiz_question_id=$questionId';
-    }
-
-    final url = Uri.parse(urlString);
     try {
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+      final payload = await _api.get(
+        ApiConstants.quizAnswer,
+        query: questionId == null ? null : {'quiz_question_id': questionId},
+        fallback: 'Failed to fetch quiz answers',
       );
 
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        final List<dynamic> answerData = data['data'] ?? [];
-        final answers = answerData.map((a) => QuizAnswer.fromJson(a)).toList();
-        return {'success': true, 'data': answers};
-      } else {
-        return {
-          'success': false,
-          'message': _handleError(data, 'Failed to fetch quiz answers'),
-        };
-      }
+      final answers = unwrapList(payload)
+          .whereType<Map>()
+          .map((a) => QuizAnswer.fromJson(Map<String, dynamic>.from(a)))
+          .toList();
+
+      return {'success': true, 'data': answers};
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to fetch quiz answers');
     }
   }
 
-  // Get attempts for a specific quiz
+  // ---------------------------------------------------------------------
+  // Attempts
+  // ---------------------------------------------------------------------
+
   Future<Map<String, dynamic>> getQuizAttempts(int quizId) async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    final url = Uri.parse(
-      '${ApiConstants.baseUrl}${ApiConstants.quizAttempt}?quiz_id=$quizId',
-    );
     try {
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+      final payload = await _api.get(
+        ApiConstants.quizAttempt,
+        query: {'quiz_id': quizId},
+        fallback: 'Failed to fetch quiz attempts',
       );
 
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        final List<dynamic> attemptData = data['data'] ?? [];
-        final attempts = attemptData.map((a) => QuizAttempt.fromJson(a)).toList();
-        return {'success': true, 'data': attempts};
-      } else {
-        return {
-          'success': false,
-          'message': _handleError(data, 'Failed to fetch quiz attempts'),
-        };
-      }
+      final attempts = unwrapList(payload)
+          .whereType<Map>()
+          .map((a) => QuizAttempt.fromJson(Map<String, dynamic>.from(a)))
+          .toList();
+
+      return {'success': true, 'data': attempts};
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to fetch quiz attempts');
     }
   }
 
-  // Get all attempts for current user
   Future<Map<String, dynamic>> getAllAttempts() async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.quizAttempt}');
     try {
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+      final payload = await _api.get(
+        ApiConstants.quizAttempt,
+        fallback: 'Failed to fetch attempts',
       );
 
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        final List<dynamic> attemptData = data['data'] ?? [];
-        final attempts = attemptData.map((a) => QuizAttempt.fromJson(a)).toList();
-        return {'success': true, 'data': attempts};
-      } else {
-        return {
-          'success': false,
-          'message': _handleError(data, 'Failed to fetch attempts'),
-        };
-      }
+      final attempts = unwrapList(payload)
+          .whereType<Map>()
+          .map((a) => QuizAttempt.fromJson(Map<String, dynamic>.from(a)))
+          .toList();
+
+      return {'success': true, 'data': attempts};
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to fetch attempts');
     }
   }
 
-  // Start a new quiz attempt
+  /// `POST /v1/quiz-attempt` with `{quiz_id}` only.
+  ///
+  /// The server stamps `started_at` itself; sending a client clock let a
+  /// tampered device extend its own exam window. A 403 here means "no attempts
+  /// left" — a rule, not an auth failure.
   Future<Map<String, dynamic>> startQuizAttempt(int quizId) async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.quizAttempt}');
     try {
-      final response = await http.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({
-          'quiz_id': quizId,
-          'started_at': DateTime.now().toUtc().toIso8601String(),
-        }),
+      final payload = await _api.post(
+        ApiConstants.quizAttempt,
+        body: {'quiz_id': quizId},
+        skipAuthRedirect: true,
+        fallback: 'Failed to start quiz attempt',
       );
 
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 201 || response.statusCode == 200) {
-        return {
-          'success': true,
-          'data': QuizAttempt.fromJson(data['data']),
-          'message': data['message'] ?? 'Quiz attempt started',
-        };
-      } else {
-        return {
-          'success': false,
-          'message': _handleError(data, 'Failed to start quiz attempt'),
-        };
+      final data = unwrapMap(payload);
+      if (data == null) {
+        return {'success': false, 'message': 'Failed to start quiz attempt'};
       }
+
+      return {
+        'success': true,
+        'data': QuizAttempt.fromJson(data),
+        'message': payload is Map ? payload['message'] : null,
+      };
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to start quiz attempt');
     }
   }
 
-  // Submit quiz answers and complete attempt
-  // Note: We calculate score client-side, so we only mark the attempt as finished
-  // without submitting individual answers to the API
+  /// `PUT /v1/quiz-attempt/{id}` with `{score, total_score}`.
+  ///
+  /// [answers] is accepted for call-site compatibility and ignored — answers
+  /// are persisted one at a time through [saveAnswer] while the student works,
+  /// which is what makes them visible to an instructor.
   Future<Map<String, dynamic>> submitQuizAttempt({
     required int attemptId,
     required int quizId,
-    required List<Map<String, dynamic>> answers, // Not used - client-side scoring
+    List<Map<String, dynamic>> answers = const [],
     required int score,
     required int totalScore,
   }) async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    // Note: Individual answers are NOT submitted to API anymore
-    // We calculate score client-side based on correct answers in questions data
-    // Just mark the attempt as finished with the calculated score
-
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.quizAttempt}/$attemptId');
     try {
-      final response = await http.put(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({
-          'finished_at': DateTime.now().toUtc().toIso8601String(),
-          'score': score,
-          'total_score': totalScore,
-        }),
+      final payload = await _api.put(
+        '${ApiConstants.quizAttempt}/$attemptId',
+        body: {'score': score, 'total_score': totalScore},
+        skipAuthRedirect: true,
+        fallback: 'Failed to submit quiz',
       );
 
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        return {
-          'success': true,
-          'data': QuizAttempt.fromJson(data['data']),
-          'message': data['message'] ?? 'Quiz submitted successfully',
-        };
-      } else {
-        return {
-          'success': false,
-          'message': _handleError(data, 'Failed to submit quiz'),
-        };
-      }
+      final data = unwrapMap(payload);
+      return {
+        'success': true,
+        'data': data == null ? null : QuizAttempt.fromJson(data),
+        'raw': payload,
+        'message': payload is Map ? payload['message'] : null,
+      };
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Failed to submit quiz');
     }
   }
 
-  // Calculate remaining attempts for a quiz (filtered by current user)
-  Future<Map<String, dynamic>> getRemainingAttempts(int quizId, int maxAttempts, {Quiz? quiz}) async {
-    // If we already have the quiz object with attempt data, use it
+  // ---------------------------------------------------------------------
+  // Per-question answers
+  // ---------------------------------------------------------------------
+
+  /// Creates or updates the answer row for one question.
+  ///
+  /// Mirrors the web's POST-then-PUT: the first save creates a row and returns
+  /// its id, every later change updates that same row. Pass the id back in
+  /// [existingAnswerId] to take the update path.
+  ///
+  /// Returns the row id so the caller can cache it. Failures are non-fatal —
+  /// the student must never be blocked mid-exam by a flaky save.
+  Future<Map<String, dynamic>> saveAnswer({
+    required Object attemptId,
+    required Object questionId,
+    required String answerText,
+    Object? existingAnswerId,
+  }) async {
+    final text = answerText.trim();
+    if (text.isEmpty) {
+      return {'success': false, 'message': 'Empty answer'};
+    }
+
+    try {
+      if (existingAnswerId != null) {
+        await _api.put(
+          '${ApiConstants.quizUserAnswer}/$existingAnswerId',
+          body: {'answer_text': text},
+          skipAuthRedirect: true,
+          fallback: 'Failed to update answer',
+        );
+        return {'success': true, 'id': existingAnswerId};
+      }
+
+      final payload = await _api.post(
+        ApiConstants.quizUserAnswer,
+        body: {
+          'quiz_attempt_id': attemptId,
+          'quiz_question_id': questionId,
+          'answer_text': text,
+        },
+        skipAuthRedirect: true,
+        fallback: 'Failed to save answer',
+      );
+
+      final data = unwrapMap(payload);
+      final id = coerceId(data?['id']);
+      return {'success': true, 'id': id};
+    } catch (e) {
+      debugPrint('[quiz-user-answer] save failed: $e');
+      return _fail(e, 'Failed to save answer');
+    }
+  }
+
+  /// `GET /v1/quiz-attempts/{id}/result` — the graded review payload.
+  Future<Map<String, dynamic>> getAttemptResult(Object attemptId) async {
+    try {
+      final payload = await _api.get(
+        ApiConstants.quizAttemptResult(attemptId),
+        skipAuthRedirect: true,
+        fallback: 'Failed to load result',
+      );
+      return {'success': true, 'data': payload};
+    } catch (e) {
+      return _fail(e, 'Failed to load result');
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------
+
+  /// Attempts the student has left.
+  ///
+  /// Prefers the values the API attached to the quiz; only falls back to
+  /// counting attempt rows when the quiz row is unavailable.
+  Future<Map<String, dynamic>> getRemainingAttempts(
+    int quizId,
+    int maxAttempts, {
+    Quiz? quiz,
+  }) async {
     if (quiz != null && quiz.quizId == quizId) {
       return {
         'success': true,
         'remainingAttempts': quiz.remainingAttempts,
         'currentAttempts': quiz.currentAttempts,
-        'attempts': [], // We don't have the full list here, but usually not needed for simple check
+        'attempts': const [],
       };
     }
 
     final result = await getQuizAttempts(quizId);
-    if (!result['success']) {
+    if (result['success'] != true) {
       return {'success': false, 'message': result['message']};
     }
 
-    // Get current user ID to filter attempts
-    final token = await getToken();
-    if (token == null) {
-      return {'success': false, 'message': 'No token found'};
-    }
-
-    // Decode token to get user ID
-    String? currentUserId;
-    try {
-      final parts = token.split('.');
-      if (parts.length == 3) {
-        final payload = jsonDecode(
-          utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
-        );
-        currentUserId = payload['sub']?.toString();
-      }
-    } catch (e) {
-      // Failed to decode token, will count all attempts as fallback
-    }
-
+    final currentUserId = await _currentUserId();
     final allAttempts = result['data'] as List<QuizAttempt>;
-    // Filter attempts by current user ID
     final userAttempts = currentUserId != null
         ? allAttempts.where((a) => a.userId == currentUserId).toList()
         : allAttempts;
-    final remainingAttempts = maxAttempts - userAttempts.length;
+
+    final remaining = maxAttempts - userAttempts.length;
 
     return {
       'success': true,
-      'remainingAttempts': remainingAttempts > 0 ? remainingAttempts : 0,
+      'remainingAttempts': remaining > 0 ? remaining : 0,
       'attempts': userAttempts,
     };
   }
 
-  /// Resolve chapter to its course ID
-  /// Used when an exam has chapter_id but no course_id
-  Future<Map<String, dynamic>> resolveChapterToCourse(int chapterId) async {
+  Future<String?> _currentUserId() async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.chapters}/$chapterId');
+    if (token == null) return null;
     try {
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+      final parts = token.split('.');
+      if (parts.length != 3) return null;
+      final payload = jsonDecode(
+        utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
       );
-
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        final chapterData = data['data'];
-        final attributes = chapterData?['attributes'] ?? {};
-        final courseId = attributes['course_id'] ?? attributes['course']?['data']?['id'];
-
-        if (courseId != null) {
-          return {
-            'success': true,
-            'data': int.tryParse(courseId.toString()),
-          };
-        } else {
-          return {
-            'success': false,
-            'message': 'Course ID not found for this chapter',
-          };
-        }
-      } else {
-        return {
-          'success': false,
-          'message': _handleError(data, 'Failed to resolve chapter'),
-        };
-      }
-    } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return payload['sub']?.toString();
+    } catch (_) {
+      return null;
     }
   }
 
-  /// Activate quiz with activation code
+  /// Resolve chapter to its course ID.
+  /// Used when an exam has chapter_id but no course_id.
+  Future<Map<String, dynamic>> resolveChapterToCourse(int chapterId) async {
+    try {
+      final payload = await _api.get(
+        '${ApiConstants.chapters}/$chapterId',
+        skipAuthRedirect: true,
+        fallback: 'Failed to resolve chapter',
+      );
+
+      final data = unwrapMap(payload);
+      final attributes = data?['attributes'];
+      final attrs = attributes is Map ? attributes : const {};
+
+      final courseId = coercePositiveInt(attrs['course_id']) ??
+          coercePositiveInt(attrs['course']?['data']?['id']);
+
+      if (courseId == null) {
+        return {
+          'success': false,
+          'message': 'Course ID not found for this chapter',
+        };
+      }
+      return {'success': true, 'data': courseId};
+    } catch (e) {
+      return _fail(e, 'Failed to resolve chapter');
+    }
+  }
+
+  /// `POST /v1/code/activate` for an exam.
+  ///
+  /// The endpoint answers 200 even when it declines the code, so the caller
+  /// must check `activateCodeUnlocksQuiz` on `data` before letting the student
+  /// through. The raw body is returned for exactly that.
   Future<Map<String, dynamic>> activateQuizCode({
     required String code,
     required int quizId,
   }) async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.codeActivate}');
     try {
-      final response = await http.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({
+      final payload = await _api.post(
+        ApiConstants.codeActivate,
+        body: {
           'code': code,
           'item_type': 'quiz',
           'item_id': quizId,
-        }),
+        },
+        skipAuthRedirect: true,
+        fallback: 'Invalid activation code',
       );
 
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        return {
-          'success': true,
-          'data': data['data'],
-          'message': data['message'] ?? 'Activation successful',
-        };
-      } else {
-        return {
-          'success': false,
-          'message': _handleError(data, 'Invalid activation code'),
-        };
-      }
+      return {
+        'success': true,
+        'data': payload is Map ? payload['data'] : null,
+        'message': payload is Map ? payload['message'] : null,
+      };
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return _fail(e, 'Invalid activation code');
     }
   }
 }

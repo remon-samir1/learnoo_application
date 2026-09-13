@@ -109,4 +109,5 @@ class PendingActionTypes {
   static const String reaction = 'reaction';
   static const String deletePost = 'delete_post';
   static const String updatePost = 'update_post';
+  static const String chapterView = 'chapter_view';
 }

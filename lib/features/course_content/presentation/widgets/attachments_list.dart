@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../../../../core/utils/coerce.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
@@ -45,7 +47,7 @@ class AttachmentsList extends StatelessWidget {
           final name = attrs['name']?.toString() ?? 'course.attachment'.tr();
           final size = attrs['size']?.toString() ?? '0';
           final extension = attrs['extension']?.toString() ?? '';
-          final isLocked = attrs['is_locked'] as bool? ?? false;
+          final isLocked = coerceFlagOrNull(attrs['is_locked']) == true;
           final path = attrs['path']?.toString() ?? '';
 
           // Determine effective lock state based on chapter context

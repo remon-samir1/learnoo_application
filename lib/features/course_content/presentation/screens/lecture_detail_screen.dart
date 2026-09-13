@@ -1,6 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
-import 'dart:convert';
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
@@ -8,41 +6,44 @@ import 'package:flutter/services.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:shimmer/shimmer.dart';
-import 'package:provider/provider.dart';
-import 'package:video_player/video_player.dart';
 import 'package:better_player_plus/better_player_plus.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:dio/dio.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
+import '../models/pdf_annotation.dart';
+import '../managers/pdf_annotation_manager.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import '../../../../core/utils/coerce.dart';
 import '../../../../core/network/api_constants.dart';
-import '../../../../core/theme/app_colors.dart';
+import '../../../../core/utils/watermark_text.dart';
 import '../../../../core/services/feature_manager.dart';
 import '../../../../core/services/pdf_watermark_service.dart';
 import '../../../../core/services/download_service.dart';
 import '../../../../core/services/offline_view_service.dart';
 import '../../../../core/services/chapter_audio_watermark_service.dart';
 import '../../../../core/services/video_watch_tracker.dart';
+import '../../services/video_frame_capture_service.dart';
 import '../../../../core/services/encrypted_video_service.dart';
 import '../../../../core/services/user_progress_service.dart';
 import '../../../../core/widgets/watermark_wrapper.dart';
 import '../../data/chapter_repository.dart';
-import '../../data/course_files_repository.dart';
 import '../../data/discussion_repository.dart';
 import '../../../../features/exams/data/exam_repository.dart';
 import '../../../../features/exams/models/quiz_models.dart';
 import '../../services/attachment_permission_service.dart';
 import '../../../auth/data/auth_repository.dart';
+import '../widgets/learnoo_video_controls.dart';
 import '../widgets/lecture_header.dart';
 import '../widgets/attachments_list.dart';
 import '../widgets/quizzes_list.dart';
 import '../widgets/discussion_panel.dart';
-import 'pdf_reviewer_screen.dart';
 import '../../../exams/presentation/screens/quiz_screen.dart';
+import 'pdf_reviewer_screen.dart';
+import '../../domain/chapter_access.dart';
+
+enum AnnotationMode { none, pen, highlighter, eraser }
 
 enum VideoErrorType { network, source, unknown }
 
@@ -123,11 +124,15 @@ class VideoControllerHandler {
 
   void setRetrying(bool value) => _isRetrying = value;
 
-  static const Duration _initTimeout = Duration(seconds: 90);
+  /// How long to wait for a source before trying the next candidate.
+  ///
+  /// 90s meant a dead URL held the student on a spinner for a minute and a
+  /// half before the fallback was even attempted.
+  static const Duration _initTimeout = Duration(seconds: 20);
 
   Future<bool> checkConnectivity() async {
     final result = await Connectivity().checkConnectivity();
-    return result != ConnectivityResult.none;
+    return result.any((r) => r != ConnectivityResult.none);
   }
 
   Future<void> dispose() async {
@@ -162,7 +167,9 @@ class VideoControllerHandler {
       placeholderOnTop: false,
       placeholder: const SizedBox.shrink(),
       controlsConfiguration: const BetterPlayerControlsConfiguration(
-        showControls: true,
+        // The app draws its own chrome (LearnooVideoControls) so the player
+        // matches the website's control bar instead of the packaged one.
+        showControls: false,
         showControlsOnInitialize: false,
         controlsHideTime: Duration(milliseconds: 500),
         enablePlayPause: true,
@@ -293,21 +300,38 @@ class VideoControllerHandler {
   }) async {
     await dispose();
 
+    final isHls = videoUrl.toLowerCase().contains('.m3u8') ||
+        videoUrl.toLowerCase().contains('/hls/');
+
     final dataSource = BetterPlayerDataSource(
       BetterPlayerDataSourceType.network,
       videoUrl,
       headers: headers,
-      videoFormat: (videoUrl.toLowerCase().contains('.m3u8') ||
-                    videoUrl.toLowerCase().contains('/hls/'))
+      videoFormat: isHls
           ? BetterPlayerVideoFormat.hls
-          : null,
-      drmConfiguration: BetterPlayerDrmConfiguration(
-        drmType: BetterPlayerDrmType.token,
-        token: headers?['Authorization']?.replaceAll('Bearer ', ''),
-        headers: headers,
+          : BetterPlayerVideoFormat.other,
+      useAsmsTracks: isHls,
+      // ExoPlayer's defaults fill a 25s buffer and wait for 3s of media before
+      // the first frame, which is why the app sat on a spinner for several
+      // seconds where the website — hls.js, which starts on the first
+      // fragment — began playing almost immediately. These bring the start
+      // threshold down to roughly one segment while still keeping a healthy
+      // buffer running ahead once playback is under way.
+      bufferingConfiguration: const BetterPlayerBufferingConfiguration(
+        minBufferMs: 8000,
+        maxBufferMs: 60000,
+        bufferForPlaybackMs: 800,
+        bufferForPlaybackAfterRebufferMs: 2000,
       ),
-      useAsmsTracks: true,
-      asmsTrackNames: ["360p", "480p", "720p"],
+      // Re-opening a chapter should not re-download what was already fetched.
+      // The key is the chapter's own URL so segments are reused across
+      // sessions, matching the browser's HTTP cache on the web.
+      cacheConfiguration: const BetterPlayerCacheConfiguration(
+        useCache: true,
+        maxCacheSize: 300 * 1024 * 1024,
+        maxCacheFileSize: 50 * 1024 * 1024,
+        preCacheSize: 5 * 1024 * 1024,
+      ),
     );
 
     _controller = BetterPlayerController(_buildConfiguration());
@@ -391,8 +415,11 @@ class LectureDetailScreen extends StatefulWidget {
   final String chapterId;
   final String chapterTitle;
   final String courseId;
+  /// Path to the encrypted download. Its presence is what puts the screen into
+  /// offline mode; the decryption key is never passed around, it is derived
+  /// inside [EncryptedVideoService] from the platform keystore.
   final String? offlineVideoPath;
-  final String? offlineVideoKey;
+
   final int initialPosition;
   final int? maxViews;
 
@@ -404,7 +431,6 @@ class LectureDetailScreen extends StatefulWidget {
     required this.chapterTitle,
     required this.courseId,
     this.offlineVideoPath,
-    this.offlineVideoKey,
     this.initialPosition = 0,
     this.maxViews,
   });
@@ -432,6 +458,25 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   VideoWatchTracker? _watchTracker;
   ChapterAudioWatermarkService? _audioWatermarkService;
 
+  final _frameCapture = VideoFrameCaptureService();
+
+  /// Wraps the player so the capture service can rasterise it (level 2).
+  final GlobalKey _playerBoundaryKey = GlobalKey();
+
+  /// Frame snapshotted when the student tapped "ask about this moment",
+  /// attached to the next comment they post. Mirrors the web's
+  /// `composerFrameFile`.
+  File? _momentFrame;
+
+  /// The moment the frame belongs to, so the comment anchors to the instant
+  /// the student asked about rather than wherever the video has since reached.
+  int? _momentSeconds;
+
+  bool _isCapturingMoment = false;
+
+  /// Set when the student dismisses the attached frame.
+  bool _momentFrameDismissed = false;
+
   String _userId = '';
   String _studentCode = '';
   String _phoneNumber = '';
@@ -454,6 +499,8 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   int _currentViews = 0;
   int _viewByMinute = 0;
   String _videoUrl = '';
+  List<String> _videoCandidates = [];
+  int _candidateIndex = 0;
   String _duration = '00:00';
   List<dynamic> _attachments = [];
   List<dynamic> _quizzes = [];
@@ -461,8 +508,8 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
   bool _isPlaying = false;
   double _progress = 0.0;
-  String _currentTime = '0:00';
-  String _totalTime = '0:00';
+  String _currentTime = '00:00';
+  String _totalTime = '00:00';
   bool _offlineViewServiceInitialized = false;
   Duration _lastPosition = Duration.zero;
   bool _wasPlaying = false;
@@ -479,8 +526,8 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
   bool _isInFullScreen = false;
 
-  double _playbackSpeed = 1.0;
-  static const List<double> _speedOptions = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+  // Playback speed, the sleep timer and quality now live in
+  // LearnooVideoControls, which owns the settings sheet.
 
   bool _showControls = false;
   Timer? _hideControlsTimer;
@@ -493,6 +540,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   bool _showDiscussionPanel = false;
   String _discussionTab = 'all';
   final _commentController = TextEditingController();
+  final _commentFocusNode = FocusNode();
 
   final _audioRecorder = AudioRecorder();
   final _audioPlayer = AudioPlayer();
@@ -521,6 +569,26 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   bool _isPdfLoading = false;
 
   bool _wasVideoPlayingBeforePdf = false;
+
+  // PDF annotation state — mirrors PdfReviewerScreen
+  final _pdfViewerController = PdfViewerController();
+  final _pdfViewerKey = GlobalKey<SfPdfViewerState>();
+  final _annotationManager = PdfAnnotationManager();
+  AnnotationMode _currentAnnotationMode = AnnotationMode.none;
+  bool _showAnnotationToolbar = false;
+  List<AnnotationPoint> _currentStrokePoints = [];
+  int _pdfCurrentPage = 0;
+  int _pdfPageCount = 0;
+  double _pdfZoomLevel = 1.0;
+  static const List<Color> _annotationColors = [
+    Colors.red,
+    Colors.blue,
+    Colors.green,
+    Colors.yellow,
+    Colors.purple,
+    Colors.orange,
+    Colors.black,
+  ];
 
   ValueNotifier<EncryptedDownloadProgress>? _downloadProgressNotifier;
   bool _isDownloaded = false;
@@ -588,14 +656,19 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     }
   }
 
+  /// The watermark line for this chapter, built the same way as on the web.
+  ///
+  /// Previously this joined the code and phone with " | " and returned null
+  /// when neither toggle was on, so a platform watermarking with custom text
+  /// got no watermark at all in the app.
   String? get _watermarkText {
-    final config = _featureManager.getWatermarkConfig('chapters');
-    final parts = <String>[];
-    if (config.useStudentCode && _studentCode.isNotEmpty)
-      parts.add(_studentCode);
-    if (config.usePhoneNumber && _phoneNumber.isNotEmpty)
-      parts.add(_phoneNumber);
-    return parts.isNotEmpty ? parts.join(' | ') : null;
+    final config = _featureManager.resolveWatermarkConfig('chapters');
+    final text = buildWatermarkText(
+      config: config,
+      studentCode: _studentCode,
+      phone: _phoneNumber,
+    );
+    return text.trim().isEmpty ? null : text;
   }
 
   Future<void> _initAudioWatermark() async {
@@ -614,8 +687,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     _loadUserData();
     _initAudioWatermark();
     _encryptedVideoService.loadDownloadedVideos();
+    // Captures live in temp; drop yesterday's so they do not accumulate.
+    _frameCapture.clearOldCaptures();
 
-    if (widget.offlineVideoPath != null && widget.offlineVideoKey != null) {
+    if (widget.offlineVideoPath != null) {
       setState(() {
         _isOfflineMode = true;
         _isLocked = false;
@@ -699,18 +774,29 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
       debugPrint(
         '[LectureDetail] Offline mode - incrementing local view count',
       );
-      await _offlineViewService.incrementOfflineView(chapterIdString);
+      final watchedMinutes = (_watchTracker?.watchedSeconds ?? 0) ~/ 60;
+      await _offlineViewService.incrementOfflineView(
+        chapterIdString,
+        watchedMinutes: watchedMinutes > 0 ? watchedMinutes : _viewByMinute,
+      );
+
+      final videoId = '${widget.courseId}_${widget.chapterId}';
+      await _encryptedVideoService.incrementViewCount(videoId);
 
       final offlineViews = await _offlineViewService.getOfflineViews(
         chapterIdString,
       );
-      final totalViews = _currentViews + offlineViews;
+      final downloadedVideo = _encryptedVideoService.getDownloadedVideo(videoId);
+      final totalViews = downloadedVideo?.currentViews ?? offlineViews;
 
       debugPrint(
-        '[LectureDetail] Offline view incremented. API: $_currentViews, Offline: $offlineViews, Total: $totalViews',
+        '[LectureDetail] Offline view incremented. Total: $totalViews, Max: $_maxViews',
       );
 
       if (mounted) {
+        setState(() {
+          _currentViews = totalViews;
+        });
         await _checkAndEnforceViewLimit(totalViews);
       }
       return;
@@ -798,13 +884,11 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
       _betterPlayerController?.pause();
 
-      if (_isOfflineMode) {
-        final videoId = '${widget.courseId}_${widget.chapterId}';
-        await _encryptedVideoService.deleteDownloadedVideo(videoId);
-        debugPrint(
-          '[LectureDetail] Deleted downloaded video due to exhausted views',
-        );
-      }
+      final videoId = '${widget.courseId}_${widget.chapterId}';
+      await _encryptedVideoService.deleteDownloadedVideo(videoId);
+      debugPrint(
+        '[LectureDetail] Deleted downloaded video due to exhausted views',
+      );
 
       setState(() {
         _canWatch = false;
@@ -837,6 +921,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     _audioWatermarkService?.dispose();
     _videoHandler.dispose();
     _commentController.dispose();
+    _commentFocusNode.dispose();
     _bufferingTimer?.cancel();
     _hideControlsTimer?.cancel();
     _recordSub?.cancel();
@@ -954,9 +1039,26 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
       ),
     );
 
+    String targetDownloadUrl = _videoUrl;
+    for (final candidate in _videoCandidates) {
+      final lower = candidate.toLowerCase();
+      if (lower.endsWith('.mp4') ||
+          lower.contains('.mp4?') ||
+          (lower.contains('/storage/') && !lower.contains('/hls/'))) {
+        targetDownloadUrl = candidate;
+        break;
+      }
+    }
+
+    final token = await _authRepository.getToken();
+    final Map<String, String> headers = {
+      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      'Accept': '*/*',
+    };
+
     final fileName = 'video_$videoId.enc';
     _downloadProgressNotifier = _encryptedVideoService.getProgressNotifier(
-      _videoUrl,
+      targetDownloadUrl,
       fileName,
     );
     if (mounted) setState(() => _isDownloading = true);
@@ -993,7 +1095,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
     try {
       await _encryptedVideoService.downloadVideo(
-        url: _videoUrl,
+        url: targetDownloadUrl,
         chapterId: widget.chapterId,
         chapterTitle: widget.chapterTitle,
         lectureTitle: widget.lectureTitle,
@@ -1001,6 +1103,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         duration: _duration,
         currentViews: _currentViews,
         maxViews: _maxViews,
+        headers: headers,
       );
     } catch (e) {
       if (mounted) {
@@ -1023,14 +1126,15 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   }
 
   Future<void> _loadDiscussions() async {
+    if (widget.chapterId.isEmpty) return;
     setState(() => _isLoadingDiscussions = true);
     try {
-      final result = await _discussionRepository.getDiscussions(
-        chapterId: int.tryParse(widget.chapterId),
-      );
+      final result = await _chapterRepository.getChapterById(widget.chapterId);
       if (result['success'] && mounted) {
+        final data = result['data'] ?? {};
+        final attributes = data['attributes'] ?? {};
         setState(() {
-          _discussions = result['data'] ?? [];
+          _discussions = (attributes['discussions'] as List<dynamic>?) ?? [];
           _isLoadingDiscussions = false;
         });
       } else if (mounted) {
@@ -1087,13 +1191,169 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     }
   }
 
-  Future<void> _postDiscussion() async {
+  /// Snapshots the current frame so the next comment is anchored to it.
+  ///
+  /// The web takes this snapshot the instant "ask about this moment" is
+  /// tapped, not at post time — otherwise the video keeps playing while the
+  /// student types and the attached frame no longer shows what they asked
+  /// about.
+  Future<void> _captureMoment() async {
+    if (_isCapturingMoment) return;
+    if (widget.chapterId.isEmpty) return;
+
+    final moment = _videoHandler.currentPosition.inSeconds;
+    setState(() {
+      _isCapturingMoment = true;
+      _momentSeconds = moment;
+      _momentFrameDismissed = false;
+    });
+
+    // Pause so the frame the student sees is the frame they get.
+    final wasPlaying = _isPlaying;
+    if (wasPlaying) {
+      try {
+        _betterPlayerController?.pause();
+      } catch (_) {}
+    }
+
+    File? frame;
+    try {
+      final token = await _authRepository.getToken();
+      frame = await _frameCapture.capture(
+        videoUrl: _videoUrl,
+        positionSeconds: moment,
+        chapterId: widget.chapterId,
+        betterPlayerController: _betterPlayerController,
+        headers: {
+          if (token != null) 'Authorization': 'Bearer $token',
+          'Accept': 'application/json, text/plain, */*',
+        },
+        boundaryKey: _playerBoundaryKey,
+        chapterTitle: widget.chapterTitle,
+      );
+    } catch (e) {
+      debugPrint('[LectureDetail] moment capture failed: $e');
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _momentFrame = frame;
+      _isCapturingMoment = false;
+      _discussionTab = 'text';
+    });
+
+    // Give the composer focus so the student can type straight away.
+    FocusScope.of(context).requestFocus(_commentFocusNode);
+  }
+
+  void _dismissMomentFrame() {
+    setState(() {
+      _momentFrameDismissed = true;
+      _momentFrame = null;
+    });
+  }
+
+  void _clearMomentCapture() {
+    _momentFrame = null;
+    _momentSeconds = null;
+    _momentFrameDismissed = false;
+  }
+
+  /// Captures the current frame for a discussion that has none yet.
+  ///
+  /// The web runs its capture pipeline as soon as the composer opens, so every
+  /// discussion — text or voice — carries the frame the student was looking at.
+  /// In the app the composer is a tab that can be used without ever tapping
+  /// "ask about this moment", so the capture is run here instead, right before
+  /// posting. A failure is not fatal: the discussion posts without an image,
+  /// exactly as on the web.
+  Future<File?> _captureFrameForPost(int momentSeconds) async {
+    if (widget.chapterId.isEmpty) return null;
+    if (_videoUrl.isEmpty && _betterPlayerController == null) return null;
+
+    try {
+      final token = await _authRepository.getToken();
+      return await _frameCapture.capture(
+        videoUrl: _videoUrl,
+        positionSeconds: momentSeconds,
+        chapterId: widget.chapterId,
+        betterPlayerController: _betterPlayerController,
+        headers: {
+          if (token != null) 'Authorization': 'Bearer $token',
+          'Accept': 'application/json, text/plain, */*',
+        },
+        boundaryKey: _playerBoundaryKey,
+        chapterTitle: widget.chapterTitle,
+      );
+    } catch (e) {
+      debugPrint('[LectureDetail] automatic discussion capture failed: $e');
+      return null;
+    }
+  }
+  Future<void> _postReply(int parentId, String content) async {
     if (widget.chapterId.isEmpty) return;
     final chapterId = int.tryParse(widget.chapterId);
     if (chapterId == null) return;
 
     final moment = _videoHandler.currentPosition.inSeconds;
+    
+    // Using setState to trigger UI rebuild isn't strictly necessary since DiscussionPanel 
+    // manages its own loading state for inline replies, but we'll fetch discussions afterwards.
+    final result = await _discussionRepository.postDiscussion(
+      chapterId: chapterId,
+      type: 'text',
+      content: content,
+      moment: moment,
+      parentId: parentId,
+    );
+
+    if (result['success'] && mounted) {
+      if (result['offline'] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('course.reply_offline_queued'.tr()),
+            backgroundColor: const Color(0xFF3451E5),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('course.reply_posted'.tr()),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+      _loadDiscussions();
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result['message'] ?? 'course.error_posting_reply'.tr()),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+
+  Future<void> _postDiscussion() async {
+    if (widget.chapterId.isEmpty) return;
+    final chapterId = int.tryParse(widget.chapterId);
+    if (chapterId == null) return;
+
+    // Prefer the moment the student snapshotted over the live position.
+    final moment = _momentSeconds ?? _videoHandler.currentPosition.inSeconds;
+    var frame = _momentFrameDismissed ? null : _momentFrame;
+
     setState(() => _isLoadingDiscussions = true);
+
+    // No snapshot yet, and the student did not deliberately remove one: take
+    // it now so text and voice discussions are both anchored to a frame.
+    if (frame == null && !_momentFrameDismissed) {
+      frame = await _captureFrameForPost(moment);
+    }
 
     Map<String, dynamic> result;
     if (_discussionTab == 'voice' && _recordedPath != null) {
@@ -1103,6 +1363,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         content: '',
         moment: moment,
         voiceFile: File(_recordedPath!),
+        // The web sends the clip length so the player can show it before
+        // the audio is fetched.
+        durationSeconds: _recordDuration.inSeconds,
+        screenshotFile: frame,
       );
     } else {
       if (_commentController.text.trim().isEmpty) {
@@ -1114,6 +1378,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         type: 'text',
         content: _commentController.text.trim(),
         moment: moment,
+        screenshotFile: frame,
       );
     }
 
@@ -1121,7 +1386,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
       _commentController.clear();
       _recordedPath = null;
       _discussionTab = 'all';
+      _clearMomentCapture();
       await _loadDiscussions();
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('course.discussion_posted'.tr())));
@@ -1170,6 +1437,61 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     }
   }
 
+  bool _isNoVideoUrl(String? url) {
+    if (url == null) return true;
+    final s = url.trim();
+    if (s.isEmpty) return true;
+    return s == 'https://api.learnoo.app/storage' ||
+        s == 'https://api.learnoo.app/storage/';
+  }
+
+  String _normaliseVideoUrl(dynamic raw) {
+    if (raw == null) return '';
+    var str = raw.toString().trim().replaceAll('\\', '/');
+    if (str.isEmpty || str == 'null') return '';
+    if (!str.startsWith('http://') && !str.startsWith('https://')) {
+      if (!str.startsWith('/')) str = '/$str';
+      str = '${ApiConstants.baseUrl}$str';
+    }
+    return str;
+  }
+
+  List<String> _buildVideoCandidates(Map<String, dynamic> attributes) {
+    final chapterNumericId = int.tryParse(widget.chapterId.toString());
+    final rawList = [
+      attributes['video_hls_url'],
+      attributes['video'],
+      attributes['main_video'],
+      attributes['video_mp4_url'],
+      attributes['playlist'],
+    ];
+
+    final seen = <String>{};
+    final candidates = <String>[];
+    for (final raw in rawList) {
+      final url = _normaliseVideoUrl(raw);
+      if (url.isNotEmpty && !_isNoVideoUrl(url) && !seen.contains(url)) {
+        seen.add(url);
+        candidates.add(url);
+      }
+    }
+
+    // Only add the constructed HLS playlist fallback when at least one
+    // explicit video field carried a real URL.  For PDF-only chapters none of
+    // the five fields above will survive filtering, so we avoid injecting a
+    // phantom candidate that forces a broken video load.
+    if (candidates.isNotEmpty &&
+        chapterNumericId != null &&
+        chapterNumericId > 0) {
+      final hlsUrl = ApiConstants.chapterHlsPlaylist(chapterNumericId);
+      if (!seen.contains(hlsUrl)) {
+        candidates.add(hlsUrl);
+      }
+    }
+
+    return candidates;
+  }
+
   Future<void> _loadChapterDetails() async {
     if (widget.chapterId.isEmpty) {
       setState(() {
@@ -1202,12 +1524,13 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
         setState(() {
           _chapterData = data;
-          _isLocked = attributes['is_locked'] as bool? ?? true;
-          _canWatch = attributes['can_watch'] as bool? ?? false;
-          _isActivated = attributes['is_activated'] as bool? ?? false;
-          _isFreePreview = attributes['is_free_preview'] as bool? ?? false;
+          // Same coercion as everywhere else: the API mixes true, 1 and "1".
+          _isLocked = coerceFlagOrNull(attributes['is_locked']) ?? true;
+          _canWatch = coerceCanWatchExplicitTrue(attributes['can_watch']);
+          _isActivated = coerceFlagOrNull(attributes['is_activated']) == true;
+          _isFreePreview = coerceFlag(attributes['is_free_preview']);
           _isFreePreviewAttachment =
-              attributes['is_free_preview_attachment'] as bool? ?? false;
+              coerceFlag(attributes['is_free_preview_attachment']);
           _maxViews = apiMaxViews;
           _currentViews = totalViews;
           _viewByMinute =
@@ -1215,32 +1538,17 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
           _duration = attributes['duration']?.toString() ?? '00:00';
           _totalTime = _duration;
 
-          String playlistUrl = attributes['video']?.toString() ?? '';
-          String videoUrl = attributes['video']?.toString() ?? '';
+          _videoCandidates = _buildVideoCandidates(attributes);
+          _candidateIndex = 0;
+          _videoUrl = _videoCandidates.isNotEmpty ? _videoCandidates.first : '';
 
-          if (playlistUrl.isNotEmpty) {
-            playlistUrl = playlistUrl.replaceAll('\\', '/');
-            if (!playlistUrl.startsWith('http')) {
-              if (!playlistUrl.startsWith('/')) playlistUrl = '/$playlistUrl';
-              playlistUrl = '${ApiConstants.baseUrl}$playlistUrl';
-            }
-            _videoUrl = playlistUrl;
-          } else if (videoUrl.isNotEmpty) {
-            videoUrl = videoUrl.replaceAll('\\', '/');
-            if (!videoUrl.startsWith('http')) {
-              if (!videoUrl.startsWith('/')) videoUrl = '/$videoUrl';
-              _videoUrl = '${ApiConstants.baseUrl}$videoUrl';
-            } else {
-              _videoUrl = videoUrl;
-            }
-          }
           _attachments = attributes['attachments'] as List<dynamic>? ?? [];
           _quizzes = attributes['quizzes'] as List<dynamic>? ?? [];
           _discussions = attributes['discussions'] as List<dynamic>? ?? [];
         });
 
         debugPrint(
-          '[LectureDetail] Loaded chapter views - API: $apiCurrentViews, Offline: $offlineViews, Total: $totalViews, Max: $_maxViews',
+          '[LectureDetail] Loaded chapter views - API: $apiCurrentViews, Offline: $offlineViews, Total: $totalViews, Max: $_maxViews, Candidates: ${_videoCandidates.length}, Initial URL: $_videoUrl',
         );
 
         if (totalViews >= apiMaxViews && apiMaxViews > 0) {
@@ -1250,6 +1558,51 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
             _isLoadingChapter = false;
           });
           return;
+        }
+
+        // If chapter is PDF-only (no video and has PDF attachment), redirect to PdfReviewerScreen
+        if ((_videoCandidates.isEmpty || _videoUrl.isEmpty) &&
+            (chapterIsPdfOnly(_chapterData) || _attachments.isNotEmpty)) {
+          final pdfList = chapterPdfAttachments(_chapterData);
+          dynamic chosenPdf = pdfList.isNotEmpty ? pdfList.first : null;
+          if (chosenPdf == null && _attachments.isNotEmpty) {
+            chosenPdf = _attachments.firstWhere(
+              (att) {
+                if (att is! Map) return false;
+                final a = att['attributes'] is Map ? att['attributes'] as Map : att;
+                final ext = coerceString(a['extension'])?.toLowerCase() ?? '';
+                final p = coerceString(a['path'])?.toLowerCase() ?? '';
+                final n = coerceString(a['name'])?.toLowerCase() ?? '';
+                return ext == 'pdf' || p.endsWith('.pdf') || n.endsWith('.pdf');
+              },
+              orElse: () => _attachments.first,
+            );
+          }
+
+          if (chosenPdf != null) {
+            final attAttrs = chosenPdf['attributes'] is Map ? chosenPdf['attributes'] as Map : chosenPdf;
+            String pdfPath = attAttrs['path']?.toString() ?? '';
+            final pdfName = attAttrs['name']?.toString() ?? widget.chapterTitle;
+            if (pdfPath.isNotEmpty) {
+              if (!pdfPath.startsWith('http')) {
+                pdfPath = pdfPath.replaceAll('\\', '/');
+                if (!pdfPath.startsWith('/')) pdfPath = '/$pdfPath';
+                pdfPath = '${ApiConstants.baseUrl}$pdfPath';
+              }
+              debugPrint('[LectureDetail] Chapter has no video, redirecting to PdfReviewerScreen: $pdfPath');
+              setState(() => _isLoadingChapter = false);
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => PdfReviewerScreen(
+                    pdfUrl: pdfPath,
+                    title: pdfName,
+                  ),
+                ),
+              );
+              return;
+            }
+          }
         }
 
         final shouldInitVideo =
@@ -1333,8 +1686,8 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     try {
       final token = await _authRepository.getToken();
       final Map<String, String> headers = {
-        if (token != null) 'Authorization': 'Bearer $token',
-        'Accept': 'application/json, text/plain, */*',
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+        'Accept': '*/*',
       };
 
       debugPrint('[LectureDetail] Pre-checking video URL: $_videoUrl');
@@ -1376,17 +1729,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         _totalTime = _formatDuration(_videoHandler.totalDuration);
       });
 
-      // Add direct listener for controls visibility
-      controller.addEventsListener((event) {
-        if (!mounted) return;
-        if (event.betterPlayerEventType ==
-            BetterPlayerEventType.controlsVisible) {
-          setState(() => _showControls = true);
-        } else if (event.betterPlayerEventType ==
-            BetterPlayerEventType.controlsHiddenEnd) {
-          setState(() => _showControls = false);
-        }
-      });
+      // The packaged controls are off, so their visibility events no longer
+      // fire; the chrome is shown on load and hidden by [_startHideControlsTimer].
+      _revealControls();
 
       if (widget.initialPosition > 0) {
         await _betterPlayerController!.seekTo(
@@ -1412,8 +1757,36 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     }
   }
 
+  Future<bool> _tryNextCandidate() async {
+    if (_candidateIndex + 1 < _videoCandidates.length) {
+      _candidateIndex++;
+      _videoUrl = _videoCandidates[_candidateIndex];
+      debugPrint(
+        '[LectureDetail] Fallback triggered: switching to candidate #$_candidateIndex/${_videoCandidates.length}: $_videoUrl',
+      );
+      await _videoHandler.dispose();
+      await _initializeVideoPlayer();
+      return true;
+    }
+    return false;
+  }
+
   void _onVideoTimeout() {
     if (!mounted) return;
+    _handleVideoTimeout();
+  }
+
+  Future<void> _handleVideoTimeout() async {
+    if (!mounted) return;
+    debugPrint(
+      '[LectureDetail] Video Timeout on candidate #$_candidateIndex ($_videoUrl)',
+    );
+
+    if (_candidateIndex + 1 < _videoCandidates.length) {
+      final switched = await _tryNextCandidate();
+      if (switched) return;
+    }
+
     setState(() {
       _isVideoLoading = false;
       _isBuffering = false;
@@ -1441,9 +1814,17 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     _onVideoErrorWithMessage(error);
   }
 
-  void _onVideoErrorWithMessage(String errorMessage) {
+  Future<void> _onVideoErrorWithMessage(String errorMessage) async {
     if (!mounted) return;
-    debugPrint('[LectureDetail] Video Error: $errorMessage');
+    debugPrint(
+      '[LectureDetail] Video Error on candidate #$_candidateIndex ($_videoUrl): $errorMessage',
+    );
+
+    if (_candidateIndex + 1 < _videoCandidates.length) {
+      final switched = await _tryNextCandidate();
+      if (switched) return;
+    }
+
     final errorType = VideoErrorMapper.mapError(errorMessage);
     setState(() {
       _isVideoLoading = false;
@@ -1480,6 +1861,13 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
     _videoHandler.setRetrying(true);
     _viewCountApiCalled = false;
+
+    // Reset candidate sequence on explicit retry
+    if (_videoCandidates.isNotEmpty) {
+      _candidateIndex = 0;
+      _videoUrl = _videoCandidates[0];
+    }
+
     setState(() {
       _isRetrying = true;
       _hasVideoError = false;
@@ -1525,8 +1913,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   );
 
   Future<void> _initializeOfflineVideo() async {
-    if (widget.offlineVideoPath == null || widget.offlineVideoKey == null)
-      return;
+    if (widget.offlineVideoPath == null) return;
 
     await _encryptedVideoService.loadDownloadedVideos();
     await _ensureOfflineViewInitialized();
@@ -1537,7 +1924,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
       widget.chapterId,
     );
     final downloadedViews = downloadedVideo?.currentViews ?? 0;
-    final totalOfflineViews = downloadedViews + offlineServiceViews;
+    final totalOfflineViews = downloadedViews > offlineServiceViews ? downloadedViews : offlineServiceViews;
     final maxViews = downloadedVideo?.maxViews ?? _maxViews;
 
     debugPrint(
@@ -1583,18 +1970,18 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         throw Exception('Downloaded video file not found');
       }
 
-      final encryptedData = await encryptedFile.readAsBytes();
-      final keyBytes = base64.decode(widget.offlineVideoKey!);
-      final decryptedData = Uint8List(encryptedData.length);
-      for (var i = 0; i < encryptedData.length; i++) {
-        decryptedData[i] = encryptedData[i] ^ keyBytes[i % keyBytes.length];
+      // Decryption belongs to EncryptedVideoService, which picks the right
+      // scheme from the container itself, streams the file instead of holding
+      // it in memory, and rejects anything that fails authentication. This
+      // screen used to XOR the bytes inline with a key handed in through the
+      // widget, which both duplicated the crypto in the UI layer and could not
+      // read an authenticated download at all.
+      final decryptedPath =
+          await _encryptedVideoService.getDecryptedVideoPath(videoId);
+      if (decryptedPath == null) {
+        throw Exception('Downloaded video could not be decrypted');
       }
-
-      final tempDir = await getTemporaryDirectory();
-      final tempFile = File(
-        '${tempDir.path}/offline_video_${widget.chapterId}.mp4',
-      );
-      await tempFile.writeAsBytes(decryptedData);
+      final tempFile = File(decryptedPath);
 
       _videoHandler.onPositionChanged = (position, duration) {
         if (!mounted) return;
@@ -1765,28 +2152,70 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     _betterPlayerController!.seekTo(position);
   }
 
-  void _cyclePlaybackSpeed() {
-    final currentIndex = _speedOptions.indexOf(_playbackSpeed);
-    final nextIndex = (currentIndex + 1) % _speedOptions.length;
-    final newSpeed = _speedOptions[nextIndex];
-    setState(() => _playbackSpeed = newSpeed);
-    _betterPlayerController?.setSpeed(newSpeed);
+  /// Shows the chrome and restarts the auto-hide countdown.
+  void _revealControls() {
+    if (!mounted) return;
+    setState(() => _showControls = true);
+    _startHideControlsTimer();
   }
-
-  String _formatSpeed(double speed) =>
-      speed == speed.truncateToDouble() ? '${speed.toInt()}x' : '${speed}x';
 
   void _startHideControlsTimer() {
     _hideControlsTimer?.cancel();
-    _hideControlsTimer = Timer(const Duration(milliseconds: 500), () {
+    _hideControlsTimer = Timer(const Duration(seconds: 4), () {
       if (mounted && _isPlaying) {
         setState(() => _showControls = false);
       }
     });
   }
 
+  /// The "ask about this moment" affordance, rendered inside the control bar.
+  ///
+  /// Kept here rather than in [LearnooVideoControls] because the capture and
+  /// the composer belong to this screen; the control layer only places it.
+  Widget _buildAskMomentAction() {
+    return Semantics(
+      button: true,
+      label: 'course.ask_this_moment'.tr(),
+      child: InkResponse(
+        onTap: _isCapturingMoment
+            ? null
+            : () {
+                _revealControls();
+                _openAskMoment();
+                _captureMoment();
+              },
+        radius: 26,
+        child: Container(
+          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: _isCapturingMoment
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Icon(
+                  Icons.add_comment_outlined,
+                  color: Colors.white,
+                  size: 20,
+                ),
+        ),
+      ),
+    );
+  }
+
+  /// A tap on the video toggles the chrome, the way the web player does.
   void _onVideoTap() {
-    setState(() => _showControls = true);
+    if (_showControls) {
+      _hideControlsTimer?.cancel();
+      setState(() => _showControls = false);
+      return;
+    }
+    _revealControls();
   }
 
   Future<void> _activateCode({
@@ -2054,6 +2483,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                         TextField(
                           controller: codeController,
                           textCapitalization: TextCapitalization.characters,
+                          keyboardType: TextInputType.visiblePassword,
                           style: const TextStyle(
                             fontWeight: FontWeight.w600,
                             fontSize: 15,
@@ -2315,6 +2745,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                 onPlayPauseAudio: _playDiscussionAudio,
                 onPlayRecorded: _playRecordedAudio,
                 onAddReply: () {},
+                onPostReply: _postReply,
+                momentFrame: _momentFrameDismissed ? null : _momentFrame,
+                isCapturingFrame: _isCapturingMoment,
+                onDismissFrame: _dismissMomentFrame,
               ),
           ],
         ),
@@ -2600,7 +3034,8 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         fullscreenDialog: true,
         builder: (context) => _FullScreenVideoPlayer(
           sourceController: _betterPlayerController!,
-          watermarkText: _watermarkText,
+          studentCode: _studentCode,
+          phone: _phoneNumber,
           featureManager: _featureManager,
           onExit: () {
             if (mounted) {
@@ -2635,84 +3070,32 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    WatermarkWrapper(
-                      type: WatermarkType.chapters,
-                      studentCode: _watermarkText,
-                      featureManager: _featureManager,
-                      child: Positioned.fill(
-                        child: BetterPlayer(
-                          controller: _betterPlayerController!,
-                          key: ValueKey('video_${widget.chapterId}'),
-                        ),
-                      ),
-                    ),
-                    if (_isBuffering)
-                      Positioned.fill(
-                        child: Container(
-                          color: Colors.black.withValues(alpha: 0.3),
-                          child: const Center(
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 3,
-                            ),
-                          ),
-                        ),
-                      ),
-                    Positioned(
-                      top: 8,
-                      left: 8,
-                      child: AnimatedOpacity(
-                        opacity: _showControls ? 1.0 : 0.0,
-                        duration: const Duration(milliseconds: 300),
-                        child: IgnorePointer(
-                          ignoring: !_showControls,
-                          child: IconButton(
-                            icon: const Icon(
-                              Icons.fullscreen,
-                              color: Colors.white,
-                            ),
-                            onPressed: _enterFullScreen,
+                    // The boundary is what the capture service rasterises when
+                    // native frame extraction is unavailable, so it has to sit
+                    // outside the watermark to include it in the snapshot.
+                    Positioned.fill(
+                      child: RepaintBoundary(
+                        key: _playerBoundaryKey,
+                        child: WatermarkWrapper(
+                          type: WatermarkType.chapters,
+                          studentCode: _studentCode,
+                          phone: _phoneNumber,
+                          featureManager: _featureManager,
+                          child: BetterPlayer(
+                            controller: _betterPlayerController!,
+                            key: ValueKey('video_${widget.chapterId}'),
                           ),
                         ),
                       ),
                     ),
-                    Positioned(
-                      bottom: 40,
-                      right: 8,
-                      child: AnimatedOpacity(
-                        opacity: _showControls ? 1.0 : 0.0,
-                        duration: const Duration(milliseconds: 300),
-                        child: IgnorePointer(
-                          ignoring: !_showControls,
-                          child: GestureDetector(
-                            onTap: () {
-                              _cyclePlaybackSpeed();
-                              _onVideoTap();
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 5,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: 0.65),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.3),
-                                ),
-                              ),
-                              child: Text(
-                                _formatSpeed(_playbackSpeed),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
+                    Positioned.fill(
+                      child: LearnooVideoControls(
+                        controller: _betterPlayerController!,
+                        visible: _showControls,
+                        onInteraction: _revealControls,
+                        isBuffering: _isBuffering,
+                        onToggleFullScreen: _enterFullScreen,
+                        leadingAction: _buildAskMomentAction(),
                       ),
                     ),
                     if (_isEmulator)
@@ -3195,7 +3578,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
   Widget _buildAskButton() {
     return GestureDetector(
-      onTap: _openAskMoment,
+      onTap: () {
+        _openAskMoment();
+        _captureMoment();
+      },
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 14),
@@ -3206,11 +3592,21 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const FaIcon(
-              FontAwesomeIcons.solidCommentDots,
-              color: Colors.white,
-              size: 16,
-            ),
+            if (_isCapturingMoment)
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            else
+              const FaIcon(
+                FontAwesomeIcons.solidCommentDots,
+                color: Colors.white,
+                size: 16,
+              ),
             const SizedBox(width: 10),
             Text(
               'course.ask_about_moment'.tr(args: [_currentTime]),
@@ -3343,88 +3739,508 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     if (_wasVideoPlayingBeforePdf && _betterPlayerController != null) {
       _betterPlayerController!.play();
     }
+    // Reset annotation state so the next PDF opens fresh.
+    _annotationManager.discardAll();
+    _currentStrokePoints.clear();
     setState(() {
       _selectedPdfUrl = null;
       _selectedPdfTitle = null;
       _localPdfPath = null;
       _isPdfLoading = false;
+      _showAnnotationToolbar = false;
+      _currentAnnotationMode = AnnotationMode.none;
+      _pdfCurrentPage = 0;
+      _pdfPageCount = 0;
+      _pdfZoomLevel = 1.0;
     });
   }
 
-  // ترويسة الـ PDF لتقليل التكرار
-  Widget _buildPdfHeader() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF3F4F6),
-        border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
-      ),
-      child: Row(
-        children: [
-          const SizedBox(width: 8),
-          const FaIcon(
-            FontAwesomeIcons.filePdf,
-            color: Color(0xFFE74C3C),
-            size: 18,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _selectedPdfTitle ?? '',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                    color: Color(0xFF1F2937),
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+  void _showGoToPageDialog() {
+    if (_pdfPageCount <= 1) return;
+    final controller = TextEditingController(
+      text: _pdfCurrentPage.toString(),
+    );
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('انتقال إلى صفحة', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        content: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: controller,
+                keyboardType: TextInputType.number,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: '1 - $_pdfPageCount',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 ),
-                if (_isPdfLoading)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 4),
-                    child: LinearProgressIndicator(
-                      backgroundColor: Colors.grey,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        Color(0xFF3451E5),
-                      ),
-                      minHeight: 2,
-                    ),
-                  ),
-              ],
+                onSubmitted: (value) {
+                  final page = int.tryParse(value);
+                  if (page != null && page >= 1 && page <= _pdfPageCount) {
+                    _pdfViewerController.jumpToPage(page);
+                    Navigator.pop(context);
+                  }
+                },
+              ),
             ),
+            const SizedBox(width: 8),
+            Text('/ $_pdfPageCount', style: const TextStyle(color: Color(0xFF6B7280))),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
           ),
-          IconButton(
-            onPressed: _closePdf,
-            icon: const Icon(Icons.close, size: 20),
+          ElevatedButton(
+            onPressed: () {
+              final page = int.tryParse(controller.text);
+              if (page != null && page >= 1 && page <= _pdfPageCount) {
+                _pdfViewerController.jumpToPage(page);
+                Navigator.pop(context);
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF3451E5),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('انتقال'),
           ),
         ],
       ),
     );
   }
 
-  // التعديل: عارض PDF آمن مع مفتاح فريد
+  // ───────────────── PDF annotation helpers ─────────────────
+
+  void _setPdfAnnotationMode(AnnotationMode mode) {
+    setState(() {
+      _currentAnnotationMode = mode;
+      _currentStrokePoints.clear();
+      if (mode == AnnotationMode.pen) {
+        _annotationManager.isHighlighterMode = false;
+      } else if (mode == AnnotationMode.highlighter) {
+        _annotationManager.isHighlighterMode = true;
+      }
+    });
+  }
+
+  void _setPdfAnnotationColor(Color color) {
+    setState(() => _annotationManager.currentColor = color);
+  }
+
+  void _setPdfStrokeWidth(double width) {
+    setState(() => _annotationManager.currentStrokeWidth = width);
+  }
+
+  void _erasePdfNearbyPoints(Offset position) {
+    final pageNumber = _pdfViewerController.pageNumber;
+    if (pageNumber == 0) return;
+    final eraseRadius = _annotationManager.currentStrokeWidth * 5;
+    final annotations = _annotationManager.getAnnotationsForPage(pageNumber);
+    setState(() {
+      for (final stroke in annotations) {
+        stroke.points.removeWhere(
+          (p) => (p.offset - position).distance < eraseRadius,
+        );
+      }
+      annotations.removeWhere((s) => s.points.isEmpty);
+    });
+  }
+
+  Future<void> _savePdfCurrentStroke() async {
+    if (_currentStrokePoints.length < 2) {
+      _currentStrokePoints.clear();
+      return;
+    }
+    final pageNumber = _pdfViewerController.pageNumber;
+    if (pageNumber == 0) return;
+    _annotationManager.addStroke(
+      pageNumber,
+      InkStroke(
+        points: List.from(_currentStrokePoints),
+        color: _annotationManager.currentColor,
+        strokeWidth: _annotationManager.currentStrokeWidth,
+        isHighlighter: _annotationManager.isHighlighterMode,
+      ),
+    );
+    _currentStrokePoints.clear();
+    setState(() {});
+  }
+
+  void _undoPdfAnnotation() {
+    final page = _pdfViewerController.pageNumber;
+    if (page == 0) return;
+    _annotationManager.undo(page);
+    setState(() {});
+  }
+
+  void _clearPdfCurrentPage() {
+    final page = _pdfViewerController.pageNumber;
+    if (page == 0) return;
+    _annotationManager.clearPage(page);
+    setState(() {});
+  }
+
+  // ───────────────── PDF header with annotation actions ─────────────────
+
+  Widget _buildPdfHeader() {
+    return Column(
+      children: [
+        // Title bar
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF3F4F6),
+            border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
+          ),
+          child: Row(
+            children: [
+              const SizedBox(width: 8),
+              const FaIcon(
+                FontAwesomeIcons.filePdf,
+                color: Color(0xFFE74C3C),
+                size: 18,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _selectedPdfTitle ?? '',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        color: Color(0xFF1F2937),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (_isPdfLoading)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 4),
+                        child: LinearProgressIndicator(
+                          backgroundColor: Colors.grey,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Color(0xFF3451E5),
+                          ),
+                          minHeight: 2,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              // Zoom out
+              IconButton(
+                icon: const Icon(Icons.zoom_out, size: 20, color: Color(0xFF6B7280)),
+                tooltip: 'تصغير',
+                onPressed: _pdfZoomLevel > 0.5
+                    ? () {
+                        setState(() {
+                          _pdfZoomLevel = (_pdfZoomLevel - 0.25).clamp(0.5, 5.0);
+                          _pdfViewerController.zoomLevel = _pdfZoomLevel;
+                        });
+                      }
+                    : null,
+              ),
+              // Zoom level indicator
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _pdfZoomLevel = 1.0;
+                    _pdfViewerController.zoomLevel = 1.0;
+                  });
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3F4F6),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '${(_pdfZoomLevel * 100).round()}%',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF374151),
+                    ),
+                  ),
+                ),
+              ),
+              // Zoom in
+              IconButton(
+                icon: const Icon(Icons.zoom_in, size: 20, color: Color(0xFF6B7280)),
+                tooltip: 'تكبير',
+                onPressed: _pdfZoomLevel < 5.0
+                    ? () {
+                        setState(() {
+                          _pdfZoomLevel = (_pdfZoomLevel + 0.25).clamp(0.5, 5.0);
+                          _pdfViewerController.zoomLevel = _pdfZoomLevel;
+                        });
+                      }
+                    : null,
+              ),
+              // Page number input
+              if (_pdfPageCount > 1)
+                GestureDetector(
+                  onTap: () => _showGoToPageDialog(),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF3F4F6),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                    ),
+                    child: Text(
+                      '$_pdfCurrentPage/$_pdfPageCount',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF374151),
+                      ),
+                    ),
+                  ),
+                ),
+              // Annotation toolbar toggle
+              IconButton(
+                icon: FaIcon(
+                  _showAnnotationToolbar
+                      ? FontAwesomeIcons.penToSquare
+                      : FontAwesomeIcons.highlighter,
+                  size: 18,
+                  color: _showAnnotationToolbar
+                      ? const Color(0xFF3451E5)
+                      : const Color(0xFF6B7280),
+                ),
+                tooltip: 'أدوات التعليق',
+                onPressed: () {
+                  setState(() {
+                    _showAnnotationToolbar = !_showAnnotationToolbar;
+                    if (!_showAnnotationToolbar) {
+                      _currentAnnotationMode = AnnotationMode.none;
+                    }
+                  });
+                },
+              ),
+              // Undo
+              if (_showAnnotationToolbar)
+                IconButton(
+                  icon: const FaIcon(FontAwesomeIcons.rotateLeft, size: 16),
+                  tooltip: 'تراجع',
+                  onPressed:
+                      _annotationManager.canUndo(_pdfViewerController.pageNumber)
+                          ? _undoPdfAnnotation
+                          : null,
+                ),
+              // Clear page
+              if (_showAnnotationToolbar)
+                IconButton(
+                  icon: const FaIcon(
+                    FontAwesomeIcons.trash,
+                    size: 16,
+                    color: Color(0xFFEF4444),
+                  ),
+                  tooltip: 'مسح الصفحة',
+                  onPressed: _clearPdfCurrentPage,
+                ),
+              // Close
+              IconButton(
+                onPressed: _closePdf,
+                icon: const Icon(Icons.close, size: 20),
+              ),
+            ],
+          ),
+        ),
+        // Annotation toolbar (shown when toggled)
+        if (_showAnnotationToolbar) _buildPdfAnnotationToolbar(),
+      ],
+    );
+  }
+
+  Widget _buildPdfAnnotationToolbar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Mode buttons + stroke width
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            child: Row(
+              children: [
+                _buildPdfModeButton(
+                  FontAwesomeIcons.pen,
+                  'قلم',
+                  AnnotationMode.pen,
+                  Colors.red,
+                ),
+                _buildPdfModeButton(
+                  FontAwesomeIcons.highlighter,
+                  'تحديد',
+                  AnnotationMode.highlighter,
+                  Colors.amber,
+                ),
+                _buildPdfModeButton(
+                  FontAwesomeIcons.eraser,
+                  'ممحاة',
+                  AnnotationMode.eraser,
+                  Colors.grey,
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  height: 36,
+                  width: 1,
+                  color: Colors.grey[300],
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'سُمك',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
+                ),
+                SizedBox(
+                  width: 90,
+                  child: Slider(
+                    value: _annotationManager.currentStrokeWidth,
+                    min: 1,
+                    max: 10,
+                    activeColor: const Color(0xFF3451E5),
+                    onChanged: _setPdfStrokeWidth,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          // Color palette
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: _annotationColors.map((color) {
+                final isSelected =
+                    _annotationManager.currentColor == color;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 10),
+                  child: GestureDetector(
+                    onTap: () => _setPdfAnnotationColor(color),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      width: isSelected ? 34 : 28,
+                      height: isSelected ? 34 : 28,
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: isSelected
+                              ? Colors.black87
+                              : Colors.transparent,
+                          width: 2.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.18),
+                            blurRadius: 4,
+                          ),
+                        ],
+                      ),
+                      child: isSelected
+                          ? const Icon(
+                              Icons.check,
+                              color: Colors.white,
+                              size: 16,
+                            )
+                          : null,
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPdfModeButton(
+    FaIconData icon,
+    String label,
+    AnnotationMode mode,
+    Color activeColor,
+  ) {
+    final isSelected = _currentAnnotationMode == mode;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: InkWell(
+        onTap: () => _setPdfAnnotationMode(
+          isSelected ? AnnotationMode.none : mode,
+        ),
+        borderRadius: BorderRadius.circular(8),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? activeColor.withValues(alpha: 0.15)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isSelected
+                  ? activeColor
+                  : Colors.grey.withValues(alpha: 0.3),
+              width: 1.5,
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FaIcon(
+                icon,
+                size: 18,
+                color: isSelected ? activeColor : Colors.grey[600],
+              ),
+              const SizedBox(height: 3),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10,
+                  color: isSelected ? activeColor : Colors.grey[600],
+                  fontWeight:
+                      isSelected ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ───────────────── Embedded PDF viewer with drawing overlay ─────────────────
+
   Widget _buildEmbeddedPdfViewer() {
-    // إذا لم يتوفر مسار محلي أو الملف غير موجود نعرض رسالة بدل العارض
     if (_localPdfPath == null || !File(_localPdfPath!).existsSync()) {
       return SizedBox(
         width: double.infinity,
         child: Container(
           color: Colors.white,
           child: Column(
-            children: [
-              _buildPdfHeader(),
-              // const Expanded(
-              //   child: Center(
-              //     child: Text(
-              //       'course.unable_load_pdf',
-              //       style: TextStyle(color: Colors.grey),
-              //     ).tr(),
-              //   ),
-              // ),
-            ],
+            children: [_buildPdfHeader()],
           ),
         ),
       );
@@ -3438,15 +4254,171 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
           children: [
             _buildPdfHeader(),
             Expanded(
-              // مفتاح فريد يضمن تحميل نظيف للملف
-              child: KeyedSubtree(
-                key: ValueKey(_localPdfPath),
-                child: SfPdfViewer.file(
-                  File(_localPdfPath!),
-                  enableTextSelection: true,
-                  enableDocumentLinkAnnotation: true,
-                  enableHyperlinkNavigation: true,
-                ),
+              child: Stack(
+                children: [
+                  // PDF viewer
+                  KeyedSubtree(
+                    key: ValueKey(_localPdfPath),
+                    child: SfPdfViewer.file(
+                      File(_localPdfPath!),
+                      controller: _pdfViewerController,
+                      key: _pdfViewerKey,
+                      enableTextSelection:
+                          _currentAnnotationMode == AnnotationMode.none,
+                      enableDocumentLinkAnnotation: true,
+                      enableHyperlinkNavigation: true,
+                      onDocumentLoaded: (details) {
+                        setState(() {
+                          _pdfPageCount = details.document.pages.count;
+                          _pdfCurrentPage =
+                              _pdfViewerController.pageNumber;
+                        });
+                      },
+                      onPageChanged: (details) {
+                        setState(() {
+                          _pdfCurrentPage = details.newPageNumber;
+                        });
+                      },
+                    ),
+                  ),
+                  // Drawing overlay — active only when a mode is selected
+                  if (_showAnnotationToolbar &&
+                      _currentAnnotationMode != AnnotationMode.none)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onPanStart: (d) {
+                          if (_currentAnnotationMode ==
+                              AnnotationMode.eraser) {
+                            _erasePdfNearbyPoints(d.localPosition);
+                          } else {
+                            setState(() {
+                              _currentStrokePoints.add(
+                                AnnotationPoint(
+                                  offset: d.localPosition,
+                                  color: _annotationManager.currentColor,
+                                  strokeWidth:
+                                      _annotationManager.currentStrokeWidth,
+                                  isHighlighter:
+                                      _annotationManager.isHighlighterMode,
+                                ),
+                              );
+                            });
+                          }
+                        },
+                        onPanUpdate: (d) {
+                          if (_currentAnnotationMode ==
+                              AnnotationMode.eraser) {
+                            _erasePdfNearbyPoints(d.localPosition);
+                          } else {
+                            setState(() {
+                              _currentStrokePoints.add(
+                                AnnotationPoint(
+                                  offset: d.localPosition,
+                                  color: _annotationManager.currentColor,
+                                  strokeWidth:
+                                      _annotationManager.currentStrokeWidth,
+                                  isHighlighter:
+                                      _annotationManager.isHighlighterMode,
+                                ),
+                              );
+                            });
+                          }
+                        },
+                        onPanEnd: (_) async {
+                          if (_currentAnnotationMode !=
+                              AnnotationMode.eraser) {
+                            await _savePdfCurrentStroke();
+                          }
+                        },
+                        child: CustomPaint(
+                          size: Size.infinite,
+                          painter: _PdfAnnotationPainter(
+                            currentStrokePoints: _currentStrokePoints,
+                            pageAnnotations:
+                                _annotationManager.getAnnotationsForPage(
+                              _pdfViewerController.pageNumber,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  // Page navigation bar at bottom
+                  if (_pdfPageCount > 1)
+                    Positioned(
+                      bottom: 12,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.65),
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Previous page
+                              GestureDetector(
+                                onTap: _pdfCurrentPage > 1
+                                    ? () {
+                                        _pdfViewerController.previousPage();
+                                      }
+                                    : null,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  child: Icon(
+                                    Icons.chevron_left,
+                                    color: _pdfCurrentPage > 1
+                                        ? Colors.white
+                                        : Colors.white38,
+                                    size: 20,
+                                  ),
+                                ),
+                              ),
+                              // Tappable page number to jump
+                              GestureDetector(
+                                onTap: () => _showGoToPageDialog(),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                                  child: Text(
+                                    '$_pdfCurrentPage / $_pdfPageCount',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              // Next page
+                              GestureDetector(
+                                onTap: _pdfCurrentPage < _pdfPageCount
+                                    ? () {
+                                        _pdfViewerController.nextPage();
+                                      }
+                                    : null,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  child: Icon(
+                                    Icons.chevron_right,
+                                    color: _pdfCurrentPage < _pdfPageCount
+                                        ? Colors.white
+                                        : Colors.white38,
+                                    size: 20,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ],
@@ -3519,13 +4491,15 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
 class _FullScreenVideoPlayer extends StatefulWidget {
   final BetterPlayerController sourceController;
-  final String? watermarkText;
+  final String? studentCode;
+  final String? phone;
   final FeatureManager featureManager;
   final VoidCallback? onExit;
 
   const _FullScreenVideoPlayer({
     required this.sourceController,
-    required this.watermarkText,
+    required this.studentCode,
+    required this.phone,
     required this.featureManager,
     this.onExit,
   });
@@ -3537,32 +4511,20 @@ class _FullScreenVideoPlayer extends StatefulWidget {
 class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
   bool _exitCalled = false;
   bool _showControls = true;
-  double _playbackSpeed = 1.0;
-  final List<double> _speedOptions = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
   Timer? _hideControlsTimer;
-  late void Function(BetterPlayerEvent) _eventsListener;
 
   @override
   void initState() {
     super.initState();
     _enterFullScreenMode();
-    _eventsListener = (event) {
-      if (!mounted) return;
-      if (event.betterPlayerEventType ==
-          BetterPlayerEventType.controlsVisible) {
-        setState(() => _showControls = true);
-      } else if (event.betterPlayerEventType ==
-          BetterPlayerEventType.controlsHiddenEnd) {
-        setState(() => _showControls = false);
-      }
-    };
-    widget.sourceController.addEventsListener(_eventsListener);
+    // The packaged controls are off, so the chrome is shown on entry and then
+    // hidden by the same auto-hide the inline player uses.
+    _startHideControlsTimer();
   }
 
   @override
   void dispose() {
     _hideControlsTimer?.cancel();
-    widget.sourceController.removeEventsListener(_eventsListener);
     if (!_exitCalled) {
       _exitFullScreenMode();
     }
@@ -3571,27 +4533,28 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
 
   void _startHideControlsTimer() {
     _hideControlsTimer?.cancel();
-    _hideControlsTimer = Timer(const Duration(milliseconds: 500), () {
+    _hideControlsTimer = Timer(const Duration(seconds: 4), () {
       if (mounted) {
         setState(() => _showControls = false);
       }
     });
   }
 
-  void _onVideoTap() {
+  /// Shows the chrome and restarts the auto-hide countdown.
+  void _revealControls() {
+    if (!mounted) return;
     setState(() => _showControls = true);
+    _startHideControlsTimer();
   }
 
-  void _cyclePlaybackSpeed() {
-    final currentIndex = _speedOptions.indexOf(_playbackSpeed);
-    final nextIndex = (currentIndex + 1) % _speedOptions.length;
-    final newSpeed = _speedOptions[nextIndex];
-    setState(() => _playbackSpeed = newSpeed);
-    widget.sourceController.setSpeed(newSpeed);
+  void _onVideoTap() {
+    if (_showControls) {
+      _hideControlsTimer?.cancel();
+      setState(() => _showControls = false);
+      return;
+    }
+    _revealControls();
   }
-
-  String _formatSpeed(double speed) =>
-      speed == speed.truncateToDouble() ? '${speed.toInt()}x' : '${speed}x';
 
   Future<void> _enterFullScreenMode() async {
     await SystemChrome.setPreferredOrientations([
@@ -3644,66 +4607,19 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
               onTap: _onVideoTap,
               child: WatermarkWrapper(
                 type: WatermarkType.chapters,
-                studentCode: widget.watermarkText,
+                studentCode: widget.studentCode,
+                phone: widget.phone,
                 featureManager: widget.featureManager,
                 child: BetterPlayer(controller: widget.sourceController),
               ),
             ),
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 8,
-              left: 8,
-              child: AnimatedOpacity(
-                opacity: _showControls ? 1.0 : 0.0,
-                duration: const Duration(milliseconds: 300),
-                child: IgnorePointer(
-                  ignoring: !_showControls,
-                  child: IconButton(
-                    icon: const Icon(
-                      Icons.fullscreen_exit,
-                      color: Colors.white,
-                    ),
-                    onPressed: _pop,
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              bottom: 40,
-              right: 8,
-              child: AnimatedOpacity(
-                opacity: _showControls ? 1.0 : 0.0,
-                duration: const Duration(milliseconds: 300),
-                child: IgnorePointer(
-                  ignoring: !_showControls,
-                  child: GestureDetector(
-                    onTap: () {
-                      _cyclePlaybackSpeed();
-                      _onVideoTap();
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.65),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.3),
-                        ),
-                      ),
-                      child: Text(
-                        _formatSpeed(_playbackSpeed),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
+            Positioned.fill(
+              child: LearnooVideoControls(
+                controller: widget.sourceController,
+                visible: _showControls,
+                onInteraction: _revealControls,
+                isFullScreen: true,
+                onToggleFullScreen: _pop,
               ),
             ),
           ],
@@ -3711,4 +4627,65 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
       ),
     );
   }
+}
+
+/// CustomPainter that renders the live annotation strokes on top of the PDF.
+///
+/// Identical in logic to the private `_AnnotationPainter` inside
+/// [PdfReviewerScreen] — kept separate so both screens remain self-contained.
+class _PdfAnnotationPainter extends CustomPainter {
+  final List<AnnotationPoint> currentStrokePoints;
+  final List<InkStroke> pageAnnotations;
+
+  const _PdfAnnotationPainter({
+    required this.currentStrokePoints,
+    required this.pageAnnotations,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final stroke in pageAnnotations) {
+      _drawStroke(
+        canvas,
+        stroke.points,
+        stroke.color,
+        stroke.strokeWidth,
+        stroke.isHighlighter,
+      );
+    }
+    if (currentStrokePoints.isNotEmpty) {
+      _drawStroke(
+        canvas,
+        currentStrokePoints,
+        currentStrokePoints.first.color,
+        currentStrokePoints.first.strokeWidth,
+        currentStrokePoints.first.isHighlighter,
+      );
+    }
+  }
+
+  void _drawStroke(
+    Canvas canvas,
+    List<AnnotationPoint> points,
+    Color color,
+    double strokeWidth,
+    bool isHighlighter,
+  ) {
+    if (points.isEmpty) return;
+    for (int i = 0; i < points.length - 1; i++) {
+      final p = points[i];
+      final next = points[i + 1];
+      if ((p.offset - next.offset).distance > 50) continue;
+      final paint = Paint()
+        ..color = isHighlighter ? color.withValues(alpha: 0.3) : color
+        ..strokeWidth = strokeWidth
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke;
+      canvas.drawLine(p.offset, next.offset, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

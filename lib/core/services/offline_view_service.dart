@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../sync/offline_queue_service.dart';
+import '../local/models/pending_action.dart';
 
 /// Service for managing offline video view counts.
 /// 
@@ -23,14 +25,14 @@ class OfflineViewService {
   }
 
   /// Get the storage key for a chapter's offline views
-  String _getViewsKey(String chapterId) => '${_prefsKeyPrefix}${chapterId}';
+  String _getViewsKey(String chapterId) => '$_prefsKeyPrefix$chapterId';
 
   /// Get the storage key for tracking if views were synced
-  String _getSyncedKey(String chapterId) => '${_prefsKeySyncedPrefix}${chapterId}';
+  String _getSyncedKey(String chapterId) => '$_prefsKeySyncedPrefix$chapterId';
 
   /// Increment the offline view count for a chapter
-  /// Returns the new offline view count
-  Future<int> incrementOfflineView(String chapterId) async {
+  /// Returns the new offline view count and enqueues an offline sync action
+  Future<int> incrementOfflineView(String chapterId, {int? watchedMinutes}) async {
     await initialize();
     
     final key = _getViewsKey(chapterId);
@@ -39,8 +41,19 @@ class OfflineViewService {
     
     await _prefs?.setInt(key, newViews);
     await _prefs?.setBool(_getSyncedKey(chapterId), false);
+
+    final chapterNumericId = int.tryParse(chapterId);
+    if (chapterNumericId != null && chapterNumericId > 0) {
+      await OfflineQueueService().enqueue(
+        type: PendingActionTypes.chapterView,
+        payload: {
+          'chapter_id': chapterNumericId,
+          if (watchedMinutes != null) 'watched_minutes': watchedMinutes,
+        },
+      );
+    }
     
-    debugPrint('[OfflineViewService] Incremented offline views for chapter $chapterId: $currentViews -> $newViews');
+    debugPrint('[OfflineViewService] Incremented offline views for chapter $chapterId: $currentViews -> $newViews and queued sync action');
     return newViews;
   }
 

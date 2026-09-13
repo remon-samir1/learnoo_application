@@ -339,6 +339,10 @@ extension SwiftBetterPlayerPlugin {
                 }
             }
             result(nil)
+        case "takeSnapshot":
+            player.takeSnapshot { data in
+                result(data)
+            }
         default:
             result(FlutterMethodNotImplemented)
         }

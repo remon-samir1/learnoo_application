@@ -1,18 +1,17 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../local/models/pending_action.dart';
 import '../network/api_constants.dart';
+import '../session/session_manager.dart';
 import 'sync_service.dart';
 
 /// Collection of action processors for the sync service
 /// Each processor handles a specific action type
 class SyncProcessors {
-  static const _storage = FlutterSecureStorage();
-
   /// Get auth token
   static Future<String?> _getToken() async {
-    return await _storage.read(key: 'auth_token');
+    return await SessionManager().currentToken();
   }
 
   /// Register all processors with the sync service
@@ -23,6 +22,7 @@ class SyncProcessors {
     syncService.registerProcessor(PendingActionTypes.reaction, _processReaction);
     syncService.registerProcessor(PendingActionTypes.deletePost, _processDeletePost);
     syncService.registerProcessor(PendingActionTypes.updatePost, _processUpdatePost);
+    syncService.registerProcessor(PendingActionTypes.chapterView, _processChapterView);
   }
 
   /// Process a pending comment action
@@ -182,6 +182,34 @@ class SyncProcessors {
       return response.statusCode == 200;
     } catch (e) {
       throw Exception('Failed to update post: $e');
+    }
+  }
+
+  /// Process a pending chapter view action
+  static Future<bool> _processChapterView(PendingAction action) async {
+    final token = await _getToken();
+    if (token == null) return false;
+
+    final chapterId = action.payload['chapter_id'];
+    if (chapterId == null) return true; // Invalid payload, discard
+
+    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.chapters}/$chapterId/view');
+
+    try {
+      final response = await http.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      debugPrint('[SyncProcessors] Sent chapter view sync for chapter $chapterId -> status: ${response.statusCode}');
+      return response.statusCode == 200 || response.statusCode == 201;
+    } catch (e) {
+      debugPrint('[SyncProcessors] Error syncing chapter view for $chapterId: $e');
+      throw Exception('Failed to record chapter view: $e');
     }
   }
 }

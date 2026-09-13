@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/primary_button.dart';
 import '../../../auth/data/auth_repository.dart';
-import '../../../home/presentation/screens/main_screen.dart';
 import 'faculty_selection_screen.dart';
 
 class CenterSelectionScreen extends StatefulWidget {

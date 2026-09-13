@@ -1,9 +1,7 @@
-import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../local/hive_service.dart';
 import '../sync/offline_queue_service.dart';
 import '../sync/sync_service.dart';
-import '../local/models/pending_action.dart';
 
 /// Mixin that provides offline-first capabilities to repositories
 /// Usage: Extend your repository and call offlineFirstFetch for GET requests
