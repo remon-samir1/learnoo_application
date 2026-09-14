@@ -48,6 +48,7 @@ class CourseRepository with OfflineFirstRepository {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'Authorization': 'Bearer $token',
+            'X-Client-Type': 'app',
           },
         );
 
@@ -84,6 +85,7 @@ class CourseRepository with OfflineFirstRepository {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'Authorization': 'Bearer $token',
+            'X-Client-Type': 'app',
           },
         );
 
@@ -119,6 +121,7 @@ class CourseRepository with OfflineFirstRepository {
             'Accept': 'application/json',
             'Authorization': 'Bearer $token',
             'lang': ApiClient.locale,
+            'X-Client-Type': 'app',
           },
         ).timeout(const Duration(seconds: 15));
 

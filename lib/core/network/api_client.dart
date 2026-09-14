@@ -67,6 +67,7 @@ class ApiClient {
     final headers = <String, String>{
       'Accept': 'application/json',
       'lang': locale,
+      'X-Client-Type': 'app',
     };
 
     if (!isMultipart) {

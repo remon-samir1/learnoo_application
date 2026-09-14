@@ -184,6 +184,7 @@ class CourseFilesRepository with OfflineFirstRepository {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'Authorization': 'Bearer $token',
+            'X-Client-Type': 'app',
           },
         );
 
@@ -233,6 +234,7 @@ class CourseFilesRepository with OfflineFirstRepository {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'Authorization': 'Bearer $token',
+            'X-Client-Type': 'app',
           },
         );
 

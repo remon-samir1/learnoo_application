@@ -72,6 +72,7 @@ class CommunityRepository {
           'Accept': 'application/json',
           'Authorization': 'Bearer $token',
           'lang': ApiClient.locale,
+          'X-Client-Type': 'app',
         },
       ).timeout(const Duration(seconds: 15));
 
