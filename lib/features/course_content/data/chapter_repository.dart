@@ -97,6 +97,7 @@ class ChapterRepository with OfflineFirstRepository {
             'message': data['message'] ?? 'Access denied',
             'max_views': data['max_views'],
             'current_views': data['current_views'],
+            'watch_access_state': data['watch_access_state'],
           };
           throw 'AUTH_ERROR';
         } else {
@@ -121,6 +122,7 @@ class ChapterRepository with OfflineFirstRepository {
         'message': _authErrorData!['message'],
         'max_views': _authErrorData!['max_views'],
         'current_views': _authErrorData!['current_views'],
+        'watch_access_state': _authErrorData!['watch_access_state'],
         'statusCode': _authErrorData!['statusCode'],
         'authorizationError': true,
         'fromCache': false,

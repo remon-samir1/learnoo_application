@@ -1628,6 +1628,8 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
           _isLoadingChapter = false;
           _errorMessage =
               result['message'] ?? 'course.failed_load_chapter'.tr();
+          _isNotPublished =
+              result['watch_access_state']?.toString() == 'not_published';
           if (maxViewsFromError != null) _maxViews = maxViewsFromError;
           if (currentViewsFromError != null)
             _currentViews = currentViewsFromError;
@@ -2837,7 +2839,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                   ),
                   child: Center(
                     child: FaIcon(
-                      showActivationButton
+                      _isNotPublished
+                          ? FontAwesomeIcons.clock
+                          : showActivationButton
                           ? FontAwesomeIcons.lock
                           : FontAwesomeIcons.circleExclamation,
                       color: Colors.white,
@@ -2847,7 +2851,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                 ),
                 const SizedBox(height: 32),
                 Text(
-                  isMaxViewsError
+                  _isNotPublished
+                      ? 'course.chapter_not_available_yet'.tr()
+                      : isMaxViewsError
                       ? 'course.views_exceeded_title'.tr()
                       : (showActivationButton
                             ? 'course.chapter_locked_title'.tr()
