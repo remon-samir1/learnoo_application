@@ -491,6 +491,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   Map<String, dynamic>? _chapterData;
 
   bool _isLocked = true;
+  bool _isNotPublished = false;
   bool _canWatch = false;
   bool _isActivated = false;
   bool _isFreePreview = false;
@@ -1526,6 +1527,8 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
           _chapterData = data;
           // Same coercion as everywhere else: the API mixes true, 1 and "1".
           _isLocked = coerceFlagOrNull(attributes['is_locked']) ?? true;
+          _isNotPublished =
+              attributes['watch_access_state']?.toString() == 'not_published';
           _canWatch = coerceCanWatchExplicitTrue(attributes['can_watch']);
           _isActivated = coerceFlagOrNull(attributes['is_activated']) == true;
           _isFreePreview = coerceFlag(attributes['is_free_preview']);
@@ -2790,9 +2793,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   Widget _buildErrorScreen() {
     final errorLower = _errorMessage?.toLowerCase() ?? '';
     final isLockedError =
-        errorLower.contains('locked') == true ||
-        _isLocked ||
-        errorLower.contains('activate') == true;
+        !_isNotPublished &&
+        (errorLower.contains('locked') == true ||
+            _isLocked ||
+            errorLower.contains('activate') == true);
     final isMaxViewsError =
         errorLower.contains('maximum') && errorLower.contains('views') ||
         (_currentViews > 0 && _maxViews > 0 && _currentViews >= _maxViews);
@@ -3236,6 +3240,32 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                         backgroundColor: const Color(0xFF3451E5),
                         foregroundColor: Colors.white,
                       ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else if (_isNotPublished)
+            Container(
+              color: const Color(0xFF1F2937),
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const FaIcon(
+                      FontAwesomeIcons.clock,
+                      color: Colors.white,
+                      size: 48,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'course.chapter_not_available_yet'.tr(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
                   ],
                 ),
