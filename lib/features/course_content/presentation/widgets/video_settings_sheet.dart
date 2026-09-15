@@ -100,13 +100,13 @@ class VideoSettingsSheet extends StatelessWidget {
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
-                children: _selectableTracks
+                children: _qualityOptions
                     .map(
-                      (track) => _chip(
-                        label: _qualityLabel(track),
+                      (option) => _chip(
+                        label: '${option.height}p',
                         selected: false,
                         onTap: () {
-                          onQualitySelected!(track);
+                          onQualitySelected!(option.track);
                           Navigator.pop(context);
                         },
                       ),
@@ -146,14 +146,24 @@ class VideoSettingsSheet extends StatelessWidget {
   List<BetterPlayerAsmsTrack> get _selectableTracks =>
       qualityTracks.where((t) => (t.height ?? 0) > 0).toList();
 
-  /// `720p` style label, falling back to the bitrate when the variant does not
-  /// report a resolution.
-  static String _qualityLabel(BetterPlayerAsmsTrack track) {
-    final height = track.height ?? 0;
-    if (height > 0) return '${height}p';
-    final bitrate = track.bitrate ?? 0;
-    if (bitrate > 0) return '${(bitrate / 1000).round()} kbps';
-    return 'course.quality_auto'.tr();
+  /// Same rule as the web player: 1080p / 720p / 480p are always offered.
+  /// A choice the stream does not have plays the closest real rendition at
+  /// or below it (or the lowest one), so picking any option keeps playing.
+  static const List<int> _alwaysOfferedHeights = [1080, 720, 480];
+
+  List<_QualityOption> get _qualityOptions {
+    final tracks = _selectableTracks..sort((a, b) => b.height!.compareTo(a.height!));
+    if (tracks.isEmpty) return const [];
+    final heights = {..._alwaysOfferedHeights, ...tracks.map((t) => t.height!)}.toList()
+      ..sort((a, b) => b.compareTo(a));
+    return heights
+        .map(
+          (height) => _QualityOption(
+            height,
+            tracks.firstWhere((t) => t.height! <= height, orElse: () => tracks.last),
+          ),
+        )
+        .toList();
   }
 
   Widget _heading(IconData icon, String label) {
@@ -198,4 +208,11 @@ class VideoSettingsSheet extends StatelessWidget {
       ),
     );
   }
+}
+
+class _QualityOption {
+  const _QualityOption(this.height, this.track);
+
+  final int height;
+  final BetterPlayerAsmsTrack track;
 }
