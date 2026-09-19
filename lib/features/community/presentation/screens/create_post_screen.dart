@@ -16,6 +16,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   String _selectedPostType = 'post';
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _contentController = TextEditingController();
+  final TextEditingController _tagController = TextEditingController();
   final List<String> _selectedTags = [];
 
   final CommunityRepository _repository = CommunityRepository();
@@ -32,6 +33,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   Future<void> _loadCourses() async {
     final result = await _repository.getCourses();
+    if (!mounted) return;
     setState(() {
       _isLoading = false;
       if (result['success']) {
@@ -45,6 +47,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   void dispose() {
     _titleController.dispose();
     _contentController.dispose();
+    _tagController.dispose();
     super.dispose();
   }
 
@@ -71,7 +74,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   Future<void> _createPost() async {
     if (_contentController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter some content')),
+        SnackBar(content: Text('community.please_enter_content'.tr())),
       );
       return;
     }
@@ -100,9 +103,8 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            result['message']?.toString() ?? 'community.post_failed'.tr(),
-          ),
+          content: Text('community.post_failed'.tr()),
+          backgroundColor: Colors.red,
         ),
       );
     }
@@ -110,8 +112,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: isDark ? const Color(0xFF13151B) : Colors.white,
       body: SafeArea(
         child: _isLoading
             ? const Center(child: CircularProgressIndicator())
@@ -121,22 +125,25 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const SizedBox(height: 16),
-                    _buildHeader(),
+                    _buildHeader(isDark),
                     const SizedBox(height: 24),
-                    _buildUserInfo(),
-                    const Divider(height: 32, color: Color(0xFFE5E7EB)),
+                    _buildUserInfo(isDark),
+                    Divider(
+                      height: 32,
+                      color: isDark ? const Color(0xFF2E3344) : const Color(0xFFE5E7EB),
+                    ),
                     const SizedBox(height: 16),
-                    _buildPostTypeSelector(),
+                    _buildPostTypeSelector(isDark),
                     const SizedBox(height: 24),
-                    _buildTitleField(),
+                    _buildTitleField(isDark),
                     const SizedBox(height: 20),
-                    _buildContentField(),
+                    _buildContentField(isDark),
                     const SizedBox(height: 24),
-                    _buildCourseSelector(),
+                    _buildCourseSelector(isDark),
                     const SizedBox(height: 24),
-                    _buildTagsSection(),
+                    _buildTagsSection(isDark),
                     const SizedBox(height: 32),
-                    _buildActionButtons(),
+                    _buildActionButtons(isDark),
                     const SizedBox(height: 24),
                   ],
                 ),
@@ -145,30 +152,32 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader(bool isDark) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Create Post',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textDark,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'community.publish_post'.tr(),
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? const Color(0xFFF8FAFC) : AppColors.textDark,
+                ),
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Share something with your classmates',
-              style: TextStyle(
-                fontSize: 14,
-                color: AppColors.textGray,
+              const SizedBox(height: 4),
+              Text(
+                'community.share_with_classmates'.tr(),
+                style: TextStyle(
+                  fontSize: 14,
+                  color: isDark ? const Color(0xFF94A3B8) : AppColors.textGray,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
         GestureDetector(
           onTap: () => Navigator.of(context).pop(),
@@ -176,12 +185,12 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: Colors.grey[100],
+              color: isDark ? const Color(0xFF262A36) : Colors.grey[100],
               shape: BoxShape.circle,
             ),
-            child: const Icon(
+            child: Icon(
               Icons.close,
-              color: AppColors.textGray,
+              color: isDark ? const Color(0xFFCBD5E1) : AppColors.textGray,
               size: 20,
             ),
           ),
@@ -190,7 +199,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     );
   }
 
-  Widget _buildUserInfo() {
+  Widget _buildUserInfo(bool isDark) {
     return Row(
       children: [
         Container(
@@ -209,23 +218,23 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           ),
         ),
         const SizedBox(width: 12),
-        const Column(
+        Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'You',
+              'profile.you'.tr(),
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
-                color: AppColors.textDark,
+                color: isDark ? const Color(0xFFF8FAFC) : AppColors.textDark,
               ),
             ),
-            SizedBox(height: 2),
+            const SizedBox(height: 2),
             Text(
-              'Student',
+              'profile.student'.tr(),
               style: TextStyle(
                 fontSize: 13,
-                color: AppColors.textGray,
+                color: isDark ? const Color(0xFF94A3B8) : AppColors.textGray,
               ),
             ),
           ],
@@ -234,33 +243,33 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     );
   }
 
-  Widget _buildPostTypeSelector() {
+  Widget _buildPostTypeSelector(bool isDark) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Post Type',
+        Text(
+          'community.post_type'.tr(),
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: AppColors.labelGray,
+            color: isDark ? const Color(0xFFCBD5E1) : AppColors.labelGray,
           ),
         ),
         const SizedBox(height: 12),
         Row(
           children: [
-            _buildPostTypeChip('post', 'post'),
+            _buildPostTypeChip('community.type_post'.tr(), 'post', isDark),
             const SizedBox(width: 8),
-            _buildPostTypeChip('question', 'question'),
+            _buildPostTypeChip('community.type_question'.tr(), 'question', isDark),
             const SizedBox(width: 8),
-            _buildPostTypeChip('summary', 'summary'),
+            _buildPostTypeChip('community.type_summary'.tr(), 'summary', isDark),
           ],
         ),
       ],
     );
   }
 
-  Widget _buildPostTypeChip(String label, String value) {
+  Widget _buildPostTypeChip(String label, String value, bool isDark) {
     final isSelected = _selectedPostType == value;
     return Expanded(
       child: GestureDetector(
@@ -272,7 +281,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
-            color: isSelected ? AppColors.primaryBlue : const Color(0xFFF0F2FF),
+            color: isSelected
+                ? AppColors.primaryBlue
+                : (isDark ? const Color(0xFF262A36) : const Color(0xFFF0F2FF)),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Center(
@@ -281,7 +292,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
-                color: isSelected ? Colors.white : AppColors.textGray,
+                color: isSelected
+                    ? Colors.white
+                    : (isDark ? const Color(0xFFCBD5E1) : AppColors.textGray),
               ),
             ),
           ),
@@ -290,38 +303,43 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     );
   }
 
-  Widget _buildTitleField() {
+  Widget _buildTitleField(bool isDark) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Title (Optional)',
+        Text(
+          'community.title_optional'.tr(),
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: AppColors.labelGray,
+            color: isDark ? const Color(0xFFCBD5E1) : AppColors.labelGray,
           ),
         ),
         const SizedBox(height: 8),
         TextField(
           controller: _titleController,
-          style: const TextStyle(color: AppColors.textDark),
+          style: TextStyle(color: isDark ? const Color(0xFFF8FAFC) : AppColors.textDark),
+          cursorColor: isDark ? AppColors.lightBlue : AppColors.primaryBlue,
           decoration: InputDecoration(
-            hintText: 'Give your post a title...',
-            hintStyle: const TextStyle(
-              color: Color(0xFFC5C8D0),
+            hintText: 'community.give_post_title'.tr(),
+            hintStyle: TextStyle(
+              color: isDark ? const Color(0xFF64748B) : const Color(0xFFC5C8D0),
               fontSize: 15,
             ),
             filled: true,
-            fillColor: const Color(0xFFF8F9FB),
+            fillColor: isDark ? const Color(0xFF262A36) : const Color(0xFFF8F9FB),
             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
+              borderSide: BorderSide(
+                color: isDark ? const Color(0xFF383E52) : Colors.transparent,
+              ),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
+              borderSide: BorderSide(
+                color: isDark ? const Color(0xFF383E52) : Colors.transparent,
+              ),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
@@ -333,39 +351,44 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     );
   }
 
-  Widget _buildContentField() {
+  Widget _buildContentField(bool isDark) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Content',
+        Text(
+          'community.content'.tr(),
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: AppColors.labelGray,
+            color: isDark ? const Color(0xFFCBD5E1) : AppColors.labelGray,
           ),
         ),
         const SizedBox(height: 8),
         TextField(
           controller: _contentController,
-          style: const TextStyle(color: AppColors.textDark),
+          style: TextStyle(color: isDark ? const Color(0xFFF8FAFC) : AppColors.textDark),
+          cursorColor: isDark ? AppColors.lightBlue : AppColors.primaryBlue,
           maxLines: 5,
           decoration: InputDecoration(
-            hintText: 'What do you want to share?',
-            hintStyle: const TextStyle(
-              color: Color(0xFFC5C8D0),
+            hintText: 'community.what_to_share'.tr(),
+            hintStyle: TextStyle(
+              color: isDark ? const Color(0xFF64748B) : const Color(0xFFC5C8D0),
               fontSize: 15,
             ),
             filled: true,
-            fillColor: const Color(0xFFF8F9FB),
+            fillColor: isDark ? const Color(0xFF262A36) : const Color(0xFFF8F9FB),
             contentPadding: const EdgeInsets.all(16),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
+              borderSide: BorderSide(
+                color: isDark ? const Color(0xFF383E52) : Colors.transparent,
+              ),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
+              borderSide: BorderSide(
+                color: isDark ? const Color(0xFF383E52) : Colors.transparent,
+              ),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
@@ -377,48 +400,58 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     );
   }
 
-  Widget _buildCourseSelector() {
+  Widget _buildCourseSelector(bool isDark) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Course Tag (Select one)',
+        Text(
+          'community.course_tag'.tr(),
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: AppColors.labelGray,
+            color: isDark ? const Color(0xFFCBD5E1) : AppColors.labelGray,
           ),
         ),
         const SizedBox(height: 12),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           decoration: BoxDecoration(
-            color: const Color(0xFFF8F9FB),
+            color: isDark ? const Color(0xFF262A36) : const Color(0xFFF8F9FB),
             borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isDark ? const Color(0xFF383E52) : Colors.transparent,
+            ),
           ),
           child: DropdownButtonHideUnderline(
             child: DropdownButton<PostCourse>(
               isExpanded: true,
-              hint: const Text(
-                'Select a course...',
+              dropdownColor: isDark ? const Color(0xFF1E212B) : Colors.white,
+              iconEnabledColor: isDark ? const Color(0xFFCBD5E1) : Colors.grey[700],
+              hint: Text(
+                'community.select_course'.tr(),
                 style: TextStyle(
-                  color: Color(0xFFC5C8D0),
+                  color: isDark ? const Color(0xFF64748B) : const Color(0xFFC5C8D0),
                   fontSize: 15,
                 ),
               ),
               value: _selectedCourse,
               items: [
-                const DropdownMenuItem<PostCourse>(
+                DropdownMenuItem<PostCourse>(
                   value: null,
-                  child: Text('No course tag'),
+                  child: Text(
+                    'community.no_course_tag'.tr(),
+                    style: TextStyle(
+                      color: isDark ? const Color(0xFFF8FAFC) : AppColors.textDark,
+                    ),
+                  ),
                 ),
                 ..._availableCourses.map((course) => DropdownMenuItem<PostCourse>(
                   value: course,
                   child: Text(
                     course.attributes.title,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 15,
-                      color: AppColors.textDark,
+                      color: isDark ? const Color(0xFFF8FAFC) : AppColors.textDark,
                     ),
                   ),
                 )),
@@ -431,18 +464,16 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     );
   }
 
-  Widget _buildTagsSection() {
-    final tagController = TextEditingController();
-
+  Widget _buildTagsSection(bool isDark) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Tags',
+        Text(
+          'community.tags'.tr(),
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: AppColors.labelGray,
+            color: isDark ? const Color(0xFFCBD5E1) : AppColors.labelGray,
           ),
         ),
         const SizedBox(height: 12),
@@ -450,31 +481,41 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           children: [
             Expanded(
               child: TextField(
-                controller: tagController,
+                controller: _tagController,
+                style: TextStyle(color: isDark ? const Color(0xFFF8FAFC) : AppColors.textDark),
+          cursorColor: isDark ? AppColors.lightBlue : AppColors.primaryBlue,
                 decoration: InputDecoration(
-                  hintText: 'Add a tag...',
-                  hintStyle: const TextStyle(
-                    color: Color(0xFFC5C8D0),
+                  hintText: 'community.add_tag'.tr(),
+                  hintStyle: TextStyle(
+                    color: isDark ? const Color(0xFF64748B) : const Color(0xFFC5C8D0),
                     fontSize: 15,
                   ),
                   filled: true,
-                  fillColor: const Color(0xFFF8F9FB),
+                  fillColor: isDark ? const Color(0xFF262A36) : const Color(0xFFF8F9FB),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
+                    borderSide: BorderSide(
+                      color: isDark ? const Color(0xFF383E52) : Colors.transparent,
+                    ),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(
+                      color: isDark ? const Color(0xFF383E52) : Colors.transparent,
+                    ),
                   ),
                   suffixIcon: IconButton(
                     icon: const Icon(Icons.add, color: AppColors.primaryBlue),
                     onPressed: () {
-                      _addTag(tagController.text);
-                      tagController.clear();
+                      _addTag(_tagController.text);
+                      _tagController.clear();
                     },
                   ),
                 ),
                 onSubmitted: (value) {
                   _addTag(value);
-                  tagController.clear();
+                  _tagController.clear();
                 },
               ),
             ),
@@ -523,7 +564,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     );
   }
 
-  Widget _buildActionButtons() {
+  Widget _buildActionButtons(bool isDark) {
     return Row(
       children: [
         Expanded(
@@ -532,26 +573,30 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 16),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: isDark ? const Color(0xFF262A36) : Colors.white,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFE5E7EB)),
+                border: Border.all(
+                  color: isDark ? const Color(0xFF383E52) : const Color(0xFFE5E7EB),
+                ),
               ),
               child: Center(
                 child: _isSubmitting
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(AppColors.textDark),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            isDark ? Colors.white : AppColors.textDark,
+                          ),
                         ),
                       )
-                    : const Text(
-                        'Cancel',
+                    : Text(
+                        'profile.cancel'.tr(),
                         style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
-                          color: AppColors.textDark,
+                          color: isDark ? const Color(0xFFF8FAFC) : AppColors.textDark,
                         ),
                       ),
               ),
@@ -578,9 +623,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                           valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                         ),
                       )
-                    : const Text(
-                        'Publish Post',
-                        style: TextStyle(
+                    : Text(
+                        'community.publish_post'.tr(),
+                        style: const TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
                           color: Colors.white,

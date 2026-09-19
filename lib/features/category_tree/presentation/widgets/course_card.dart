@@ -1,5 +1,7 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+
+import '../../../../core/utils/media_url.dart';
+import '../../../../core/widgets/cover_image.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../data/models/category_tree_model.dart';
 
@@ -20,7 +22,7 @@ class CourseCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isLocked = course.isLocked;
-    final hasThumbnail = course.thumbnail != null && course.thumbnail!.trim().isNotEmpty;
+    final hasThumbnail = resolveMediaUrl(course.thumbnail) != null;
     final displayCategory = categoryName ?? course.subTitle ?? '';
 
     return Container(
@@ -61,28 +63,14 @@ class CourseCard extends StatelessWidget {
                     end: Alignment.bottomRight,
                   ),
                 ),
-                child: hasThumbnail
-                    ? CachedNetworkImage(
-                        imageUrl: course.thumbnail!,
-                        fit: BoxFit.cover,
-                        color: Colors.black.withValues(alpha: 0.25),
-                        colorBlendMode: BlendMode.darken,
-                        placeholder: (context, url) => Container(
-                          decoration: const BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [Color(0xFF5A45FF), Color(0xFF7E64FF)],
-                            ),
-                          ),
-                        ),
-                        errorWidget: (context, url, error) => Container(
-                          decoration: const BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [Color(0xFF5A45FF), Color(0xFF7E64FF)],
-                            ),
-                          ),
-                        ),
-                      )
-                    : null,
+                child: CoverImage(
+                  url: course.thumbnail,
+                  title: course.title,
+                  height: 155,
+                  showTitle: false,
+                  darken: hasThumbnail ? 0.25 : 0,
+                  cacheWidth: 220,
+                ),
               ),
 
               // Decorative subtle circle pattern in background

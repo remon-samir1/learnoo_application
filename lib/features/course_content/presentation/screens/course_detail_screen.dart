@@ -1,4 +1,10 @@
+import '../../domain/library_material.dart';
+import 'library_material_detail_screen.dart';
 import 'package:flutter/material.dart';
+
+import '../../../community/presentation/widgets/post_images.dart';
+import '../../../../core/utils/media_url.dart';
+import '../../../../core/widgets/cover_image.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:shimmer/shimmer.dart';
@@ -26,6 +32,8 @@ import '../../../community/presentation/screens/create_post_screen.dart';
 import '../../../community/presentation/widgets/post_comments_section.dart';
 import 'lecture_detail_screen.dart';
 import 'pdf_reviewer_screen.dart';
+import 'live_session_detail_screen.dart';
+import '../widgets/live_room_widgets.dart';
 
 class CourseDetailScreen extends StatefulWidget {
   final String courseId;
@@ -68,6 +76,9 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
   /// Notes and library materials for this course — the web's Notes and Library
   /// tabs, which the app's four-tab bar was missing entirely.
   bool _isLoadingNotes = true;
+
+  /// Cover from the course record, preferred over the one the caller passed.
+  String? _loadedThumbnail;
   bool _isLoadingLibrary = true;
   List<dynamic> _notes = [];
   List<dynamic> _libraryItems = [];
@@ -155,6 +166,16 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
         final Map<String, dynamic> attributes = courseData['attributes'] is Map
             ? Map<String, dynamic>.from(courseData['attributes'])
             : <String, dynamic>{};
+
+        // Callers such as live rooms may not know the cover; the course
+        // record always does.
+        final loadedThumbnail = readMediaUrl(
+          attributes,
+          const ['thumbnail', 'image', 'cover_image'],
+        );
+        if (loadedThumbnail != null && loadedThumbnail != _loadedThumbnail) {
+          setState(() => _loadedThumbnail = loadedThumbnail);
+        }
 
         // 1. Lectures and Chapters from course attributes ONLY
         final rawLectures = attributes['lectures'];
@@ -289,8 +310,9 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
         }
 
         setState(() {
-          _lectures = lecturesList;
-          _isExpanded = List<bool>.filled(lecturesList.length, false);
+          // Same ordering as the web's `sortedLectures` (by `order`).
+          _lectures = studentSortedLectures(lecturesList);
+          _isExpanded = List<bool>.filled(_lectures.length, false);
           _exams = mergedExams.values.toList();
           _socialLinks = socialLinksList;
           _posts = postsList;
@@ -803,21 +825,12 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
         SizedBox(
           height: 320,
           width: double.infinity,
-          child: CachedNetworkImage(
-            imageUrl: widget.thumbnail,
-            fit: BoxFit.cover,
-            memCacheWidth: 800,
-            memCacheHeight: 640,
-            placeholder: (context, url) => Container(
-              height: 320,
-              width: double.infinity,
-              color: Colors.grey[300],
-            ),
-            errorWidget: (context, url, error) => Container(
-              height: 320,
-              width: double.infinity,
-              color: Colors.grey[300],
-            ),
+          child: CoverImage(
+            url: _loadedThumbnail ?? widget.thumbnail,
+            title: widget.title,
+            height: 320,
+            showTitle: false,
+            cacheWidth: 500,
           ),
         ),
         Container(
@@ -1056,12 +1069,26 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
     );
   }
 
+  void _openLibraryMaterial(dynamic item) {
+    final id = libraryId(item);
+    if (id == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => LibraryMaterialDetailScreen(
+          materialId: id,
+          initialMaterial: item,
+        ),
+      ),
+    );
+  }
+
   Widget _buildLibraryItemCard(dynamic item) {
     final attrs = item is Map ? (item['attributes'] ?? item) : const {};
     final map = attrs is Map ? attrs : const {};
     final title = map['title']?.toString() ?? '';
     final description = map['description']?.toString() ?? '';
-    final locked = map['is_locked'] == true;
+    final locked = libraryIsLocked(item);
     final cover = map['cover_image']?.toString() ?? '';
     final price = map['price']?.toString() ?? '0';
     final attachments = map['attachments'] is List
@@ -1149,23 +1176,26 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                   ),
                 ] else
                   ...attachments.whereType<Map>().map((att) {
-                    final name = att['name']?.toString() ?? '';
-                    final url = att['url']?.toString() ?? '';
+                    final attachment = Map<String, dynamic>.from(att);
+                    final name = attachmentName(attachment);
+                    final url = attachmentPath(attachment);
+                    final downloadable = attachmentIsDownloadable(attachment);
                     return Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: InkWell(
+                        // Opening the raw URL skipped the downloadable flag
+                        // and the watermark; the material page applies both.
                         onTap: locked || url.isEmpty
                             ? null
-                            : () => launchUrl(
-                                  Uri.parse(url),
-                                  mode: LaunchMode.externalApplication,
-                                ),
+                            : () => _openLibraryMaterial(item),
                         child: Row(
                           children: [
                             Icon(
                               locked
                                   ? Icons.lock_outline
-                                  : Icons.download_outlined,
+                                  : downloadable
+                                      ? Icons.download_outlined
+                                      : Icons.visibility_outlined,
                               size: 16,
                               color: locked
                                   ? const Color(0xFF94A3B8)
@@ -1182,6 +1212,19 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                                       ? const Color(0xFF94A3B8)
                                       : AppColors.primaryBlue,
                                 ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              downloadable
+                                  ? 'library.downloadable'.tr()
+                                  : 'library.not_downloadable'.tr(),
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: downloadable
+                                    ? const Color(0xFF047857)
+                                    : const Color(0xFFB45309),
                               ),
                             ),
                           ],
@@ -1296,7 +1339,9 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
   }
 
   Widget _buildLecturesTab() {
-    if (_lectures.isEmpty && _exams.isEmpty && _socialLinks.isEmpty) {
+    // Videos and files only, like the web's `LecturesTab`: exams live in the
+    // Exams tab and live rooms in the Live tab.
+    if (_lectures.isEmpty) {
       return Center(
         child: Text(
           'course.no_lectures_available'.tr(),
@@ -1305,16 +1350,9 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
       );
     }
 
-    final activeSocialLinks =
-        _socialLinks.where((link) => link.attributes.status).toList();
-
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        if (activeSocialLinks.isNotEmpty) ...[
-          _buildLecturesSocialLinksBanner(activeSocialLinks),
-          const SizedBox(height: 20),
-        ],
         if (_lectures.isEmpty)
           Container(
             padding: const EdgeInsets.all(24),
@@ -1340,17 +1378,11 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
 
             return Padding(
               padding: EdgeInsets.only(
-                bottom: (index < _lectures.length - 1 || _exams.isNotEmpty)
-                    ? 20
-                    : 0,
+                bottom: index < _lectures.length - 1 ? 20 : 0,
               ),
               child: _buildChapterItem(index, lectureTitle, lecture),
             );
           }),
-        if (_exams.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          _buildCourseExamsSectionInLecturesTab(),
-        ],
         const SizedBox(height: 40),
       ],
     );
@@ -1358,8 +1390,8 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
 
   Widget _buildChapterItem(int index, String title, dynamic lecture) {
     bool isExpanded = _isExpanded.length > index ? _isExpanded[index] : false;
-    final attributes = lecture['attributes'] ?? {};
-    final chapters = attributes['chapters'] as List<dynamic>? ?? [];
+    // The web hides chapters whose `schedule` is still in the future.
+    final chapters = studentVisibleChapters(lecture);
 
     return Container(
       decoration: BoxDecoration(
@@ -1458,6 +1490,21 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
               ),
             ),
           ),
+          // A lecture with no released parts, like the web's `lectureNoParts`.
+          if (isExpanded && chapters.isEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+              child: Center(
+                child: Text(
+                  'course.lecture_no_parts'.tr(),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF9CA3AF),
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ),
           // Nested chapters with visual tree indentation
           if (isExpanded && chapters.isNotEmpty)
             Container(
@@ -2491,15 +2538,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
     }
 
     if (_liveRooms.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Text(
-            'course.no_live_subject'.tr(),
-            style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
-          ),
-        ),
-      );
+      return LiveRoomsEmptyState(message: 'live.no_course_sessions'.tr());
     }
 
     return ListView.builder(
@@ -2579,197 +2618,15 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
   }
 
   Widget _buildLiveRoomCard(lr.LiveRoom room) {
-    final isLive = room.status == lr.SessionStatus.now;
-    final isUpcoming = room.status == lr.SessionStatus.upcoming;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: isLive
-                      ? const Color(0xFFFFF0F0)
-                      : (isUpcoming
-                            ? const Color(0xFFFFF9F0)
-                            : const Color(0xFFF0F2FF)),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 3,
-                      backgroundColor: isLive
-                          ? const Color(0xFFFF4B4B)
-                          : (isUpcoming
-                                ? const Color(0xFFF2994A)
-                                : const Color(0xFF5A75FF)),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      isLive
-                          ? 'course.live_uppercase'.tr()
-                          : (isUpcoming
-                                ? 'course.upcoming_uppercase'.tr()
-                                : 'course.recorded_uppercase'.tr()),
-                      style: TextStyle(
-                        color: isLive
-                            ? const Color(0xFFFF4B4B)
-                            : (isUpcoming
-                                  ? const Color(0xFFF2994A)
-                                  : const Color(0xFF5A75FF)),
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Spacer(),
-              FaIcon(
-                FontAwesomeIcons.towerBroadcast,
-                color: isLive
-                    ? const Color(0xFFFF4B4B)
-                    : const Color(0xFF5A75FF),
-                size: 18,
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Text(
-            room.title,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 17,
-              color: Color(0xFF1F2937),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            room.instructorName,
-            style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '${room.formattedTime} • ${room.duration}',
-            style: TextStyle(
-              color: const Color(0xFF9CA3AF).withValues(alpha: 0.7),
-              fontSize: 12,
-            ),
-          ),
-          const SizedBox(height: 20),
-          if (isLive)
-            ElevatedButton(
-              onPressed: () {
-                // Handle join live
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF2DBC77),
-                foregroundColor: Colors.white,
-                minimumSize: const Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 0,
-              ),
-              child: Text(
-                'course.join_live'.tr(),
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 15,
-                ),
-              ),
-            )
-          else if (isUpcoming)
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () {
-                      // Handle view details
-                    },
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF6B7280),
-                      side: const BorderSide(color: Color(0xFFD1D5DB)),
-                      minimumSize: const Size(double.infinity, 44),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    child: Text(
-                      'course.view_details'.tr(),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () {
-                      // Handle set reminder
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF5A75FF),
-                      foregroundColor: Colors.white,
-                      minimumSize: const Size(double.infinity, 44),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      elevation: 0,
-                    ),
-                    child: Text(
-                      'course.set_reminder'.tr(),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            )
-          else
-            ElevatedButton(
-              onPressed: () {
-                // Handle watch recorded
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF5A75FF),
-                foregroundColor: Colors.white,
-                minimumSize: const Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 0,
-              ),
-              child: const Text(
-                'WATCH RECORDING',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-              ),
-            ),
-        ],
+    // Website course tab: "Join Now" when live, otherwise "View" — both open
+    // the live session page.
+    return LiveRoomCourseCard(
+      room: room,
+      onOpen: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) =>
+              LiveSessionDetailScreen(roomId: room.id, initialRoom: room),
+        ),
       ),
     );
   }
@@ -3004,152 +2861,6 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                     );
                   }).toList(),
                 ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLecturesSocialLinksBanner(List<SocialLink> activeLinks) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const FaIcon(
-                FontAwesomeIcons.shareNodes,
-                size: 16,
-                color: Color(0xFF3451E5),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                context.locale.languageCode == 'ar'
-                    ? 'قنوات ومجموعات الكورس'
-                    : 'Course Groups & Links',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF1E293B),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          activeLinks.length > 2
-              ? SizedBox(
-                  height: 115,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: activeLinks.length,
-                    separatorBuilder: (_, index) => const SizedBox(width: 10),
-                    itemBuilder: (context, index) => SizedBox(
-                      width: 150,
-                      child: _buildQuickLinkCard(activeLinks[index]),
-                    ),
-                  ),
-                )
-              : Row(
-                  children: activeLinks.map((link) {
-                    return Expanded(
-                      child: Padding(
-                        padding: EdgeInsets.only(
-                          right: activeLinks.last == link ? 0 : 10,
-                        ),
-                        child: _buildQuickLinkCard(link),
-                      ),
-                    );
-                  }).toList(),
-                ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCourseExamsSectionInLecturesTab() {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFFAFBFF),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE0E7FF)),
-      ),
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF3451E5).withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(
-                      Icons.quiz_outlined,
-                      color: Color(0xFF3451E5),
-                      size: 20,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    context.locale.languageCode == 'ar'
-                        ? 'امتحانات الكورس'
-                        : 'Course Exams',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1F2937),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF3451E5),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '${_exams.length}',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              TextButton(
-                onPressed: () => _tabController.animateTo(1),
-                child: Text(
-                  context.locale.languageCode == 'ar' ? 'عرض الكل' : 'View All',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF3451E5),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ..._exams.map((exam) {
-            final bucket = classifyQuiz(
-              {'attributes': exam.attributes},
-              _scope.enrolledCourseIds,
-            );
-            return _buildExamCard(exam, bucket);
-          }),
         ],
       ),
     );
@@ -3682,6 +3393,10 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
               decoration: TextDecoration.underline,
             ),
           ),
+          if (post.attributes.images.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            PostImages(images: post.attributes.images),
+          ],
           const SizedBox(height: 12),
           if (course != null) ...[
             _buildTagChip('#${course.attributes.title}'),

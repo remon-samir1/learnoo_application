@@ -1,16 +1,21 @@
-import 'dart:async';
+import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:flutter/material.dart';
-import 'package:easy_localization/easy_localization.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-import 'package:shimmer/shimmer.dart';
-import '../../../../core/services/student_scope.dart';
+
+import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/pagination_bar.dart';
 import '../../data/live_room_repository.dart';
 import '../../data/models/live_room.dart' as lr;
-import 'widgets/session_detail_modal.dart';
-import 'widgets/set_reminder_modal.dart';
-import 'live_stream_screen.dart';
+import '../widgets/live_room_widgets.dart';
+import 'course_detail_screen.dart';
+import 'live_session_detail_screen.dart';
 
+/// Student live sessions list — the website's
+/// `app/[locale]/student/live-sessions/page.tsx`.
+///
+/// `GET /v1/live-room?page=N`, narrowed to the student's faculty course tree,
+/// with each card's call to action decided by the room's access state:
+/// activate a private room with a code, activate the course first for an
+/// "included" room, or open the session (join / watch recording / view).
 class LiveSessionsScreen extends StatefulWidget {
   const LiveSessionsScreen({super.key});
 
@@ -19,446 +24,156 @@ class LiveSessionsScreen extends StatefulWidget {
 }
 
 class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
-  String _selectedFilter = 'All';
-  final LiveRoomRepository _liveRoomRepository = LiveRoomRepository();
-  List<lr.LiveRoom> _sessions = [];
+  final LiveRoomRepository _repository = LiveRoomRepository();
+  final LiveRoomAccessService _accessService = LiveRoomAccessService();
+  final ScrollController _scrollController = ScrollController();
+
+  List<lr.LiveRoom> _rooms = [];
+  LiveRoomAccessContext _access = const LiveRoomAccessContext.empty();
   bool _isLoading = true;
   String? _errorMessage;
-
-  // Pagination & Search state
-  final TextEditingController _searchController = TextEditingController();
-  final ScrollController _scrollController = ScrollController();
-  Timer? _debounceTimer;
   int _currentPage = 1;
   int _lastPage = 1;
-  static const int _perPage = 15;
-  bool _hasNextPage = false;
-  bool _isSearching = false;
-  String _searchQuery = '';
-  StudentScope _scope = const StudentScope.empty();
 
   @override
   void initState() {
     super.initState();
-    _loadLiveRooms();
+    _loadAccess();
+    _loadRooms(page: 1);
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
-    _searchController.dispose();
-    _debounceTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _loadLiveRooms({int page = 1}) async {
+  Future<void> _loadAccess({bool forceRefresh = false}) async {
+    final access = await _accessService.load(forceRefresh: forceRefresh);
+    if (!mounted) return;
+    setState(() => _access = access);
+  }
+
+  Future<void> _loadRooms({required int page}) async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
-      _currentPage = page;
     });
 
-    try {
-      final results = await Future.wait([
-        _liveRoomRepository.getLiveRooms(
-          page: page,
-          perPage: _perPage,
-          search: _searchQuery.isNotEmpty ? _searchQuery : null,
-        ),
-        StudentScopeService().load(),
-      ]);
+    final result = await _repository.getLiveRooms(page: page, perPage: null);
+    if (!mounted) return;
 
-      if (!mounted) return;
-
-      final result = results[0] as Map<String, dynamic>;
-      _scope = results[1] as StudentScope;
-
-      if (result['success']) {
-        final List<lr.LiveRoom> allRooms = result['data'] as List<lr.LiveRoom>;
-        final filtered = _filterByScope(allRooms);
-        final meta = result['meta'] as Map<String, dynamic>?;
-
-        setState(() {
-          _sessions = filtered;
-          _currentPage = (meta?['current_page'] as num?)?.toInt() ?? page;
-          _lastPage = (meta?['last_page'] as num?)?.toInt() ?? 1;
-          _hasNextPage =
-              result['hasNextPage'] as bool? ?? (_currentPage < _lastPage);
-          _isLoading = false;
-          _isSearching = false;
-        });
-
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            0,
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.easeOut,
-          );
-        }
-      } else {
-        setState(() {
-          _errorMessage = result['message'];
-          _isLoading = false;
-          _isSearching = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = 'course.failed_load_live_rooms'.tr();
-          _isLoading = false;
-          _isSearching = false;
-        });
-      }
+    if (result['success'] == true) {
+      final meta = result['meta'] as Map<String, dynamic>?;
+      setState(() {
+        _rooms = result['data'] as List<lr.LiveRoom>;
+        _currentPage = (meta?['current_page'] as num?)?.toInt() ?? page;
+        _lastPage = (meta?['last_page'] as num?)?.toInt() ?? 1;
+        _isLoading = false;
+      });
+      if (_scrollController.hasClients) _scrollController.jumpTo(0);
+    } else {
+      setState(() {
+        final message = result['message'];
+        _errorMessage = message is String && message.trim().isNotEmpty
+            ? message
+            : 'live.load_error'.tr();
+        _isLoading = false;
+      });
     }
   }
 
-  /// Narrows the list the way `filterLiveRoomsByFacultyCourses` does on the
-  /// web: a session attached to no course at all is general and shown to every
-  /// student, and an unloaded scope leaves the list untouched rather than
-  /// emptying the screen.
-  List<lr.LiveRoom> _filterByScope(List<lr.LiveRoom> rooms) {
-    if (_scope.visibleCourseIds.isEmpty) return rooms;
-    return rooms.where((room) {
-      final hasCourse =
-          room.courseId != null || room.courseIds.isNotEmpty;
-      if (!hasCourse) return true;
-
-      if (room.courseId != null && _scope.isVisible(room.courseId)) {
-        return true;
-      }
-      return room.courseIds.any(_scope.isVisible);
-    }).toList();
+  Future<void> _refresh() async {
+    await Future.wait([
+      _loadAccess(forceRefresh: true),
+      _loadRooms(page: _currentPage),
+    ]);
   }
 
-  void _onSearchChanged(String query) {
-    _debounceTimer?.cancel();
-    setState(() {
-      _isSearching = true;
-      _searchQuery = query.trim();
-    });
-
-    _debounceTimer = Timer(const Duration(milliseconds: 400), () {
-      if (!mounted) return;
-      _loadLiveRooms(page: 1);
-    });
-  }
-
-  void _clearSearch() {
-    _searchController.clear();
-    _debounceTimer?.cancel();
-    setState(() {
-      _searchQuery = '';
-      _isSearching = false;
-    });
-    _loadLiveRooms(page: 1);
-  }
-
-  List<lr.LiveRoom> get _filteredSessions {
-    var list = _sessions;
-    if (_selectedFilter == 'Live Now') {
-      list = list.where((s) => s.status == lr.SessionStatus.now).toList();
-    } else if (_selectedFilter == 'Upcoming') {
-      list = list.where((s) => s.status == lr.SessionStatus.upcoming).toList();
-    } else if (_selectedFilter == 'Recorded') {
-      list = list.where((s) => s.status == lr.SessionStatus.recorded).toList();
-    }
-
-    if (_searchQuery.isNotEmpty) {
-      final q = _searchQuery.toLowerCase();
-      list = list.where((s) {
-        final title = s.title.toLowerCase();
-        final instructor = s.instructorName.toLowerCase();
-        final course = (s.courseTitle ?? '').toLowerCase();
-        final desc = s.description.toLowerCase();
-        return title.contains(q) ||
-            instructor.contains(q) ||
-            course.contains(q) ||
-            desc.contains(q);
-      }).toList();
-    }
-
-    return list;
-  }
-
-  SessionStatus _mapToModalStatus(lr.SessionStatus status) {
-    switch (status) {
-      case lr.SessionStatus.now:
-        return SessionStatus.now;
-      case lr.SessionStatus.upcoming:
-        return SessionStatus.upcoming;
-      case lr.SessionStatus.recorded:
-        return SessionStatus.recorded;
-    }
-  }
-
-  void _showSessionDetail(lr.LiveRoom session) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => SessionDetailModal(
-        session: LiveSession(
-          id: session.id,
-          title: session.title,
-          instructor: session.instructorName,
-          time: session.formattedTime,
-          duration: session.duration,
-          status: _mapToModalStatus(session.status),
-          category: session.courseTitle ?? 'course.general'.tr(),
-          description: session.description,
-        ),
-        onSetReminder: () {
-          Navigator.pop(context);
-          _showSetReminder(session);
-        },
-        onJoinNow: () {
-          Navigator.pop(context);
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => LiveStreamScreen(liveRoom: session),
-            ),
-          );
-        },
-        onWatch: () {
-          Navigator.pop(context);
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => LiveStreamScreen(liveRoom: session),
-            ),
-          );
-        },
+  void _openRoom(lr.LiveRoom room) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            LiveSessionDetailScreen(roomId: room.id, initialRoom: room),
       ),
     );
   }
 
-  void _showSetReminder(lr.LiveRoom session) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => SetReminderModal(
-        sessionTitle: session.title,
-        onSave: (minutes) {
-          Navigator.pop(context);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('course.reminder_set'.tr(args: [minutes.toString()])),
-              backgroundColor: const Color(0xFF4A68F6),
-            ),
-          );
-        },
-        onCancel: () {
-          Navigator.pop(context);
-        },
+  Future<void> _activateRoom(lr.LiveRoom room) async {
+    final activated = await LiveRoomActivationSheet.show(
+      context,
+      roomId: room.id,
+      title: room.title.trim().isEmpty ? '—' : room.title.trim(),
+    );
+    if (activated && mounted) _loadRooms(page: _currentPage);
+  }
+
+  void _openCourse(lr.LiveRoom room) {
+    if (room.courseIds.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CourseDetailScreen(
+          courseId: room.courseIds.first,
+          title: room.courseTitles.isNotEmpty ? room.courseTitles.first : '',
+          thumbnail: room.courseThumbnail ?? '',
+          price: '',
+          description: '',
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final visible = _access.filterVisible(_rooms);
+
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface(context),
       body: Column(
         children: [
           _buildHeader(),
-          _buildFilterTabs(),
           Expanded(
             child: RefreshIndicator(
-              onRefresh: () => _loadLiveRooms(page: 1),
-              color: const Color(0xFF4A68F6),
-              backgroundColor: Colors.white,
+              onRefresh: _refresh,
+              color: AppColors.primaryBlue,
               child: _isLoading
-                  ? _buildSkeletonList()
+                  ? _buildMessage(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(
+                              color: AppColors.primaryBlue),
+                          const SizedBox(height: 16),
+                          Text('live.loading'.tr(),
+                              style: TextStyle(
+                                  fontSize: 13,
+                                  color: AppColors.muted(context))),
+                        ],
+                      ),
+                    )
                   : _errorMessage != null
-                      ? _buildErrorWidget()
-                      : _filteredSessions.isEmpty
-                          ? _buildEmptyWidget()
+                      ? _buildError()
+                      : visible.isEmpty
+                          ? _buildEmpty()
                           : ListView.builder(
                               controller: _scrollController,
-                              padding: const EdgeInsets.all(16),
                               physics: const AlwaysScrollableScrollPhysics(),
-                              itemCount: _filteredSessions.length,
-                              itemBuilder: (context, index) {
-                                return _buildSessionCard(
-                                    _filteredSessions[index]);
-                              },
+                              padding: const EdgeInsets.all(16),
+                              itemCount: visible.length,
+                              itemBuilder: (context, index) =>
+                                  _buildCard(visible[index]),
                             ),
             ),
           ),
-          PaginationBar(
-            currentPage: _currentPage,
-            lastPage: _lastPage,
-            hasNextPage: _hasNextPage,
-            isLoading: _isLoading,
-            onPageChanged: (newPage) => _loadLiveRooms(page: newPage),
-            primaryColor: const Color(0xFF4A68F6),
-          ),
+          if (!_isLoading && _lastPage > 1)
+            PaginationBar(
+              currentPage: _currentPage,
+              lastPage: _lastPage,
+              isLoading: _isLoading,
+              onPageChanged: (page) => _loadRooms(page: page),
+              primaryColor: AppColors.primaryBlue,
+            ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildSkeletonList() {
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: 4,
-      itemBuilder: (context, index) {
-        return _buildSkeletonCard();
-      },
-    );
-  }
-
-  Widget _buildSkeletonCard() {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF1F1F1)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Shimmer.fromColors(
-        baseColor: Colors.grey[300]!,
-        highlightColor: Colors.grey[100]!,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 60,
-                  height: 24,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                const Spacer(),
-                Container(
-                  width: 18,
-                  height: 18,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              height: 18,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              width: 150,
-              height: 14,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Container(
-              width: 120,
-              height: 12,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              width: double.infinity,
-              height: 48,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildErrorWidget() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const FaIcon(
-              FontAwesomeIcons.triangleExclamation,
-              color: Color(0xFFF2994A),
-              size: 48,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              _errorMessage ?? 'course.something_went_wrong'.tr(),
-              style: const TextStyle(
-                color: Color(0xFF6B7280),
-                fontSize: 14,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _loadLiveRooms,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF4A68F6),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: Text('course.retry'.tr()),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEmptyWidget() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const FaIcon(
-              FontAwesomeIcons.towerBroadcast,
-              color: Color(0xFFD1D5DB),
-              size: 48,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'course.no_sessions_found'.tr(args: [_selectedFilter == 'All' ? 'course.all'.tr() : _selectedFilter == 'Live Now' ? 'course.live_now'.tr() : _selectedFilter == 'Upcoming' ? 'course.upcoming_filter'.tr() : 'course.recorded_filter'.tr()]),
-              style: const TextStyle(
-                color: Color(0xFF6B7280),
-                fontSize: 14,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -481,18 +196,26 @@ class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
         bottom: false,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-          child: Column(
+          child: Row(
             children: [
-              Text(
-                'course.live_sessions'.tr(),
-                style: const TextStyle(
+              if (Navigator.of(context).canPop())
+                IconButton(
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const BackButtonIcon(),
                   color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
+                ),
+              Expanded(
+                child: Text(
+                  'live.title'.tr(),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
-              const SizedBox(height: 16),
-              _buildSearchBar(),
+              if (Navigator.of(context).canPop()) const SizedBox(width: 48),
             ],
           ),
         ),
@@ -500,348 +223,241 @@ class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
     );
   }
 
-  Widget _buildSearchBar() {
-    return Container(
-      height: 48,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: TextField(
-        controller: _searchController,
-        onChanged: _onSearchChanged,
-        style: const TextStyle(fontSize: 14, color: Color(0xFF1F2937)),
-        decoration: InputDecoration(
-          hintText: 'course.search_live_sessions_hint'.tr(),
-          hintStyle: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
-          prefixIcon: const Padding(
-            padding: EdgeInsets.all(12),
-            child: FaIcon(
-              FontAwesomeIcons.magnifyingGlass,
-              color: Color(0xFF9CA3AF),
-              size: 16,
+  /// A scrollable, centered message so pull-to-refresh still works.
+  Widget _buildMessage({required Widget child}) {
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: child,
             ),
           ),
-          suffixIcon: _isSearching
-              ? const Padding(
-                  padding: EdgeInsets.all(12),
-                  child: SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        Color(0xFF4A68F6),
-                      ),
-                    ),
-                  ),
-                )
-              : _searchController.text.isNotEmpty
-                  ? GestureDetector(
-                      onTap: _clearSearch,
-                      child: const Padding(
-                        padding: EdgeInsets.all(12),
-                        child: FaIcon(
-                          FontAwesomeIcons.xmark,
-                          color: Color(0xFF9CA3AF),
-                          size: 16,
-                        ),
-                      ),
-                    )
-                  : null,
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(vertical: 14),
         ),
       ),
     );
   }
 
-  Widget _buildFilterTabs() {
-    final filters = ['All', 'Live Now', 'Upcoming', 'Recorded'];
-    
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: filters.map((filter) {
-            final isSelected = _selectedFilter == filter;
-            return Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: GestureDetector(
-                onTap: () => setState(() => _selectedFilter = filter),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: isSelected ? const Color(0xFF4A68F6) : Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: isSelected ? const Color(0xFF4A68F6) : const Color(0xFFE5E7EB),
-                    ),
-                  ),
-                  child: Text(
-                    filter == 'All' ? 'course.all'.tr() : filter == 'Live Now' ? 'course.live_now'.tr() : filter == 'Upcoming' ? 'course.upcoming_filter'.tr() : 'course.recorded_filter'.tr(),
-                    style: TextStyle(
-                      color: isSelected ? Colors.white : const Color(0xFF6B7280),
-                      fontSize: 13,
-                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSessionCard(lr.LiveRoom session) {
-    return GestureDetector(
-      onTap: () => _showSessionDetail(session),
+  Widget _buildError() {
+    final isDark = AppColors.isDark(context);
+    return _buildMessage(
       child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: isDark ? const Color(0x33EF4444) : const Color(0xFFFEF2F2),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFF1F1F1)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.03),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
+          border: Border.all(
+            color: isDark ? const Color(0x66EF4444) : const Color(0xFFFECACA),
+          ),
         ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                _buildStatusBadge(_mapToModalStatus(session.status)),
-                const Spacer(),
-                const FaIcon(
-                  FontAwesomeIcons.towerBroadcast,
-                  color: Color(0xFF5A75FF),
-                  size: 18,
-                ),
-              ],
+            Text(
+              _errorMessage ?? 'live.load_error'.tr(),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: isDark ? const Color(0xFFFCA5A5) : const Color(0xFFB91C1C),
+              ),
             ),
             const SizedBox(height: 12),
-            Text(
-              session.title,
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 16,
-                color: Color(0xFF1F2937),
-              ),
+            TextButton(
+              onPressed: () => _loadRooms(page: _currentPage),
+              child: Text('live.retry'.tr()),
             ),
-            const SizedBox(height: 6),
-            Text(
-              session.instructorName,
-              style: const TextStyle(
-                color: Color(0xFF6B7280),
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${session.formattedTime} • ${session.duration}',
-              style: TextStyle(
-                color: const Color(0xFF9CA3AF),
-                fontSize: 12,
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-            const SizedBox(height: 16),
-            _buildActionButtons(session),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildStatusBadge(SessionStatus status) {
-    final (bgColor, textColor, label, dotColor) = switch (status) {
-      SessionStatus.now => (
-          const Color(0xFFFFF0F0),
-          const Color(0xFFFF4B4B),
-          'course.live_uppercase'.tr(),
-          const Color(0xFFFF4B4B)
-        ),
-      SessionStatus.upcoming => (
-          const Color(0xFFFFF9F0),
-          const Color(0xFFF2994A),
-          'course.upcoming_uppercase'.tr(),
-          const Color(0xFFF2994A)
-        ),
-      SessionStatus.recorded => (
-          const Color(0xFFF0F2FF),
-          const Color(0xFF5A75FF),
-          'course.recorded_uppercase'.tr(),
-          const Color(0xFF5A75FF)
-        ),
-    };
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
+  Widget _buildEmpty() {
+    return _buildMessage(
+      child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(
-              color: dotColor,
-              shape: BoxShape.circle,
-            ),
+          Icon(
+            Icons.videocam_outlined,
+            size: 48,
+            color: AppColors.primaryBlue.withValues(alpha: 0.5),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(height: 16),
           Text(
-            label,
-            style: TextStyle(
-              color: textColor,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.5,
-            ),
+            'live.no_sessions'.tr(),
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 14, color: AppColors.subtext(context)),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildActionButtons(lr.LiveRoom session) {
-    if (session.status == lr.SessionStatus.now) {
-      return SizedBox(
-        width: double.infinity,
-        child: ElevatedButton(
-          onPressed: () => _showSessionDetail(session),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF2DBC77),
-            foregroundColor: Colors.white,
-            minimumSize: const Size(double.infinity, 48),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            elevation: 0,
-          ),
-          child: Text(
-            'course.join_live'.tr(),
-            style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.5,
-            ),
-          ),
+  Widget _buildCard(lr.LiveRoom room) {
+    final access = _access.accessFor(room);
+    final available = access == lr.LiveRoomAccess.available;
+    final live = room.isLive;
+    final title = room.title.trim().isEmpty ? '—' : room.title.trim();
+    final instructor = room.instructorName.isEmpty
+        ? 'live.unknown_instructor'.tr()
+        : room.instructorName;
+    final course = room.courseTitlesLabel.isEmpty
+        ? 'live.no_course'.tr()
+        : room.courseTitlesLabel;
+    final when = LiveRoomUi.formatWhen(context, room.startedAtValue);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.card(context),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: live && available
+              ? const Color(0xFFFECACA)
+              : AppColors.border(context),
         ),
-      );
-    } else if (session.status == lr.SessionStatus.upcoming) {
-      return Row(
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: OutlinedButton(
-              onPressed: () => _showSessionDetail(session),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF6B7280),
-                side: const BorderSide(color: Color(0xFFD1D5DB)),
-                minimumSize: const Size(double.infinity, 44),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              LiveRoomLeadingIcon(room: room, access: access),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        LiveStatusBadge(room: room),
+                        LiveAccessChip(access: access),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.text(context),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$instructor · $course',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.subtext(context),
+                      ),
+                    ),
+                    if (when.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        when,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.muted(context),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
-              child: Text(
-                'course.view_details'.tr(),
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
+            ],
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: OutlinedButton(
-              onPressed: () => _showSetReminder(session),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF5A75FF),
-                side: const BorderSide(color: Color(0xFF5A75FF)),
-                minimumSize: const Size(double.infinity, 44),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              child: Text(
-                'course.set_reminder'.tr(),
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ),
+          const SizedBox(height: 14),
+          _buildAction(room, access),
         ],
-      );
-    } else if (session.status == lr.SessionStatus.recorded) {
-      return Row(
-        children: [
-          Expanded(
-            child: OutlinedButton(
-              onPressed: () => _showSessionDetail(session),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF6B7280),
-                side: const BorderSide(color: Color(0xFFD1D5DB)),
-                minimumSize: const Size(double.infinity, 44),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              child: Text(
-                'course.view_details'.tr(),
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
+      ),
+    );
+  }
+
+  Widget _buildAction(lr.LiveRoom room, lr.LiveRoomAccess access) {
+    final isDark = AppColors.isDark(context);
+    const shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.all(Radius.circular(12)),
+    );
+    const minSize = Size.fromHeight(44);
+
+    switch (access) {
+      case lr.LiveRoomAccess.lockedPrivate:
+        return ElevatedButton.icon(
+          onPressed: () => _activateRoom(room),
+          icon: const Icon(Icons.lock, size: 16),
+          label: Text('live.activate_session'.tr()),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primaryBlue,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            minimumSize: minSize,
+            shape: shape,
+            textStyle:
+                const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: OutlinedButton(
-              onPressed: () => _showSessionDetail(session),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF5A75FF),
-                side: const BorderSide(color: Color(0xFF5A75FF)),
-                minimumSize: const Size(double.infinity, 44),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              child: Text(
-                'course.watch'.tr(),
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+        );
+      case lr.LiveRoomAccess.courseNotEnrolled:
+        final fg = isDark ? const Color(0xFFFDBA74) : const Color(0xFFC2410C);
+        return OutlinedButton.icon(
+          onPressed: room.courseIds.isEmpty ? null : () => _openCourse(room),
+          icon: const Icon(Icons.lock, size: 16),
+          label: Text('live.activate_course_first'.tr()),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: fg,
+            backgroundColor:
+                isDark ? const Color(0x33F97316) : const Color(0xFFFFF7ED),
+            side: BorderSide(
+              color: isDark ? const Color(0x66F97316) : const Color(0xFFFED7AA),
             ),
+            minimumSize: minSize,
+            shape: shape,
+            textStyle:
+                const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
           ),
-        ],
-      );
+        );
+      case lr.LiveRoomAccess.available:
+        if (room.isLive) {
+          return ElevatedButton.icon(
+            onPressed: () => _openRoom(room),
+            icon: const Icon(Icons.videocam, size: 16),
+            label: Text('live.join_now'.tr()),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: LiveRoomUi.liveRed,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              minimumSize: minSize,
+              shape: shape,
+              textStyle:
+                  const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+            ),
+          );
+        }
+        final watch = room.isEnded && room.hasRecording;
+        return OutlinedButton(
+          onPressed: () => _openRoom(room),
+          style: OutlinedButton.styleFrom(
+            foregroundColor:
+                watch ? AppColors.text(context) : AppColors.subtext(context),
+            side: BorderSide(color: AppColors.border(context)),
+            minimumSize: minSize,
+            shape: shape,
+            textStyle:
+                const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+          child: Text(watch ? 'live.watch_recording'.tr() : 'live.view'.tr()),
+        );
     }
-    return const SizedBox.shrink();
   }
 }

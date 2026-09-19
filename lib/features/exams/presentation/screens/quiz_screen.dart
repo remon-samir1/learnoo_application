@@ -105,14 +105,10 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
     // Initialize screen protection service
     await _screenProtection.initialize();
 
-    // Enable global protection only if feature flags are enabled
-    final blockScreenshots = _featureManager.isBlockScreenshotsEnabled;
-    final screenShareMaxRes = _featureManager.isScreenShareMaxResolutionEnabled;
-
-    if (blockScreenshots || screenShareMaxRes) {
-      // Enable global protection (FLAG_SECURE on Android, iOS protection)
-      await _screenProtection.enableGlobalProtection();
-    }
+    // Re-assert the dashboard "Block Screenshots & Recording" policy
+    // (FLAG_SECURE on Android, capture overlay on iOS). Protection is global
+    // and dashboard-driven, so it is not toggled per exam.
+    _screenProtection.bindFeatureManager(_featureManager);
   }
 
   Future<void> _loadQuestions() async {
@@ -139,8 +135,6 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _shortAnswerDebounce?.cancel();
-    // Disable global protection when leaving exam
-    _screenProtection.disableGlobalProtection();
     super.dispose();
   }
 
@@ -284,6 +278,14 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
       });
     });
   }
+
+  bool get _isRtl => Directionality.of(context) == TextDirection.rtl;
+
+  /// "Previous" / "next" chevrons that follow the reading direction.
+  FaIconData get _backChevron =>
+      _isRtl ? FontAwesomeIcons.chevronRight : FontAwesomeIcons.chevronLeft;
+  FaIconData get _forwardChevron =>
+      _isRtl ? FontAwesomeIcons.chevronLeft : FontAwesomeIcons.chevronRight;
 
   String get _formattedTime {
     final minutes = _remainingSeconds ~/ 60;
@@ -595,7 +597,11 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
           context,
           MaterialPageRoute(
             builder: (context) =>
-                ExamResultsScreen(result: quizResult, questions: _questions),
+                ExamResultsScreen(
+                  result: quizResult,
+                  questions: _questions,
+                  attemptId: widget.attempt.id,
+                ),
           ),
         );
       }
@@ -636,7 +642,11 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
           context,
           MaterialPageRoute(
             builder: (context) =>
-                ExamResultsScreen(result: quizResult, questions: _questions),
+                ExamResultsScreen(
+                  result: quizResult,
+                  questions: _questions,
+                  attemptId: widget.attempt.id,
+                ),
           ),
         );
       }
@@ -696,7 +706,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
               const CircularProgressIndicator(),
               const SizedBox(height: 16),
               Text(
-                'Loading questions...',
+                'exams.loading_questions'.tr(),
                 style: TextStyle(color: Colors.grey[600]),
               ),
             ],
@@ -709,7 +719,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
       return Scaffold(
         backgroundColor: Colors.white,
         appBar: AppBar(
-          title: const Text('Exam'),
+          title: Text('exams.exam'.tr()),
           backgroundColor: Colors.white,
           foregroundColor: const Color(0xFF1F2937),
         ),
@@ -723,14 +733,14 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                 color: Colors.orange,
               ),
               const SizedBox(height: 16),
-              const Text(
-                'No questions available',
+              Text(
+                'exams.no_questions_available'.tr(),
                 style: TextStyle(fontSize: 16),
               ),
               const SizedBox(height: 16),
               ElevatedButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('Go Back'),
+                child: Text('exams.go_back'.tr()),
               ),
             ],
           ),
@@ -781,7 +791,10 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                'Question ${_currentQuestionIndex + 1} of ${_questions.length}',
+                                'exams.question_x_of_y'.tr(args: [
+                                  '${_currentQuestionIndex + 1}',
+                                  '${_questions.length}',
+                                ]),
                                 style: const TextStyle(
                                   fontSize: 14,
                                   color: Color(0xFF9CA3AF),
@@ -899,7 +912,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                                           borderRadius: BorderRadius.circular(20),
                                         ),
                                         child: Text(
-                                          '${currentQuestion.score} pts',
+                                          'exams.points_short'.tr(args: ['${currentQuestion.score}']),
                                           style: const TextStyle(
                                             fontSize: 12,
                                             fontWeight: FontWeight.w600,
@@ -925,7 +938,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                                     const SizedBox(height: 16),
                                     _buildImageCard(
                                       currentQuestion.image!,
-                                      'Question Image',
+                                      'exams.question_image'.tr(),
                                     ),
                                   ],
                                 ],
@@ -938,9 +951,9 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                             else if (currentQuestion.isTrueFalse)
                               _buildTrueFalseButtons()
                             else if (answers.isEmpty)
-                              const Center(
+                              Center(
                                 child: Text(
-                                  'No answers available',
+                                  'exams.no_answers_available'.tr(),
                                   style: TextStyle(
                                     color: Color(0xFF9CA3AF),
                                     fontSize: 14,
@@ -982,7 +995,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   _buildNavButton(
-                                    icon: FontAwesomeIcons.chevronLeft,
+                                    icon: _backChevron,
                                     onTap: _currentQuestionIndex > 0
                                         ? _goToPreviousQuestion
                                         : null,
@@ -1008,7 +1021,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                                   ),
                                   const SizedBox(width: 16),
                                   _buildNavButton(
-                                    icon: FontAwesomeIcons.chevronRight,
+                                    icon: _forwardChevron,
                                     onTap: _goToNextQuestion,
                                   ),
                                 ],
@@ -1042,14 +1055,14 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                             ),
-                            child: const Row(
+                            child: Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                FaIcon(FontAwesomeIcons.chevronLeft, size: 14),
-                                SizedBox(width: 8),
+                                FaIcon(_backChevron, size: 14),
+                                const SizedBox(width: 8),
                                 Text(
-                                  'Previous',
-                                  style: TextStyle(
+                                  'exams.previous'.tr(),
+                                  style: const TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w500,
                                   ),
@@ -1076,16 +1089,16 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                               children: [
                                 Text(
                                   _currentQuestionIndex < _questions.length - 1
-                                      ? 'Next'
-                                      : 'Submit',
+                                      ? 'exams.next'.tr()
+                                      : 'exams.submit'.tr(),
                                   style: const TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
                                 const SizedBox(width: 8),
-                                const FaIcon(
-                                  FontAwesomeIcons.chevronRight,
+                                FaIcon(
+                                  _forwardChevron,
                                   size: 14,
                                 ),
                               ],
@@ -1216,27 +1229,27 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
 
     switch (type) {
       case 'single_choice':
-        label = 'Single Choice';
+        label = 'exams.type_single_choice'.tr();
         icon = FontAwesomeIcons.circleDot;
         color = const Color(0xFF3343D6);
         break;
       case 'multiple_choice':
-        label = 'Multiple Choice';
+        label = 'exams.type_multiple_choice'.tr();
         icon = FontAwesomeIcons.squareCheck;
         color = const Color(0xFF10B981);
         break;
       case 'true_false':
-        label = 'True / False';
+        label = 'exams.type_true_false'.tr();
         icon = FontAwesomeIcons.checkDouble;
         color = const Color(0xFFF2994A);
         break;
       case 'short_answer':
-        label = 'Short Answer';
+        label = 'exams.type_short_answer'.tr();
         icon = FontAwesomeIcons.penToSquare;
         color = const Color(0xFF8B5CF6);
         break;
       default:
-        label = 'Question';
+        label = 'exams.type_question'.tr();
         icon = FontAwesomeIcons.question;
         color = const Color(0xFF6B7280);
     }
@@ -1306,19 +1319,19 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                 errorWidget: (context, url, error) => Container(
                   height: 150,
                   color: const Color(0xFFF3F4F6),
-                  child: const Center(
+                  child: Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        FaIcon(
+                        const FaIcon(
                           FontAwesomeIcons.image,
                           color: Color(0xFF9CA3AF),
                           size: 32,
                         ),
-                        SizedBox(height: 8),
+                        const SizedBox(height: 8),
                         Text(
-                          'Failed to load image',
-                          style: TextStyle(
+                          'exams.failed_load_image'.tr(),
+                          style: const TextStyle(
                             color: Color(0xFF9CA3AF),
                             fontSize: 12,
                           ),
@@ -1616,7 +1629,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
 
     // For true/false, we expect exactly 2 answers
     if (answers.length < 2) {
-      return const Center(child: Text('Invalid true/false question'));
+      return Center(child: Text('exams.invalid_tf_question'.tr()));
     }
 
     final trueAnswer = answers.firstWhere(
@@ -1639,7 +1652,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
     return Column(
       children: [
         _buildTrueFalseButton(
-          label: 'True',
+          label: 'exams.true_label'.tr(),
           icon: FontAwesomeIcons.check,
           isSelected: trueSelected,
           color: const Color(0xFF10B981),
@@ -1647,7 +1660,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
         ),
         const SizedBox(height: 12),
         _buildTrueFalseButton(
-          label: 'False',
+          label: 'exams.false_label'.tr(),
           icon: FontAwesomeIcons.xmark,
           isSelected: falseSelected,
           color: const Color(0xFFEF4444),
@@ -1739,9 +1752,8 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
         maxLines: 5,
         minLines: 3,
         textAlign: TextAlign.start,
-        textDirection: TextDirection.rtl,
         decoration: InputDecoration(
-          hintText: 'Type your answer here...',
+          hintText: 'exams.type_answer_hint'.tr(),
           hintStyle: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 15),
           contentPadding: const EdgeInsets.all(20),
           border: InputBorder.none,

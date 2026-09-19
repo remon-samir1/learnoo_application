@@ -21,6 +21,34 @@ class AppColors {
   static const Color textGray = Color(0xFF6B7280);
   static const Color textDark = Color(0xFF111827);
   
+  // Theme-aware helpers
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
+
+  static Color text(BuildContext context) =>
+      isDark(context) ? textWhite : textDark;
+
+  static Color subtext(BuildContext context) =>
+      isDark(context) ? const Color(0xFFCBD5E1) : textGray;
+
+  static Color muted(BuildContext context) =>
+      isDark(context) ? const Color(0xFF94A3B8) : inputHint;
+
+  static Color card(BuildContext context) =>
+      isDark(context) ? const Color(0xFF1E212B) : Colors.white;
+
+  static Color surface(BuildContext context) =>
+      isDark(context) ? const Color(0xFF13151B) : backgroundWhite;
+
+  static Color input(BuildContext context) =>
+      isDark(context) ? const Color(0xFF262A36) : inputFill;
+
+  static Color border(BuildContext context) =>
+      isDark(context) ? const Color(0xFF383E52) : inputBorder;
+
+  static Color divider(BuildContext context) =>
+      isDark(context) ? const Color(0xFF2E3344) : const Color(0xFFE5E7EB);
+
   // Subject Colors
   static const Color accountingBg = Color(0xFFF0F2FF);
   static const Color accountingText = Color(0xFF5A75FF);

@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:learnoo/core/services/screen_protection_service.dart';
-import 'package:learnoo/core/services/feature_manager.dart';
 
 /// A fail-safe wrapper that protects sensitive content.
 /// Content starts HIDDEN (black screen) until security checks pass.
@@ -24,7 +23,7 @@ class SecureWrapper extends StatefulWidget {
 
 class _SecureWrapperState extends State<SecureWrapper> with WidgetsBindingObserver {
   final ScreenProtectionService _security = ScreenProtectionService();
-  final FeatureManager _featureManager = FeatureManager();
+  StreamSubscription<bool>? _policySubscription;
   bool _isSafe = false;
   String _statusMessage = "Initializing security...";
   Timer? _appCheckTimer;
@@ -45,10 +44,10 @@ class _SecureWrapperState extends State<SecureWrapper> with WidgetsBindingObserv
       if (Platform.isAndroid) {
         final deviceInfo = DeviceInfoPlugin();
         final androidInfo = await deviceInfo.androidInfo;
-        final brand = androidInfo.brand?.toLowerCase() ?? '';
-        final device = androidInfo.device?.toLowerCase() ?? '';
-        final model = androidInfo.model?.toLowerCase() ?? '';
-        final manufacturer = androidInfo.manufacturer?.toLowerCase() ?? '';
+        final brand = androidInfo.brand.toLowerCase();
+        final device = androidInfo.device.toLowerCase();
+        final model = androidInfo.model.toLowerCase();
+        final manufacturer = androidInfo.manufacturer.toLowerCase();
         
         _isEmulator = brand.contains('google') || 
                       device.contains('emulator') || 
@@ -60,10 +59,19 @@ class _SecureWrapperState extends State<SecureWrapper> with WidgetsBindingObserv
       debugPrint('[SecureWrapper] Error detecting emulator: $e');
     }
 
-    // Check if protection features are enabled from dashboard
-    _isProtectionEnabled = _featureManager.isBlockScreenshotsEnabled || 
-                           _featureManager.isScreenShareMaxResolutionEnabled;
-    
+    if (!mounted) return;
+    _policySubscription ??= _security.onPolicyChanged.listen((_) => _applyPolicy());
+    _applyPolicy();
+  }
+
+  /// Follow the dashboard "Block Screenshots & Recording" policy (fail closed:
+  /// protected until the dashboard says otherwise).
+  void _applyPolicy() {
+    if (!mounted) return;
+    _appCheckTimer?.cancel();
+    _securityTimeoutTimer?.cancel();
+    _isProtectionEnabled = _security.isProtectionActive;
+
     if (_isProtectionEnabled && !_isEmulator) {
       // Add timeout to prevent indefinite security scan
       _securityTimeoutTimer = Timer(const Duration(seconds: 8), () {
@@ -87,6 +95,7 @@ class _SecureWrapperState extends State<SecureWrapper> with WidgetsBindingObserv
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _policySubscription?.cancel();
     _appCheckTimer?.cancel();
     _securityTimeoutTimer?.cancel();
     super.dispose();

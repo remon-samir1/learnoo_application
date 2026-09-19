@@ -285,17 +285,22 @@ class _ParentDashboardScreenState extends State<ParentDashboardScreen> {
   }
 
   Widget _childPicker() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: isDark ? const Color(0xFF262A36) : Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(
+          color: isDark ? const Color(0xFF383E52) : const Color(0xFFE2E8F0),
+        ),
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
           isExpanded: true,
           value: _selectedId,
+          dropdownColor: isDark ? const Color(0xFF1E212B) : Colors.white,
+          iconEnabledColor: isDark ? const Color(0xFFCBD5E1) : Colors.grey[700],
           items: _children
               .map(
                 (child) => DropdownMenuItem(
@@ -303,10 +308,10 @@ class _ParentDashboardScreenState extends State<ParentDashboardScreen> {
                   child: Text(
                     child.label,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFF0F172A),
+                      color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF0F172A),
                     ),
                   ),
                 ),

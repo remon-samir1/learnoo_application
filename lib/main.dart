@@ -53,10 +53,12 @@ void main() async {
   final featureService = featureServices['service'] as FeatureService;
   final themeService = featureServices['theme'] as DynamicThemeService;
 
-  // Optional: Enable global protection for the entire app
-  // Uncomment to protect all screens by default
-  // await screenProtection.enableGlobalProtection();
-  
+  // Screenshot/recording blocking follows the dashboard feature
+  // `feature_block_screenshots` (cached features + last known value, protected
+  // when unknown) and updates whenever features are refreshed.
+  screenProtection.bindFeatureManager(featureManager);
+  unawaited(featureService.fetchFeatures());
+
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -99,12 +101,14 @@ class _HomeAppState extends State<LearnooApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     widget.featureManager.addListener(_onFeaturesChanged);
+    widget.themeService.addListener(_onFeaturesChanged);
     WidgetsBinding.instance.addObserver(this);
     ApiClient.onUnauthorized = _onSessionRevoked;
   }
 
   @override
   void dispose() {
+    widget.themeService.removeListener(_onFeaturesChanged);
     widget.featureManager.removeListener(_onFeaturesChanged);
     WidgetsBinding.instance.removeObserver(this);
     ApiClient.onUnauthorized = null;
@@ -118,6 +122,11 @@ class _HomeAppState extends State<LearnooApp> with WidgetsBindingObserver {
       case AppLifecycleState.resumed:
         _webSocketService.connect();
         _webSocketService.subscribeToNotifications();
+        // Pick up dashboard changes (e.g. screenshot blocking) on resume.
+        final featureService = FeatureService();
+        if (featureService.needsRefresh(maxAge: const Duration(minutes: 5))) {
+          unawaited(featureService.fetchFeatures());
+        }
         break;
       case AppLifecycleState.paused:
       case AppLifecycleState.inactive:
@@ -153,6 +162,7 @@ class _HomeAppState extends State<LearnooApp> with WidgetsBindingObserver {
       debugShowCheckedModeBanner: false,
       theme: widget.themeService.getLightTheme(),
       darkTheme: widget.themeService.getDarkTheme(),
+      themeMode: widget.themeService.themeMode,
       home: const BackButtonHandler(
         child: SplashScreen(),
       ),

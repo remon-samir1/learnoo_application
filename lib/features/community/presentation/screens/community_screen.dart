@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -5,6 +6,7 @@ import '../../data/models/post_model.dart';
 import '../../data/models/social_link_model.dart';
 import '../../data/repositories/community_repository.dart';
 import '../widgets/post_comments_section.dart';
+import '../widgets/post_images.dart';
 import 'create_post_screen.dart';
 import '../../../search/data/search_repository.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -18,7 +20,11 @@ class CommunityScreen extends StatefulWidget {
 }
 
 class _CommunityScreenState extends State<CommunityScreen> {
-  String _selectedFilter = 'All';
+  /// Filter value meaning "every enrolled course". Kept apart from the
+  /// displayed label so switching language doesn't break the selection.
+  static const String _allFilter = '__all__';
+
+  String _selectedFilter = _allFilter;
   final TextEditingController _commentController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
   final CommunityRepository _repository = CommunityRepository();
@@ -29,7 +35,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
   List<SocialLink> _socialLinks = [];
   bool _isLoading = true;
   bool _isLoadingSocialLinks = false;
-  String? _errorMessage;
+  bool _hasError = false;
 
   /// Signed-in student's id, so their own comments get a delete button — the
   /// same check the web's comment list makes.
@@ -60,12 +66,12 @@ class _CommunityScreenState extends State<CommunityScreen> {
   Future<void> _loadPosts() async {
     setState(() {
       _isLoading = true;
-      _errorMessage = null;
+      _hasError = false;
     });
 
     String? courseId;
-    if (_selectedFilter != 'All') {
-      final selectedCourse = _courses.where((c) => c.attributes.title == _selectedFilter).firstOrNull;
+    if (_selectedFilter != _allFilter) {
+      final selectedCourse = _courses.where((c) => c.id == _selectedFilter).firstOrNull;
       if (selectedCourse != null && selectedCourse.id.isNotEmpty) {
         courseId = selectedCourse.id;
       }
@@ -91,7 +97,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
             }
           }
         } else {
-          _errorMessage = result['message'];
+          _hasError = true;
         }
       });
       _updateSocialLinks();
@@ -109,10 +115,14 @@ class _CommunityScreenState extends State<CommunityScreen> {
     }
   }
 
+  PostCourse? get _selectedCourse => _selectedFilter == _allFilter
+      ? null
+      : _courses.where((c) => c.id == _selectedFilter).firstOrNull;
+
   void _updateSocialLinks() {
     if (!mounted) return;
 
-    if (_selectedFilter == 'All') {
+    if (_selectedFilter == _allFilter) {
       // Gather all unique active social links from all enrolled courses
       final Map<String, SocialLink> uniqueLinks = {};
       for (final course in _courses) {
@@ -128,9 +138,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
         _isLoadingSocialLinks = false;
       });
     } else {
-      final selectedCourse = _courses.where((c) => c.attributes.title == _selectedFilter).firstOrNull;
       setState(() {
-        _socialLinks = selectedCourse?.attributes.socialLinks ?? [];
+        _socialLinks = _selectedCourse?.attributes.socialLinks ?? [];
         _isLoadingSocialLinks = false;
       });
     }
@@ -144,9 +153,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
       // Remove reaction
       final result = await _repository.removeReaction(post.id);
       if (result['success']) {
-        final newCount = currentReaction != null
-            ? (post.attributes.reactionsCount > 0 ? post.attributes.reactionsCount - 1 : 0)
-            : post.attributes.reactionsCount;
+        final newCount = post.attributes.reactionsCount > 0
+            ? post.attributes.reactionsCount - 1
+            : 0;
         updatedPost = post.copyWith(
           attributes: post.attributes.copyWith(
             reactionsCount: newCount,
@@ -154,6 +163,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
           ),
         );
       } else {
+        _showSnack('community.reaction_failed'.tr(), isError: true);
         return;
       }
     } else {
@@ -170,10 +180,12 @@ class _CommunityScreenState extends State<CommunityScreen> {
           ),
         );
       } else {
+        _showSnack('community.reaction_failed'.tr(), isError: true);
         return;
       }
     }
 
+    if (!mounted) return;
     setState(() {
       final index = _posts.indexWhere((p) => p.id == post.id);
       if (index != -1) {
@@ -182,22 +194,32 @@ class _CommunityScreenState extends State<CommunityScreen> {
     });
   }
 
+  void _showSnack(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : null,
+      ),
+    );
+  }
+
   String _formatTimeAgo(DateTime dateTime) {
     final now = DateTime.now();
     final difference = now.difference(dateTime);
 
     if (difference.inDays > 365) {
-      return '${difference.inDays ~/ 365} years ago';
+      return 'community.years_ago'.tr(args: ['${difference.inDays ~/ 365}']);
     } else if (difference.inDays > 30) {
-      return '${difference.inDays ~/ 30} months ago';
+      return 'community.months_ago'.tr(args: ['${difference.inDays ~/ 30}']);
     } else if (difference.inDays > 0) {
-      return '${difference.inDays} days ago';
+      return 'community.days_ago'.tr(args: ['${difference.inDays}']);
     } else if (difference.inHours > 0) {
-      return '${difference.inHours} hours ago';
+      return 'community.hours_ago'.tr(args: ['${difference.inHours}']);
     } else if (difference.inMinutes > 0) {
-      return '${difference.inMinutes} minutes ago';
+      return 'community.minutes_ago'.tr(args: ['${difference.inMinutes}']);
     } else {
-      return 'Just now';
+      return 'community.just_now'.tr();
     }
   }
 
@@ -263,14 +285,37 @@ class _CommunityScreenState extends State<CommunityScreen> {
       ),
     );
     if (result == true) {
+      _showSnack('community.post_created'.tr());
       _loadPosts();
+    }
+  }
+
+  Future<void> _openLink(String rawLink) async {
+    String urlStr = rawLink.trim();
+    if (urlStr.isEmpty) return;
+    if (!urlStr.startsWith('http://') && !urlStr.startsWith('https://')) {
+      urlStr = 'https://$urlStr';
+    }
+    final url = Uri.tryParse(urlStr);
+    if (url == null) {
+      _showSnack('community.could_not_open_link'.tr(), isError: true);
+      return;
+    }
+    try {
+      if (await canLaunchUrl(url)) {
+        await launchUrl(url, mode: LaunchMode.externalApplication);
+      } else {
+        await launchUrl(url, mode: LaunchMode.platformDefault);
+      }
+    } catch (_) {
+      _showSnack('community.could_not_open_link'.tr(), isError: true);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface(context),
       body: Column(
         children: [
           _buildHeader(),
@@ -296,7 +341,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                             ? _buildSearchResultsList()
                             : _isLoading
                                 ? _buildSkeletonPosts()
-                                : _errorMessage != null
+                                : _hasError
                                     ? _buildErrorWidget()
                                     : _posts.isEmpty
                                         ? _buildEmptyWidget()
@@ -339,9 +384,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 26),
               child: Column(
                 children: [
-                  const Text(
-                    'Community',
-                    style: TextStyle(
+                  Text(
+                    'community.title'.tr(),
+                    style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w600,
                       color: Colors.white,
@@ -360,14 +405,16 @@ class _CommunityScreenState extends State<CommunityScreen> {
                         _performSearch(value);
                       },
                       style: const TextStyle(color: Colors.white),
+                      cursorColor: Colors.white,
                       decoration: InputDecoration(
-                        hintText: 'Search posts...',
+                        hintText: 'community.search_posts'.tr(),
                         hintStyle: TextStyle(
                           color: Colors.white.withValues(alpha: 0.7),
                           fontSize: 14,
                         ),
+                        filled: false,
                         prefixIcon: const Padding(
-                          padding: EdgeInsets.only(left: 16, right: 12 , top:14),
+                          padding: EdgeInsetsDirectional.only(start: 16, end: 12, top: 14),
                           child: FaIcon(
                             FontAwesomeIcons.magnifyingGlass,
                             color: Colors.white,
@@ -394,7 +441,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                                 ? GestureDetector(
                                     onTap: _clearSearch,
                                     child: const Padding(
-                                      padding: EdgeInsets.only(right: 16, left: 12, top: 12),
+                                      padding: EdgeInsetsDirectional.only(end: 16, start: 12, top: 12),
                                       child: FaIcon(
                                         FontAwesomeIcons.xmark,
                                         color: Colors.white,
@@ -404,6 +451,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
                                   )
                                 : null,
                         border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
                         contentPadding: const EdgeInsets.symmetric(vertical: 14),
                       ),
                     ),
@@ -418,7 +467,11 @@ class _CommunityScreenState extends State<CommunityScreen> {
   }
 
   Widget _buildFilterTabs() {
-    final filters = ['All', ..._courses.map((c) => c.attributes.title)];
+    final isDark = AppColors.isDark(context);
+    final filters = <MapEntry<String, String>>[
+      MapEntry(_allFilter, 'community.all'.tr()),
+      ..._courses.map((c) => MapEntry(c.id, c.attributes.title)),
+    ];
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -427,13 +480,13 @@ class _CommunityScreenState extends State<CommunityScreen> {
         physics: const BouncingScrollPhysics(),
         child: Row(
           children: filters.map((filter) {
-            final isSelected = _selectedFilter == filter;
+            final isSelected = _selectedFilter == filter.key;
             return Padding(
-              padding: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsetsDirectional.only(end: 8),
               child: GestureDetector(
                 onTap: () {
                   setState(() {
-                    _selectedFilter = filter;
+                    _selectedFilter = filter.key;
                   });
                   _updateSocialLinks();
                   _loadPosts();
@@ -441,15 +494,17 @@ class _CommunityScreenState extends State<CommunityScreen> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
-                    color: isSelected ? AppColors.primaryBlue : const Color(0xFFF0F2FF),
+                    color: isSelected
+                        ? AppColors.primaryBlue
+                        : (isDark ? AppColors.input(context) : const Color(0xFFF0F2FF)),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
-                    filter,
+                    filter.value,
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w500,
-                      color: isSelected ? Colors.white : AppColors.textGray,
+                      color: isSelected ? Colors.white : AppColors.subtext(context),
                     ),
                   ),
                 ),
@@ -461,44 +516,46 @@ class _CommunityScreenState extends State<CommunityScreen> {
     );
   }
 
+  BoxDecoration _cardDecoration() {
+    return BoxDecoration(
+      color: AppColors.card(context),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(
+        color: AppColors.isDark(context) ? AppColors.border(context) : const Color(0xFFF0F2FF),
+      ),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.03),
+          blurRadius: 10,
+          offset: const Offset(0, 4),
+        ),
+      ],
+    );
+  }
+
   Widget _buildCommunityInfoCard() {
     return Container(
+      width: double.infinity,
       margin: const EdgeInsets.symmetric(horizontal: 20),
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF0F2FF)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
+      decoration: _cardDecoration(),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Center(
-            child: Text(
-              'Community',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textDark,
-              ),
+          Text(
+            'community.title'.tr(),
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: AppColors.text(context),
             ),
           ),
           const SizedBox(height: 4),
-          Center(
-            child: Text(
-              'Stay connected with course updates, links, and class discussions.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 13,
-                color: AppColors.textGray,
-              ),
+          Text(
+            'community.subtitle'.tr(),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              color: AppColors.subtext(context),
             ),
           ),
         ],
@@ -528,6 +585,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
       return const SizedBox.shrink();
     }
 
+    final selectedCourse = _selectedCourse;
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       child: Column(
@@ -541,14 +600,17 @@ class _CommunityScreenState extends State<CommunityScreen> {
                 color: AppColors.primaryBlue,
               ),
               const SizedBox(width: 8),
-              Text(
-                _selectedFilter == 'All'
-                    ? 'روابط ومجموعات الكورسات'
-                    : 'روابط ومجموعات $_selectedFilter',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textDark,
+              Expanded(
+                child: Text(
+                  selectedCourse == null
+                      ? 'community.courses_links_title'.tr()
+                      : 'community.course_links_title_named'
+                          .tr(args: [selectedCourse.attributes.title]),
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.text(context),
+                  ),
                 ),
               ),
             ],
@@ -561,7 +623,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                     scrollDirection: Axis.horizontal,
                     physics: const BouncingScrollPhysics(),
                     itemCount: activeLinks.length,
-                    separatorBuilder: (_, index) => const SizedBox(width: 12),
+                    separatorBuilder: (_, _) => const SizedBox(width: 12),
                     itemBuilder: (context, index) => SizedBox(
                       width: 155,
                       child: _buildQuickLinkCard(activeLinks[index]),
@@ -572,8 +634,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
                   children: activeLinks.map((link) {
                     return Expanded(
                       child: Padding(
-                        padding: EdgeInsets.only(
-                          right: activeLinks.last == link ? 0 : 12,
+                        padding: EdgeInsetsDirectional.only(
+                          end: activeLinks.last == link ? 0 : 12,
                         ),
                         child: _buildQuickLinkCard(link),
                       ),
@@ -586,10 +648,12 @@ class _CommunityScreenState extends State<CommunityScreen> {
   }
 
   Widget _buildSkeletonQuickLink() {
+    final base = AppColors.isDark(context) ? AppColors.input(context) : Colors.grey[300];
+    final inner = AppColors.isDark(context) ? AppColors.border(context) : Colors.grey[400];
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
       decoration: BoxDecoration(
-        color: Colors.grey[300],
+        color: base,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -599,7 +663,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
             width: 24,
             height: 24,
             decoration: BoxDecoration(
-              color: Colors.grey[400],
+              color: inner,
               shape: BoxShape.circle,
             ),
           ),
@@ -608,7 +672,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
             width: 60,
             height: 11,
             decoration: BoxDecoration(
-              color: Colors.grey[400],
+              color: inner,
               borderRadius: BorderRadius.circular(4),
             ),
           ),
@@ -667,30 +731,10 @@ class _CommunityScreenState extends State<CommunityScreen> {
       }
     }
 
+    final iconUrl = resolveCommunityMediaUrl(link.attributes.icon);
+
     return GestureDetector(
-      onTap: () async {
-        String urlStr = link.link.trim();
-        if (urlStr.isEmpty) return;
-        if (!urlStr.startsWith('http://') && !urlStr.startsWith('https://')) {
-          urlStr = 'https://$urlStr';
-        }
-        final url = Uri.tryParse(urlStr);
-        if (url != null) {
-          try {
-            if (await canLaunchUrl(url)) {
-              await launchUrl(url, mode: LaunchMode.externalApplication);
-            } else {
-              await launchUrl(url, mode: LaunchMode.platformDefault);
-            }
-          } catch (e) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Could not open link: ${link.link}')),
-              );
-            }
-          }
-        }
-      },
+      onTap: () => _openLink(link.link),
       behavior: HitTestBehavior.opaque,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
@@ -719,10 +763,10 @@ class _CommunityScreenState extends State<CommunityScreen> {
                 color: Colors.white.withValues(alpha: 0.2),
                 shape: BoxShape.circle,
               ),
-              child: link.attributes.icon.isNotEmpty
+              child: iconUrl != null
                   ? ClipOval(
                       child: Image.network(
-                        link.attributes.icon,
+                        iconUrl,
                         width: 24,
                         height: 24,
                         fit: BoxFit.cover,
@@ -782,14 +826,21 @@ class _CommunityScreenState extends State<CommunityScreen> {
   }
 
   Widget _buildSkeletonPostCard() {
+    final block = AppColors.isDark(context) ? AppColors.input(context) : Colors.grey[200];
+
+    Widget bar(double? width, double height, {double radius = 4}) => Container(
+          width: width,
+          height: height,
+          decoration: BoxDecoration(
+            color: block,
+            borderRadius: BorderRadius.circular(radius),
+          ),
+        );
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF0F2FF)),
-      ),
+      decoration: _cardDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -799,7 +850,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: Colors.grey[200],
+                  color: block,
                   shape: BoxShape.circle,
                 ),
               ),
@@ -808,57 +859,22 @@ class _CommunityScreenState extends State<CommunityScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      width: 120,
-                      height: 14,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[200],
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                    ),
+                    bar(120, 14),
                     const SizedBox(height: 8),
-                    Container(
-                      width: 80,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[200],
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                    ),
+                    bar(80, 12),
                   ],
                 ),
               ),
             ],
           ),
           const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            height: 60,
-            decoration: BoxDecoration(
-              color: Colors.grey[200],
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
+          bar(double.infinity, 60, radius: 8),
           const SizedBox(height: 16),
           Row(
             children: [
-              Container(
-                width: 60,
-                height: 24,
-                decoration: BoxDecoration(
-                  color: Colors.grey[200],
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
+              bar(60, 24, radius: 12),
               const SizedBox(width: 8),
-              Container(
-                width: 60,
-                height: 24,
-                decoration: BoxDecoration(
-                  color: Colors.grey[200],
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
+              bar(60, 24, radius: 12),
             ],
           ),
         ],
@@ -868,22 +884,25 @@ class _CommunityScreenState extends State<CommunityScreen> {
 
   Widget _buildErrorWidget() {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.error_outline, size: 48, color: Colors.grey),
-          const SizedBox(height: 16),
-          Text(
-            _errorMessage ?? 'An error occurred',
-            style: const TextStyle(color: Colors.grey),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: _loadPosts,
-            child: const Text('Retry'),
-          ),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.only(top: 40, left: 20, right: 20),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, size: 48, color: AppColors.muted(context)),
+            const SizedBox(height: 16),
+            Text(
+              'community.failed_load_posts'.tr(),
+              style: TextStyle(color: AppColors.subtext(context)),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: _loadPosts,
+              child: Text('community.retry'.tr()),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -898,20 +917,20 @@ class _CommunityScreenState extends State<CommunityScreen> {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: Colors.grey[100],
+                color: AppColors.isDark(context) ? AppColors.input(context) : Colors.grey[100],
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 Icons.forum_outlined,
                 size: 48,
-                color: Colors.grey[400],
+                color: AppColors.muted(context),
               ),
             ),
             const SizedBox(height: 16),
             Text(
-              'No posts yet',
+              'community.no_posts'.tr(),
               style: TextStyle(
-                color: Colors.grey[600],
+                color: AppColors.subtext(context),
                 fontSize: 15,
                 fontWeight: FontWeight.w500,
               ),
@@ -923,10 +942,11 @@ class _CommunityScreenState extends State<CommunityScreen> {
   }
 
   Widget _buildPostsList() {
-    return ListView.builder(
+    return ListView.separated(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       itemCount: _posts.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
         final post = _posts[index];
         return _buildPostCard(
@@ -941,20 +961,20 @@ class _CommunityScreenState extends State<CommunityScreen> {
     if (_searchResults.isEmpty) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 60),
+          padding: const EdgeInsets.symmetric(vertical: 60, horizontal: 20),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const FaIcon(
+              FaIcon(
                 FontAwesomeIcons.magnifyingGlass,
-                color: Color(0xFFD1D1D1),
+                color: AppColors.muted(context),
                 size: 48,
               ),
               const SizedBox(height: 16),
               Text(
-                'No posts found for "${_searchController.text}"',
-                style: const TextStyle(
-                  color: Color(0xFF9CA3AF),
+                'community.no_posts_found'.tr(args: [_searchController.text]),
+                style: TextStyle(
+                  color: AppColors.subtext(context),
                   fontSize: 14,
                 ),
                 textAlign: TextAlign.center,
@@ -965,6 +985,11 @@ class _CommunityScreenState extends State<CommunityScreen> {
       );
     }
 
+    final results = _searchResults
+        .whereType<Map>()
+        .map((item) => Post.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(
@@ -974,39 +999,19 @@ class _CommunityScreenState extends State<CommunityScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 16),
             child: Text(
-              'Search Results (${_searchResults.length})',
-              style: const TextStyle(
+              'community.search_results'.tr(args: ['${results.length}']),
+              style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
-                color: AppColors.textDark,
+                color: AppColors.text(context),
               ),
             ),
           ),
           // Search results list
-          ..._searchResults.map((item) {
-            final attributes = item['attributes'] ?? {};
-            final post = Post(
-              id: item['id']?.toString() ?? '',
-              type: item['type']?.toString() ?? 'post',
-              attributes: PostAttributes(
-                user: null,
-                course: null,
-                status: attributes['status']?.toString() ?? 'draft',
-                postType: attributes['post_type']?.toString() ?? 'discussion',
-                title: attributes['title']?.toString() ?? '',
-                content: attributes['content']?.toString() ?? '',
-                tags: (attributes['tags'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
-                reactionsCount: 0,
-                userReaction: null,
-                createdAt: DateTime.tryParse(attributes['created_at']?.toString() ?? '') ?? DateTime.now(),
-                updatedAt: DateTime.tryParse(attributes['updated_at']?.toString() ?? '') ?? DateTime.now(),
-              ),
-            );
-            return _buildPostCard(
-              post: post,
-              isPinned: false,
-            );
-          }),
+          for (final post in results) ...[
+            _buildPostCard(post: post, isPinned: false, horizontalMargin: 0),
+            const SizedBox(height: 12),
+          ],
         ],
       ),
     );
@@ -1015,6 +1020,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
   void _showReactionPicker(Post post) {
     showModalBottomSheet(
       context: context,
+      backgroundColor: AppColors.card(context),
       builder: (context) => Container(
         padding: const EdgeInsets.all(16),
         child: Wrap(
@@ -1024,7 +1030,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
             _buildReactionButton(post, 'like', FontAwesomeIcons.thumbsUp, Colors.blue),
             _buildReactionButton(post, 'love', FontAwesomeIcons.heart, Colors.red),
             _buildReactionButton(post, 'haha', FontAwesomeIcons.faceLaughSquint, Colors.orange),
-            _buildReactionButton(post, 'wow', FontAwesomeIcons.faceSurprise, Colors.yellow),
+            _buildReactionButton(post, 'wow', FontAwesomeIcons.faceSurprise, Colors.amber),
             _buildReactionButton(post, 'sad', FontAwesomeIcons.faceSadTear, Colors.purple),
             _buildReactionButton(post, 'angry', FontAwesomeIcons.faceAngry, Colors.redAccent),
           ],
@@ -1035,18 +1041,21 @@ class _CommunityScreenState extends State<CommunityScreen> {
 
   Widget _buildReactionButton(Post post, String type, FaIconData icon, Color color) {
     final isSelected = post.attributes.userReaction == type;
-    return GestureDetector(
-      onTap: () {
-        Navigator.pop(context);
-        _handleReaction(post, type);
-      },
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: isSelected ? color.withValues(alpha: 0.1) : Colors.transparent,
-          shape: BoxShape.circle,
+    return Tooltip(
+      message: 'community.reaction_$type'.tr(),
+      child: GestureDetector(
+        onTap: () {
+          Navigator.pop(context);
+          _handleReaction(post, type);
+        },
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: isSelected ? color.withValues(alpha: 0.1) : Colors.transparent,
+            shape: BoxShape.circle,
+          ),
+          child: FaIcon(icon, color: color, size: 32),
         ),
-        child: FaIcon(icon, color: color, size: 32),
       ),
     );
   }
@@ -1079,60 +1088,68 @@ class _CommunityScreenState extends State<CommunityScreen> {
       case 'haha':
         return Colors.orange;
       case 'wow':
-        return Colors.yellow;
+        return Colors.amber;
       case 'sad':
         return Colors.purple;
       case 'angry':
         return Colors.redAccent;
       default:
-        return AppColors.textGray;
+        return AppColors.subtext(context);
+    }
+  }
+
+  String _postTypeLabel(String type) {
+    switch (type) {
+      case 'question':
+        return 'community.type_question'.tr();
+      case 'summary':
+        return 'community.type_summary'.tr();
+      default:
+        return 'community.type_post'.tr();
     }
   }
 
   Widget _buildPostCard({
     required Post post,
     bool isPinned = false,
+    double horizontalMargin = 20,
   }) {
+    final isDark = AppColors.isDark(context);
     final user = post.attributes.user;
     final course = post.attributes.course ??
         (post.attributes.courseId != null
             ? _courses.where((c) => c.id == post.attributes.courseId).firstOrNull
             : null);
-    final userName = user?.attributes.fullName ?? 'Unknown User';
-    final isInstructor = user?.attributes.role.toLowerCase() == 'admin' ||
-        user?.attributes.role.toLowerCase() == 'instructor';
+    final rawName = user == null
+        ? ''
+        : '${user.attributes.firstName} ${user.attributes.lastName}'.trim();
+    final userName = rawName.isNotEmpty ? rawName : 'community.unknown_user'.tr();
+    final role = user?.attributes.role.toLowerCase() ?? '';
+    final isInstructor = role == 'admin' || role == 'instructor' || role == 'doctor';
     final timeAgo = _formatTimeAgo(post.attributes.createdAt);
     final hasReaction = post.attributes.userReaction != null;
+    final textColor = AppColors.text(context);
+    final subColor = AppColors.subtext(context);
+
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20),
+      margin: EdgeInsets.symmetric(horizontal: horizontalMargin),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF0F2FF)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
+      decoration: _cardDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (isPinned) ...[
             Row(
               children: [
-                FaIcon(
+                const FaIcon(
                   FontAwesomeIcons.thumbtack,
                   color: AppColors.accentBlue,
                   size: 14,
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  'PINNED POST',
-                  style: TextStyle(
+                  'community.pinned_post'.tr(),
+                  style: const TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                     color: AppColors.accentBlue,
@@ -1149,15 +1166,24 @@ class _CommunityScreenState extends State<CommunityScreen> {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: Colors.grey[200],
+                  color: const Color(0xFF5A75FF).withValues(alpha: isDark ? 0.25 : 0.1),
                   shape: BoxShape.circle,
                 ),
-                child: const Center(
-                  child: FaIcon(
-                    FontAwesomeIcons.user,
-                    color: AppColors.textGray,
-                    size: 16,
-                  ),
+                child: Center(
+                  child: rawName.isNotEmpty
+                      ? Text(
+                          rawName.characters.first.toUpperCase(),
+                          style: TextStyle(
+                            color: isDark ? AppColors.lightBlue : const Color(0xFF5A75FF),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        )
+                      : FaIcon(
+                          FontAwesomeIcons.user,
+                          color: subColor,
+                          size: 16,
+                        ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -1167,49 +1193,32 @@ class _CommunityScreenState extends State<CommunityScreen> {
                   children: [
                     Text(
                       userName,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
-                        color: AppColors.textDark,
+                        color: textColor,
                       ),
                     ),
                     const SizedBox(height: 2),
-                    Row(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Text(
                           timeAgo,
                           style: TextStyle(
                             fontSize: 12,
-                            color: AppColors.textGray,
+                            color: subColor,
                           ),
                         ),
-                        if (isInstructor) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: AppColors.accountingBg,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text(
-                              'Instructor',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w500,
-                                color: AppColors.accountingText,
-                              ),
-                            ),
-                          ),
-                        ],
+                        if (isInstructor)
+                          _buildBadge('community.instructor'.tr()),
+                        _buildBadge(_postTypeLabel(post.attributes.postType)),
                       ],
                     ),
                   ],
                 ),
-              ),
-              Icon(
-                Icons.more_horiz,
-                color: AppColors.textGray,
-                size: 20,
               ),
             ],
           ),
@@ -1217,34 +1226,35 @@ class _CommunityScreenState extends State<CommunityScreen> {
           if (post.attributes.title.isNotEmpty) ...[
             Text(
               post.attributes.title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
-                color: AppColors.textDark,
+                color: textColor,
               ),
             ),
             const SizedBox(height: 8),
           ],
-          Linkify(
-            onOpen: (link) async {
-              final url = Uri.parse(link.url);
-              if (await canLaunchUrl(url)) {
-                await launchUrl(url, mode: LaunchMode.externalApplication);
-              }
-            },
-            text: post.attributes.content,
-            style: const TextStyle(
-              fontSize: 14,
-              color: AppColors.textDark,
-              height: 1.5,
+          if (post.attributes.content.isNotEmpty)
+            Linkify(
+              onOpen: (link) => _openLink(link.url),
+              text: post.attributes.content,
+              style: TextStyle(
+                fontSize: 14,
+                color: isDark ? const Color(0xFFE2E8F0) : AppColors.textDark,
+                height: 1.5,
+              ),
+              linkStyle: TextStyle(
+                fontSize: 14,
+                color: isDark ? AppColors.lightBlue : AppColors.primaryBlue,
+                height: 1.5,
+                decoration: TextDecoration.underline,
+              ),
             ),
-            linkStyle: const TextStyle(
-              fontSize: 14,
-              color: AppColors.primaryBlue,
-              height: 1.5,
-              decoration: TextDecoration.underline,
-            ),
-          ),
+          // Post images
+          if (post.attributes.images.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            PostImages(images: post.attributes.images),
+          ],
           const SizedBox(height: 12),
           if (course != null) ...[
             _buildTagChip('#${course.attributes.title}'),
@@ -1267,9 +1277,11 @@ class _CommunityScreenState extends State<CommunityScreen> {
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF8FAFC),
+                    color: isDark ? AppColors.input(context) : const Color(0xFFF8FAFC),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    border: Border.all(
+                      color: isDark ? AppColors.border(context) : const Color(0xFFE2E8F0),
+                    ),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1282,12 +1294,12 @@ class _CommunityScreenState extends State<CommunityScreen> {
                             color: AppColors.primaryBlue,
                           ),
                           const SizedBox(width: 6),
-                          const Text(
-                            'روابط ومجموعات الكورس',
+                          Text(
+                            'community.course_links_title'.tr(),
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
-                              color: AppColors.textDark,
+                              color: textColor,
                             ),
                           ),
                         ],
@@ -1309,31 +1321,36 @@ class _CommunityScreenState extends State<CommunityScreen> {
           const SizedBox(height: 12),
           Row(
             children: [
-              GestureDetector(
+              InkWell(
                 onTap: () => _showReactionPicker(post),
-                child: Row(
-                  children: [
-                    FaIcon(
-                      hasReaction
-                          ? _getReactionIcon(post.attributes.userReaction)
-                          : FontAwesomeIcons.heart,
-                      color: hasReaction
-                          ? _getReactionColor(post.attributes.userReaction)
-                          : AppColors.textGray,
-                      size: 16,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      '${post.attributes.reactionsCount}',
-                      style: TextStyle(
-                        fontSize: 13,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                  child: Row(
+                    children: [
+                      FaIcon(
+                        hasReaction
+                            ? _getReactionIcon(post.attributes.userReaction)
+                            : FontAwesomeIcons.heart,
                         color: hasReaction
                             ? _getReactionColor(post.attributes.userReaction)
-                            : AppColors.textGray,
-                        fontWeight: hasReaction ? FontWeight.w600 : FontWeight.normal,
+                            : subColor,
+                        size: 16,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 6),
+                      Text(
+                        'community.reactions_count'
+                            .tr(args: ['${post.attributes.reactionsCount}']),
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: hasReaction
+                              ? _getReactionColor(post.attributes.userReaction)
+                              : subColor,
+                          fontWeight: hasReaction ? FontWeight.w600 : FontWeight.normal,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -1348,19 +1365,39 @@ class _CommunityScreenState extends State<CommunityScreen> {
     );
   }
 
+  Widget _buildBadge(String label) {
+    final isDark = AppColors.isDark(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF2A3154) : AppColors.accountingBg,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w500,
+          color: isDark ? AppColors.lightBlue : AppColors.accountingText,
+        ),
+      ),
+    );
+  }
+
   Widget _buildTagChip(String tag) {
+    final isDark = AppColors.isDark(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFFF0F2FF),
+        color: isDark ? AppColors.input(context) : const Color(0xFFF0F2FF),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
         tag,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.w500,
-          color: AppColors.textGray,
+          color: AppColors.subtext(context),
         ),
       ),
     );
@@ -1417,23 +1454,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
         : link.attributes.subtitle;
 
     return GestureDetector(
-      onTap: () async {
-        String urlStr = link.link.trim();
-        if (urlStr.isEmpty) return;
-        if (!urlStr.startsWith('http://') && !urlStr.startsWith('https://')) {
-          urlStr = 'https://$urlStr';
-        }
-        final url = Uri.tryParse(urlStr);
-        if (url != null) {
-          try {
-            if (await canLaunchUrl(url)) {
-              await launchUrl(url, mode: LaunchMode.externalApplication);
-            } else {
-              await launchUrl(url, mode: LaunchMode.platformDefault);
-            }
-          } catch (_) {}
-        }
-      },
+      onTap: () => _openLink(link.link),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
@@ -1486,6 +1507,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
       onPressed: _navigateToCreatePost,
       backgroundColor: AppColors.primaryBlue,
       shape: const CircleBorder(),
+      tooltip: 'community.create_post'.tr(),
       child: const Icon(
         Icons.add,
         color: Colors.white,

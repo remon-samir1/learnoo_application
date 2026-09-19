@@ -50,6 +50,7 @@ class CountryCodeField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final selected = kCountryCodes.firstWhere(
       (c) => c.code == countryCode,
       orElse: () => kCountryCodes.first,
@@ -60,10 +61,10 @@ class CountryCodeField extends StatelessWidget {
       children: [
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w600,
-            color: AppColors.labelGray,
+            color: isDark ? const Color(0xFFE2E8F0) : AppColors.labelGray,
           ),
         ),
         const SizedBox(height: 8),
@@ -75,14 +76,16 @@ class CountryCodeField extends StatelessWidget {
                 height: 58,
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 decoration: BoxDecoration(
-                  color: AppColors.inputFill,
+                  color: AppColors.input(context),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.inputBorder),
+                  border: Border.all(color: AppColors.border(context)),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<String>(
                     value: selected.code,
                     isDense: true,
+                    dropdownColor: isDark ? const Color(0xFF1E212B) : Colors.white,
+                    iconEnabledColor: isDark ? const Color(0xFFCBD5E1) : Colors.grey[700],
                     borderRadius: BorderRadius.circular(12),
                     onChanged: enabled
                         ? (value) {
@@ -100,8 +103,8 @@ class CountryCodeField extends StatelessWidget {
                                 const SizedBox(width: 6),
                                 Text(
                                   '+${c.code}',
-                                  style: const TextStyle(
-                                    color: AppColors.textDark,
+                                  style: TextStyle(
+                                    color: isDark ? Colors.white : AppColors.textDark,
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
@@ -124,21 +127,21 @@ class CountryCodeField extends StatelessWidget {
                     FilteringTextInputFormatter.digitsOnly,
                     LengthLimitingTextInputFormatter(15),
                   ],
-                  style: const TextStyle(color: AppColors.textDark),
+                  style: TextStyle(color: isDark ? Colors.white : AppColors.textDark),
                   decoration: InputDecoration(
                     hintText: hintText,
-                    hintStyle: const TextStyle(color: AppColors.inputHint),
+                    hintStyle: TextStyle(color: AppColors.muted(context)),
                     filled: true,
-                    fillColor: AppColors.inputFill,
+                    fillColor: AppColors.input(context),
                     contentPadding:
                         const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: AppColors.inputBorder),
+                      borderSide: BorderSide(color: AppColors.border(context)),
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: AppColors.inputBorder),
+                      borderSide: BorderSide(color: AppColors.border(context)),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),

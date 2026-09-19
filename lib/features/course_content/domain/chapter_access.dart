@@ -198,3 +198,61 @@ bool chapterIsPdfOnly(dynamic chapter) {
   if (raw is Map && raw['data'] is List && (raw['data'] as List).isNotEmpty) return true;
   return false;
 }
+
+/// Whether a chapter's `schedule` (release time) has passed.
+///
+/// Port of the web's `LecturesTab` filter: a chapter with no schedule, or an
+/// unparseable one, is visible; a chapter scheduled in the future is hidden
+/// until its release time. The API sends `YYYY-MM-DD HH:mm:ss` in local time.
+bool isChapterScheduleReleased(dynamic chapter, {DateTime? now}) {
+  final raw = coerceString(chapterAttributes(chapter)['schedule'])?.trim();
+  if (raw == null || raw.isEmpty) return true;
+  final parsed = DateTime.tryParse(raw.replaceFirst(' ', 'T'));
+  if (parsed == null) return true;
+  return !parsed.isAfter(now ?? DateTime.now());
+}
+
+/// The chapters a student sees under a lecture in the "Lectures & PDF" tab:
+/// the lecture's own `chapters` in API order, minus those not yet released.
+///
+/// Exams and live rooms are separate course attributes (`exams`,
+/// `live_rooms`) and never belong in this list.
+List<dynamic> studentVisibleChapters(dynamic lecture, {DateTime? now}) {
+  if (lecture is! Map) return const [];
+  final attrs = lecture['attributes'] is Map
+      ? lecture['attributes'] as Map
+      : lecture;
+  final raw = attrs['chapters'];
+  final list = raw is List
+      ? raw
+      : raw is Map && raw['data'] is List
+          ? raw['data'] as List
+          : const [];
+  final reference = now ?? DateTime.now();
+  return list
+      .where((ch) => ch is Map && isChapterScheduleReleased(ch, now: reference))
+      .toList();
+}
+
+/// Course lectures sorted by `attributes.order` ascending (missing = 0), the
+/// same ordering as the web's `sortedLectures`. The sort is stable so lectures
+/// sharing an order keep their API order.
+List<dynamic> studentSortedLectures(dynamic rawLectures) {
+  if (rawLectures is! List) return const [];
+  int orderOf(Map lecture) {
+    final attrs = lecture['attributes'] is Map
+        ? lecture['attributes'] as Map
+        : lecture;
+    return coerceInt(attrs['order']);
+  }
+
+  final entries = <(int, Map)>[];
+  for (final lecture in rawLectures) {
+    if (lecture is Map) entries.add((entries.length, lecture));
+  }
+  entries.sort((a, b) {
+    final byOrder = orderOf(a.$2).compareTo(orderOf(b.$2));
+    return byOrder != 0 ? byOrder : a.$1.compareTo(b.$1);
+  });
+  return entries.map((e) => e.$2).toList();
+}

@@ -1,3 +1,4 @@
+import '../../../../core/network/api_constants.dart';
 import 'social_link_model.dart';
 
 // Post Model matching API response structure
@@ -69,6 +70,7 @@ class PostAttributes {
 
   final String? userReaction;
   final List<SocialLink> socialLinks;
+  final List<String> images; // post image attachments
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -86,6 +88,7 @@ class PostAttributes {
     this.courseId,
     this.userReaction,
     this.socialLinks = const [],
+    this.images = const [],
     required this.createdAt,
     required this.updatedAt,
   });
@@ -137,6 +140,8 @@ class PostAttributes {
       socialLinksList = postCourse.attributes.socialLinks;
     }
 
+    final imagesList = parsePostImages(json);
+
     return PostAttributes(
       user: userData != null ? PostUser.fromJson(userData) : null,
       course: postCourse,
@@ -160,6 +165,7 @@ class PostAttributes {
           _optionalId(courseData?['id']),
       userReaction: json['user_reaction']?.toString() ?? json['userReaction']?.toString(),
       socialLinks: socialLinksList,
+      images: imagesList,
       createdAt: DateTime.tryParse(json['created_at']?.toString() ?? '') ?? DateTime.now(),
       updatedAt: DateTime.tryParse(json['updated_at']?.toString() ?? '') ?? DateTime.now(),
     );
@@ -179,6 +185,7 @@ class PostAttributes {
     String? courseId,
     String? userReaction,
     List<SocialLink>? socialLinks,
+    List<String>? images,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -196,6 +203,7 @@ class PostAttributes {
       courseId: courseId ?? this.courseId,
       userReaction: userReaction ?? this.userReaction,
       socialLinks: socialLinks ?? this.socialLinks,
+      images: images ?? this.images,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -217,6 +225,80 @@ class PostAttributes {
       'updated_at': updatedAt.toIso8601String(),
     };
   }
+}
+
+/// Collects every displayable image URL on a post's attributes.
+///
+/// Mirrors the website's `pickPostImageUrl` (src/lib/community-post-media.ts):
+/// the dashboard uploads the file as `image`, and the API may echo it back as
+/// `image`, `image_url`, `thumbnail`, an `attachment` (string, `{url|path}` or
+/// list) or `attachments`. Values can be absolute URLs or paths relative to the
+/// API origin, so each one goes through [resolveCommunityMediaUrl].
+List<String> parsePostImages(Map<String, dynamic> json) {
+  final result = <String>[];
+
+  void addValue(dynamic value) {
+    if (value == null) return;
+    if (value is String) {
+      final url = resolveCommunityMediaUrl(value);
+      if (url != null && !_isNonImageFile(url) && !result.contains(url)) {
+        result.add(url);
+      }
+    } else if (value is Map) {
+      addValue(value['url'] ??
+          value['original_url'] ??
+          value['path'] ??
+          value['src'] ??
+          value['href']);
+    } else if (value is List) {
+      for (final item in value) {
+        addValue(item);
+      }
+    }
+  }
+
+  const keys = [
+    'image',
+    'image_url',
+    'imageUrl',
+    'images',
+    'thumbnail',
+    'thumbnail_url',
+    'cover_image',
+    'coverImage',
+    'media_url',
+    'mediaUrl',
+    'photo',
+    'attachment',
+    'attachments',
+    'media',
+  ];
+  for (final key in keys) {
+    addValue(json[key]);
+  }
+  return result;
+}
+
+/// Turns an API media value into a loadable URL, or `null` when empty.
+String? resolveCommunityMediaUrl(String? raw) {
+  final value = raw?.trim().replaceAll('\\', '/');
+  if (value == null || value.isEmpty || value == 'null') return null;
+  if (value.startsWith('data:')) return value;
+  if (value.startsWith('http://') || value.startsWith('https://')) return value;
+  if (value.startsWith('//')) return 'https:$value';
+  final base = ApiConstants.baseUrl.endsWith('/')
+      ? ApiConstants.baseUrl.substring(0, ApiConstants.baseUrl.length - 1)
+      : ApiConstants.baseUrl;
+  return '$base${value.startsWith('/') ? value : '/$value'}';
+}
+
+bool _isNonImageFile(String url) {
+  final path = (Uri.tryParse(url)?.path ?? url).toLowerCase();
+  const nonImage = [
+    '.pdf', '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx', '.zip',
+    '.rar', '.mp3', '.wav', '.m4a', '.aac', '.ogg', '.mp4', '.mov', '.webm',
+  ];
+  return nonImage.any(path.endsWith);
 }
 
 /// Normalises an id to a string, treating `null` and `0` as absent — the API

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/widgets/cover_image.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:shimmer/shimmer.dart';
@@ -596,19 +597,11 @@ class _MyCoursesScreenState extends State<MyCoursesScreen> {
             children: [
               ClipRRect(
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-                child: Image.network(
-                  thumbnail,
+                child: CoverImage(
+                  url: thumbnail,
+                  title: title,
                   height: 160,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Container(
-                      height: 160,
-                      width: double.infinity,
-                      color: const Color(0xFFF3F4F6),
-                      child: const Icon(Icons.image, color: Color(0xFF9CA3AF)),
-                    );
-                  },
+                  cacheWidth: 400,
                 ),
               ),
               // Category Badge

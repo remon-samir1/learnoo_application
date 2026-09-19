@@ -41,7 +41,11 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result['message'] ?? 'Failed to load profile')),
+          SnackBar(
+            content: Text(
+              result['message'] ?? 'profile.failed_load_profile'.tr(),
+            ),
+          ),
         );
       }
     }
@@ -49,9 +53,12 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     if (_isLoading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator(color: Color(0xFF5A75FF))),
+      return Scaffold(
+        backgroundColor: isDark ? const Color(0xFF13151B) : const Color(0xFFFAFBFF),
+        body: const Center(child: CircularProgressIndicator(color: Color(0xFF5A75FF))),
       );
     }
 
@@ -64,7 +71,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
     final String? userImageUrl = attributes?['image']?.toString();
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFAFBFF),
+      backgroundColor: isDark ? const Color(0xFF13151B) : const Color(0xFFFAFBFF),
       body: RefreshIndicator(
         onRefresh: _fetchProfile,
         color: const Color(0xFF5A75FF),
@@ -72,32 +79,34 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
           physics: const AlwaysScrollableScrollPhysics(),
           child: Column(
             children: [
-              _buildHeader(fullName, userImageUrl),
+              _buildHeader(fullName, userImageUrl, isDark),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Column(
                   children: [
                     const SizedBox(height: 24),
-                    _buildAccountInfoCard(phone, email),
+                    _buildAccountInfoCard(phone, email, isDark),
                     const SizedBox(height: 16),
-                    _buildQRCodeCard(fullName, phone, email),
+                    _buildQRCodeCard(fullName, phone, email, isDark),
                     const SizedBox(height: 16),
                     _buildMenuItem(
                       icon: FontAwesomeIcons.download,
-                      label: 'Downloads',
+                      label: 'profile.downloads'.tr(),
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(builder: (context) => const DownloadsScreen()),
                       ),
+                      isDark: isDark,
                     ),
                     const SizedBox(height: 12),
                     _buildMenuItem(
                       icon: FontAwesomeIcons.gear,
-                      label: 'Settings',
+                      label: 'profile.settings'.tr(),
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(builder: (context) => const SettingsScreen()),
                       ),
+                      isDark: isDark,
                     ),
                     const SizedBox(height: 12),
                     _buildMenuItem(
@@ -107,11 +116,12 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
                         context,
                         MaterialPageRoute(builder: (context) => const SupportScreen()),
                       ),
+                      isDark: isDark,
                     ),
                     const SizedBox(height: 24),
-                    _buildConnectWithUs(),
+                    _buildConnectWithUs(isDark),
                     const SizedBox(height: 24),
-                    _buildLogoutButton(),
+                    _buildLogoutButton(isDark),
                     const SizedBox(height: 40),
                   ],
                 ),
@@ -122,7 +132,8 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
       ),
     );
   }
-  Widget _buildHeader(String fullName, String? userImageUrl) {
+
+  Widget _buildHeader(String fullName, String? userImageUrl, bool isDark) {
     return Column(
       children: [
         Container(
@@ -139,11 +150,11 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
               bottomRight: Radius.circular(40),
             ),
           ),
-          child: const SafeArea(
+          child: SafeArea(
             child: Center(
               child: Text(
-                'My Profile',
-                style: TextStyle(
+                'profile.title'.tr(),
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
@@ -160,10 +171,10 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
                 children: [
                   Container(
                     padding: const EdgeInsets.all(4),
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF1E212B) : Colors.white,
                       shape: BoxShape.circle,
-                      boxShadow: [
+                      boxShadow: const [
                         BoxShadow(
                           color: Colors.black12,
                           blurRadius: 10,
@@ -173,7 +184,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
                     ),
                     child: CircleAvatar(
                       radius: 50,
-                      backgroundColor: const Color(0xFFF0F2FF),
+                      backgroundColor: isDark ? const Color(0xFF262A36) : const Color(0xFFF0F2FF),
                       backgroundImage: userImageUrl != null && userImageUrl.isNotEmpty
                           ? NetworkImage(userImageUrl)
                           : null,
@@ -218,10 +229,10 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
               const SizedBox(height: 12),
               Text(
                 fullName,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF1F2937),
+                  color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
                 ),
               ),
             ],
@@ -231,15 +242,18 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
     );
   }
 
-  Widget _buildAccountInfoCard(String phone, String email) {
+  Widget _buildAccountInfoCard(String phone, String email, bool isDark) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: isDark ? const Color(0xFF1E212B) : Colors.white,
         borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isDark ? const Color(0xFF2E3344) : Colors.transparent,
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
+            color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.03),
             blurRadius: 10,
             offset: const Offset(0, 5),
           ),
@@ -251,19 +265,19 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Account Information',
+              Text(
+                'profile.account_info'.tr(),
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF1F2937),
+                  color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
                 ),
               ),
               if (_featureManager.isProfileEditingEnabled)
                 TextButton.icon(
                   onPressed: () => _showEditProfile(),
                   icon: const FaIcon(FontAwesomeIcons.penToSquare, size: 14),
-                  label: const Text('Edit'),
+                  label: Text('profile.edit'.tr()),
                   style: TextButton.styleFrom(
                     foregroundColor: const Color(0xFF5A75FF),
                     textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
@@ -272,15 +286,36 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          _buildInfoRow(FontAwesomeIcons.phone, 'Phone Number', phone, Colors.green[50]!, Colors.green),
+          _buildInfoRow(
+            FontAwesomeIcons.phone,
+            'profile.phone_number'.tr(),
+            phone,
+            isDark ? const Color(0xFF1E3A2B) : Colors.green[50]!,
+            Colors.green,
+            isDark,
+          ),
           const SizedBox(height: 16),
-          _buildInfoRow(FontAwesomeIcons.envelope, 'Email Address', email, Colors.blue[50]!, Colors.blue),
+          _buildInfoRow(
+            FontAwesomeIcons.envelope,
+            'profile.email_address'.tr(),
+            email,
+            isDark ? const Color(0xFF1E2D4A) : Colors.blue[50]!,
+            Colors.blue,
+            isDark,
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildInfoRow(dynamic icon, String label, String value, Color bgColor, Color iconColor) {
+  Widget _buildInfoRow(
+    dynamic icon,
+    String label,
+    String value,
+    Color bgColor,
+    Color iconColor,
+    bool isDark,
+  ) {
     return Row(
       children: [
         Container(
@@ -291,7 +326,11 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
             borderRadius: BorderRadius.circular(10),
           ),
           child: Center(
-            child: FaIcon(icon is FaIconData ? icon : FontAwesomeIcons.circleQuestion, color: iconColor, size: 16),
+            child: FaIcon(
+              icon is FaIconData ? icon : FontAwesomeIcons.circleQuestion,
+              color: iconColor,
+              size: 16,
+            ),
           ),
         ),
         const SizedBox(width: 16),
@@ -300,14 +339,17 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
           children: [
             Text(
               label,
-              style: const TextStyle(color: Colors.grey, fontSize: 12),
+              style: TextStyle(
+                color: isDark ? const Color(0xFF94A3B8) : Colors.grey,
+                fontSize: 12,
+              ),
             ),
             const SizedBox(height: 2),
             Text(
               value,
-              style: const TextStyle(
+              style: TextStyle(
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF1F2937),
+                color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
                 fontSize: 14,
               ),
             ),
@@ -317,19 +359,21 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
     );
   }
 
-  Widget _buildQRCodeCard(String name, String phone, String email) {
-    // Generate QR data without password
+  Widget _buildQRCodeCard(String name, String phone, String email, bool isDark) {
     final qrData = 'Learnoo Student\nName: $name\nPhone: $phone\nEmail: $email';
 
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: isDark ? const Color(0xFF1E212B) : Colors.white,
         borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isDark ? const Color(0xFF2E3344) : Colors.transparent,
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
+            color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.03),
             blurRadius: 10,
             offset: const Offset(0, 5),
           ),
@@ -337,18 +381,19 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
       ),
       child: Column(
         children: [
-          const Text(
-            'Student QR Code',
+          Text(
+            'profile.student_qr'.tr(),
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
-              color: Color(0xFF1F2937),
+              color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
             ),
           ),
           const SizedBox(height: 20),
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
+              color: Colors.white,
               border: Border.all(color: const Color(0xFFF3F4F6)),
               borderRadius: BorderRadius.circular(16),
             ),
@@ -367,27 +412,38 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          const Text(
-            'Scan to verify student identity',
-            style: TextStyle(color: Colors.grey, fontSize: 12),
+          Text(
+            'profile.scan_verify'.tr(),
+            style: TextStyle(
+              color: isDark ? const Color(0xFF94A3B8) : Colors.grey,
+              fontSize: 12,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildMenuItem({required dynamic icon, required String label, required VoidCallback onTap}) {
+  Widget _buildMenuItem({
+    required dynamic icon,
+    required String label,
+    required VoidCallback onTap,
+    required bool isDark,
+  }) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: isDark ? const Color(0xFF1E212B) : Colors.white,
           borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isDark ? const Color(0xFF2E3344) : Colors.transparent,
+          ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.02),
+              color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.02),
               blurRadius: 5,
               offset: const Offset(0, 2),
             ),
@@ -399,50 +455,58 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: const Color(0xFFF5F3FF),
+                color: isDark ? const Color(0xFF262A36) : const Color(0xFFF5F3FF),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Center(
-                child: FaIcon(icon is FaIconData ? icon : FontAwesomeIcons.circleQuestion, color: const Color(0xFF8B5CF6), size: 16),
+                child: FaIcon(
+                  icon is FaIconData ? icon : FontAwesomeIcons.circleQuestion,
+                  color: const Color(0xFF8B5CF6),
+                  size: 16,
+                ),
               ),
             ),
             const SizedBox(width: 16),
             Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF1F2937),
+                color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
               ),
             ),
             const Spacer(),
-            const FaIcon(FontAwesomeIcons.arrowUpRightFromSquare, color: Color(0xFFD1D5DB), size: 14),
+            FaIcon(
+              FontAwesomeIcons.arrowUpRightFromSquare,
+              color: isDark ? const Color(0xFF64748B) : const Color(0xFFD1D5DB),
+              size: 14,
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildConnectWithUs() {
+  Widget _buildConnectWithUs(bool isDark) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Connect With Us',
+        Text(
+          'profile.connect_with_us'.tr(),
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.bold,
-            color: Color(0xFF1F2937),
+            color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
           ),
         ),
         const SizedBox(height: 16),
         Row(
           children: [
-            _buildSocialButton(FontAwesomeIcons.whatsapp, 'WhatsApp', const Color(0xFF22C55E)),
+            _buildSocialButton(FontAwesomeIcons.whatsapp, 'profile.whatsapp'.tr(), const Color(0xFF22C55E)),
             const SizedBox(width: 8),
-            _buildSocialButton(FontAwesomeIcons.telegram, 'Telegram', const Color(0xFF3B82F6)),
+            _buildSocialButton(FontAwesomeIcons.telegram, 'profile.telegram'.tr(), const Color(0xFF3B82F6)),
             const SizedBox(width: 8),
-            _buildSocialButton(FontAwesomeIcons.globe, 'Website', const Color(0xFFF87171)),
+            _buildSocialButton(FontAwesomeIcons.globe, 'profile.website'.tr(), const Color(0xFFF87171)),
           ],
         ),
       ],
@@ -459,11 +523,19 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
         ),
         child: Column(
           children: [
-            FaIcon(icon is FaIconData ? icon : FontAwesomeIcons.circleQuestion, color: Colors.white, size: 20),
-            const SizedBox(height: 4),
+            FaIcon(
+              icon is FaIconData ? icon : FontAwesomeIcons.globe,
+              color: Colors.white,
+              size: 20,
+            ),
+            const SizedBox(height: 6),
             Text(
               label,
-              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ],
         ),
@@ -472,21 +544,20 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
   }
 
   Future<void> _handleLogout() async {
-    // Show confirmation dialog
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
+        title: Text('profile.logout'.tr()),
+        content: Text('profile.logout_confirm'.tr()),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text('profile.cancel'.tr()),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             style: TextButton.styleFrom(foregroundColor: const Color(0xFFFF4B4B)),
-            child: const Text('Logout'),
+            child: Text('profile.logout'.tr()),
           ),
         ],
       ),
@@ -502,7 +573,6 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
 
     if (mounted) {
       if (result['success']) {
-        // Navigate to login screen and clear navigation stack
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(builder: (context) => const LoginScreen()),
@@ -510,22 +580,26 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result['message'] ?? 'Logout failed')),
+          SnackBar(
+            content: Text(
+              result['message'] ?? 'auth.login_failed'.tr(),
+            ),
+          ),
         );
       }
     }
   }
 
-  Widget _buildLogoutButton() {
+  Widget _buildLogoutButton(bool isDark) {
     return SizedBox(
       width: double.infinity,
       child: TextButton.icon(
         onPressed: _handleLogout,
         icon: const FaIcon(FontAwesomeIcons.rightFromBracket, size: 16),
-        label: const Text('Logout'),
+        label: Text('profile.logout'.tr()),
         style: TextButton.styleFrom(
           foregroundColor: const Color(0xFFFF4B4B),
-          backgroundColor: const Color(0xFFFFF1F1),
+          backgroundColor: isDark ? const Color(0xFF2A1B1E) : const Color(0xFFFFF1F1),
           padding: const EdgeInsets.symmetric(vertical: 14),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),

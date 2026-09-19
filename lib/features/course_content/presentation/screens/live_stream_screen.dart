@@ -57,53 +57,78 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
 
     try {
       final profile = await _loadProfile();
+      final chatEnabled = widget.liveRoom.enableChat;
 
       final options = JitsiMeetConferenceOptions(
         serverURL: ApiConstants.jitsiServerUrl,
         room: ApiConstants.jitsiRoomName(widget.liveRoom.id),
+        // Same overrides as the website's student `JitsiMeeting` embed.
         configOverrides: {
-          // Students are viewers: no mic, no camera, and no pre-join gate to
-          // fumble with — same defaults the web embed uses.
           'startWithAudioMuted': !widget.isHost,
           'startWithVideoMuted': !widget.isHost,
+          'disableModeratorIndicator': true,
+          'enableEmailInStats': false,
           'prejoinPageEnabled': false,
           'disableDeepLinking': true,
-          'subject': widget.liveRoom.title,
+          'disableChat': !chatEnabled,
           'requireDisplayName': false,
-          // Whiteboard is collaborative for host, but view-only / read-only for students
+          'remoteVideoMenu': {
+            'disabled': true,
+            'disableKick': true,
+            'disableGrantModerator': true,
+            'disablePrivateChat': true,
+            'disableDemote': true,
+          },
+          'disableRemoteMute': true,
+          'disableKick': true,
+          'disableGrantModerator': true,
+          'disablePrivateChat': true,
+          'disableInviteFunctions': true,
+          'hideConferenceSubject': true,
+          'hideConferenceTimer': false,
+          'participantsPane': {
+            'hideModeratorSettingsTab': true,
+            'hideMoreActionsButton': true,
+            'hideMuteAllButton': true,
+          },
+          // Students receive the host's whiteboard canvas.
           'whiteboard': {
             'enabled': true,
-            'collaborative': widget.isHost,
-            'readOnly': !widget.isHost,
+            'collabServerBaseUrl': 'https://whiteboard.jitsi.net',
+          },
+          // Students knock and wait in the lobby until the host admits them.
+          'lobby': {
+            'enabled': true,
+            'autoKnock': true,
           },
           if (!widget.isHost)
             'toolbarButtons': [
-              'raisehand',
-              'chat',
-              'tileview',
-              'hangup',
               'microphone',
-              'camera',
-              'desktop',
+              'raisehand',
+              'reactions',
+              if (chatEnabled) 'chat',
+              'tileview',
+              'settings',
               'fullscreen',
-              'pip',
+              'hangup',
             ],
         },
         featureFlags: {
           'invite.enabled': false,
-          'meeting-name.enabled': true,
+          'meeting-name.enabled': false,
           'live-streaming.enabled': false,
           'recording.enabled': false,
           'kick-out.enabled': false,
           'raise-hand.enabled': true,
-          'chat.enabled': true,
+          'reactions.enabled': true,
+          'chat.enabled': chatEnabled,
           'tile-view.enabled': true,
+          'settings.enabled': true,
           'pip.enabled': true,
           'toolbox.alwaysVisible': false,
-          // Only host can initiate whiteboard; student cannot edit or trigger it
-          'whiteboard.enabled': widget.isHost,
           // A student must not be able to hand out moderator rights.
           'security-options.enabled': false,
+          'lobby-mode.enabled': false,
           'add-people.enabled': false,
           'calendar.enabled': false,
           'call-integration.enabled': false,
@@ -112,8 +137,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
           displayName: profile?.fullName.isNotEmpty == true
               ? profile!.fullName
               : 'Student',
-          email: profile?.email,
-          avatar: profile?.imageUrl,
+          email: '',
         ),
       );
 
@@ -171,15 +195,15 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.backgroundWhite,
+      backgroundColor: AppColors.surface(context),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: Text(
           widget.liveRoom.title,
-          style: const TextStyle(color: AppColors.textDark, fontSize: 16),
+          style: TextStyle(color: AppColors.text(context), fontSize: 16),
         ),
-        iconTheme: const IconThemeData(color: AppColors.textDark),
+        iconTheme: IconThemeData(color: AppColors.text(context)),
       ),
       body: Center(
         child: Padding(
@@ -203,10 +227,10 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
         Text(
           'course.live_in_progress'.tr(),
           textAlign: TextAlign.center,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w600,
-            color: AppColors.textDark,
+            color: AppColors.text(context),
           ),
         ),
         const SizedBox(height: 24),
@@ -231,16 +255,16 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
         Text(
           'course.joining_live'.tr(),
           textAlign: TextAlign.center,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w600,
-            color: AppColors.textDark,
+            color: AppColors.text(context),
           ),
         ),
         const SizedBox(height: 8),
         Text(
           widget.liveRoom.instructorName,
-          style: const TextStyle(color: AppColors.textGray, fontSize: 13),
+          style: TextStyle(color: AppColors.subtext(context), fontSize: 13),
         ),
       ],
     );
@@ -250,23 +274,23 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(Icons.videocam_off_outlined,
-            size: 56, color: AppColors.textGray),
+        Icon(Icons.videocam_off_outlined,
+            size: 56, color: AppColors.subtext(context)),
         const SizedBox(height: 16),
         Text(
           'course.live_join_failed'.tr(),
           textAlign: TextAlign.center,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w600,
-            color: AppColors.textDark,
+            color: AppColors.text(context),
           ),
         ),
         const SizedBox(height: 8),
         Text(
           _error ?? '',
           textAlign: TextAlign.center,
-          style: const TextStyle(color: AppColors.textGray, fontSize: 12),
+          style: TextStyle(color: AppColors.subtext(context), fontSize: 12),
         ),
         const SizedBox(height: 24),
         FilledButton(

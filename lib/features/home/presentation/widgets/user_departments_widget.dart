@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/widgets/cover_image.dart';
 import '../../data/models/department_node.dart';
 import '../../data/department_filter_service.dart';
 
@@ -92,19 +93,15 @@ class _DepartmentTreeItem extends StatelessWidget {
             ),
             child: Row(
               children: [
-                if (node.image != null)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                      node.image!,
-                      width: 48,
-                      height: 48,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _buildPlaceholder(),
-                    ),
-                  )
-                else
-                  _buildPlaceholder(),
+                CoverImage(
+                  url: node.image,
+                  title: node.name,
+                  width: 48,
+                  height: 48,
+                  icon: Icons.menu_book_rounded,
+                  borderRadius: BorderRadius.circular(8),
+                  cacheWidth: 48,
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -156,20 +153,6 @@ class _DepartmentTreeItem extends StatelessWidget {
     );
   }
 
-  Widget _buildPlaceholder() {
-    return Container(
-      width: 48,
-      height: 48,
-      decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Icon(
-        Icons.folder_outlined,
-        color: Colors.grey.shade400,
-      ),
-    );
-  }
 }
 
 /// Simplified horizontal scroll version for Home Screen
@@ -241,17 +224,14 @@ class _SubjectCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Image
-            ClipRRect(
+            CoverImage(
+              url: department.image,
+              title: department.name,
+              width: 160,
+              height: 120,
+              icon: Icons.menu_book_rounded,
               borderRadius: BorderRadius.circular(16),
-              child: department.image != null
-                  ? Image.network(
-                      department.image!,
-                      height: 120,
-                      width: 160,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _buildPlaceholder(),
-                    )
-                  : _buildPlaceholder(),
+              cacheWidth: 160,
             ),
             const SizedBox(height: 8),
             // Name
@@ -279,19 +259,4 @@ class _SubjectCard extends StatelessWidget {
     );
   }
 
-  Widget _buildPlaceholder() {
-    return Container(
-      height: 120,
-      width: 160,
-      decoration: BoxDecoration(
-        color: Colors.grey.shade200,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Icon(
-        Icons.folder_outlined,
-        size: 40,
-        color: Colors.grey.shade400,
-      ),
-    );
-  }
 }

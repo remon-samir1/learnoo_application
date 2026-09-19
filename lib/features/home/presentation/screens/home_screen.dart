@@ -1,4 +1,8 @@
+import '../../../course_content/domain/library_material.dart';
+import '../../../course_content/presentation/screens/library_material_detail_screen.dart';
 import 'package:flutter/material.dart';
+import '../../../../core/utils/media_url.dart';
+import '../../../../core/widgets/cover_image.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:shimmer/shimmer.dart';
@@ -15,12 +19,11 @@ import '../../../course_content/presentation/screens/course_detail_screen.dart';
 import '../../../course_content/presentation/screens/electronic_library_screen.dart';
 import '../../../course_content/presentation/screens/lecture_detail_screen.dart';
 import '../../../course_content/presentation/screens/unlock_material_screen.dart';
-import '../../../course_content/presentation/screens/pdf_viewer_screen.dart';
 import '../../../course_content/presentation/screens/pdf_reviewer_screen.dart';
 import '../../../course_content/domain/chapter_access.dart';
 import '../../../../core/network/api_constants.dart';
-import '../../../course_content/presentation/screens/live_sessions_screen.dart';
-import '../../../course_content/presentation/screens/live_stream_screen.dart';
+import '../../../course_content/presentation/screens/live_session_detail_screen.dart';
+import '../../../course_content/presentation/widgets/live_room_widgets.dart';
 import '../../../course_content/data/chapter_repository.dart';
 import '../../../course_content/data/live_room_repository.dart';
 import '../../../course_content/data/models/live_room.dart';
@@ -106,7 +109,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final courseId = course['id']?.toString() ?? '';
     final attributes = course['attributes'] ?? {};
     final title = attributes['title']?.toString() ?? 'Course';
-    final thumbnail = attributes['thumbnail']?.toString() ?? '';
+    final thumbnail =
+        readMediaUrl(attributes, const ['thumbnail', 'image', 'cover_image']) ??
+            '';
     final price = attributes['price']?.toString() ?? '0';
     final description = attributes['description']?.toString() ?? '';
 
@@ -1118,7 +1123,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final attributes = item['attributes'] ?? {};
     final title = attributes['title']?.toString() ?? 'Untitled';
     final description = attributes['description']?.toString() ?? '';
-    final thumbnail = attributes['thumbnail']?.toString() ?? '';
+    final thumbnail = resolveMediaUrl(
+          attributes['thumbnail'] ?? attributes['image'],
+        ) ??
+        '';
 
     FaIconData iconData;
     Color iconColor;
@@ -1353,33 +1361,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openLibraryPdf(dynamic library) {
-    final attributes = library['attributes'] ?? {};
-    final title = attributes['title']?.toString() ?? 'Material';
-    final attachments = attributes['attachments'] as List<dynamic>? ?? [];
-
-    // Find first PDF attachment that is not locked or downloadable
-    final pdfAttachment = attachments.firstWhere((attachment) {
-      final ext =
-          attachment['attributes']?['extension']?.toString().toLowerCase() ??
-          '';
-      final isLocked = attachment['attributes']?['is_locked'] == true;
-      final downloadable = attachment['attributes']?['downloadable'] == true;
-      return ext == 'pdf' && (!isLocked || downloadable);
-    }, orElse: () => null);
-
-    final pdfUrl = pdfAttachment?['attributes']?['path']?.toString() ?? '';
-
-    if (pdfUrl.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('PDF not available')));
-      return;
-    }
-
+    final id = libraryId(library);
+    if (id == null) return;
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => PdfViewerScreen(pdfUrl: pdfUrl, title: title),
+        builder: (context) => LibraryMaterialDetailScreen(
+          materialId: id,
+          initialMaterial: library,
+        ),
       ),
     );
   }
@@ -1909,8 +1899,6 @@ class _HomeScreenState extends State<HomeScreen> {
     Color bgColor,
     Color iconColor,
   ) {
-    final firstLetter = title.isNotEmpty ? title[0].toUpperCase() : '?';
-
     final attributes = subject is Map ? (subject['attributes'] ?? {}) : {};
     final stats = attributes is Map ? attributes['stats'] : null;
     final coursesCount = stats is Map ? coerceInt(stats['courses']) : 0;
@@ -1943,26 +1931,13 @@ class _HomeScreenState extends State<HomeScreen> {
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(16),
               ),
-              child: imageUrl.isNotEmpty
-                  ? CachedNetworkImage(
-                      imageUrl: imageUrl,
-                      width: double.infinity,
-                      height: _subjectThumbnailHeight,
-                      fit: BoxFit.cover,
-                      memCacheWidth: 400,
-                      memCacheHeight: 320,
-                      placeholder: (context, url) => _buildSubjectIconFallback(
-                        firstLetter,
-                        iconColor,
-                      ),
-                      errorWidget: (context, url, error) {
-                        return _buildSubjectIconFallback(
-                          firstLetter,
-                          iconColor,
-                        );
-                      },
-                    )
-                  : _buildSubjectIconFallback(firstLetter, iconColor),
+              child: CoverImage(
+                url: imageUrl,
+                title: title,
+                height: _subjectThumbnailHeight,
+                icon: Icons.menu_book_rounded,
+                cacheWidth: _subjectCardWidth.round(),
+              ),
             ),
             Expanded(
               child: Padding(
@@ -1975,7 +1950,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: TextStyle(
                         color: iconColor,
                         fontWeight: FontWeight.w800,
-                        fontSize: 14,
+                        fontSize: 15,
                         height: 1.25,
                         letterSpacing: -0.3,
                       ),
@@ -1989,11 +1964,15 @@ class _HomeScreenState extends State<HomeScreen> {
                         _subjectStat(
                           Icons.menu_book_outlined,
                           '$coursesCount',
+                          iconSize: 14,
+                          fontSize: 12,
                         ),
                         const SizedBox(width: 12),
                         _subjectStat(
                           Icons.people_alt_outlined,
                           '$studentsCount',
+                          iconSize: 14,
+                          fontSize: 12,
                         ),
                       ],
                     ),
@@ -2009,47 +1988,23 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// Department card metrics.
   ///
-  /// The old card was 280x260 with a 160px thumbnail, which on a phone left
-  /// barely one card visible and pushed the rest of the home screen down. These
-  /// are sized so two cards fit side by side on a 360dp screen, and the fixed
-  /// height keeps every card in the row the same size no matter how long its
-  /// title is.
-  static const double _subjectCardWidth = 168;
-  static const double _subjectThumbnailHeight = 104;
-  static const double _subjectCardHeight = 184;
+  /// Sized to be visually prominent but still fit two cards side by side on
+  /// a 360dp screen. Larger than before to match the web's department cards.
+  static const double _subjectCardWidth = 200;
+  static const double _subjectThumbnailHeight = 130;
+  static const double _subjectCardHeight = 222;
 
-  Widget _subjectStat(IconData icon, String value) {
+  Widget _subjectStat(IconData icon, String value, {double iconSize = 13, double fontSize = 11}) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 13, color: const Color(0xFF9CA3AF)),
+        Icon(icon, size: iconSize, color: const Color(0xFF9CA3AF)),
         const SizedBox(width: 4),
         Text(
           value,
-          style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
+          style: TextStyle(fontSize: fontSize, color: const Color(0xFF6B7280)),
         ),
       ],
-    );
-  }
-
-  Widget _buildSubjectIconFallback(String letter, Color color) {
-    return Container(
-      width: double.infinity,
-      height: _subjectThumbnailHeight,
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Center(
-        child: Text(
-          letter,
-          style: TextStyle(
-            color: color,
-            fontWeight: FontWeight.w900,
-            fontSize: 64,
-          ),
-        ),
-      ),
     );
   }
 
@@ -2206,23 +2161,11 @@ class _HomeScreenState extends State<HomeScreen> {
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(20),
               ),
-              child: CachedNetworkImage(
-                imageUrl: imageUrl,
+              child: CoverImage(
+                url: imageUrl,
+                title: title,
                 height: 120,
-                width: double.infinity,
-                fit: BoxFit.cover,
-                memCacheWidth: 300,
-                memCacheHeight: 240,
-                placeholder: (context, url) => Container(
-                  height: 120,
-                  width: double.infinity,
-                  color: Colors.grey[300],
-                ),
-                errorWidget: (context, url, error) => Container(
-                  height: 120,
-                  width: double.infinity,
-                  color: Colors.grey[300],
-                ),
+                cacheWidth: 240,
               ),
             ),
             Padding(
@@ -2640,6 +2583,8 @@ class _HomeScreenState extends State<HomeScreen> {
           final type = attributes['type']?.toString() ?? 'note';
           final linkedLecture = attributes['linked_lecture']?.toString();
           final createdAt = attributes['created_at']?.toString();
+          final imageUrl = attributes['image']?.toString() ??
+              attributes['thumbnail']?.toString() ?? '';
 
           final typeStyles = _getNoteTypeStyles(type);
           final dateText = _formatNoteDate(createdAt);
@@ -2655,6 +2600,7 @@ class _HomeScreenState extends State<HomeScreen> {
               typeStyles['icon'],
               typeStyles['bgColor'],
               typeStyles['iconColor'],
+              imageUrl: imageUrl,
             ),
           );
         }).toList(),
@@ -2788,12 +2734,12 @@ class _HomeScreenState extends State<HomeScreen> {
     String subtitle,
     FaIconData icon,
     Color bgColor,
-    Color iconColor,
-  ) {
+    Color iconColor, {
+    String imageUrl = '',
+  }) {
     return Container(
-      width: 180,
+      width: 190,
       margin: const EdgeInsets.only(right: 16),
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -2809,31 +2755,72 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: BorderRadius.circular(10),
+          // Thumbnail image on top of card if available
+          if (imageUrl.isNotEmpty)
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+              child: CachedNetworkImage(
+                imageUrl: imageUrl,
+                width: double.infinity,
+                height: 100,
+                fit: BoxFit.cover,
+                memCacheWidth: 380,
+                memCacheHeight: 200,
+                placeholder: (context, url) => Container(
+                  height: 100,
+                  color: bgColor,
+                  child: Center(child: FaIcon(icon, color: iconColor, size: 24)),
+                ),
+                errorWidget: (context, url, error) => Container(
+                  height: 100,
+                  color: bgColor,
+                  child: Center(child: FaIcon(icon, color: iconColor, size: 24)),
+                ),
+              ),
+            )
+          else
+            // Icon-only fallback header
+            Container(
+              height: 72,
+              decoration: BoxDecoration(
+                color: bgColor,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: iconColor.withValues(alpha: 0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: FaIcon(icon, color: iconColor, size: 24),
+                ),
+              ),
             ),
-            child: FaIcon(icon, color: iconColor, size: 20),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            title,
-            style: const TextStyle(
-              fontWeight: FontWeight.w600,
-              fontSize: 14,
-              color: Color(0xFF1F2937),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    color: Color(0xFF1F2937),
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 11),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 12),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
@@ -2867,7 +2854,7 @@ class _HomeScreenState extends State<HomeScreen> {
           final title = attributes['title']?.toString() ?? 'Untitled';
           final price = attributes['price']?.toString() ?? '0';
           final coverImage = attributes['cover_image']?.toString() ?? '';
-          final isLocked = attributes['is_locked'] == true;
+          final isLocked = libraryIsLocked(library);
 
           return _buildLibraryCard(
             title: title,
@@ -3097,12 +3084,13 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (_liveClasses.isEmpty) {
-      return const SizedBox(
+      return SizedBox(
         height: 100,
         child: Center(
           child: Text(
-            'No upcoming live classes',
-            style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
+            'live.home_empty'.tr(),
+            textAlign: TextAlign.center,
+            style: TextStyle(color: AppColors.muted(context), fontSize: 14),
           ),
         ),
       );
@@ -3196,136 +3184,17 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildLiveClassCard({required LiveRoom liveRoom}) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFF1F1F1)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.02),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
+    // Website home card: every action opens the live session page.
+    return LiveHomeCard(
+      room: liveRoom,
+      onOpen: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => LiveSessionDetailScreen(
+            roomId: liveRoom.id,
+            initialRoom: liveRoom,
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: liveRoom.isLive
-                      ? AppColors.liveBg
-                      : const Color(0xFFFFF9F0),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 3,
-                      backgroundColor: liveRoom.isLive
-                          ? AppColors.liveText
-                          : const Color(0xFFF2994A),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      liveRoom.isLive ? 'LIVE' : 'UPCOMING',
-                      style: TextStyle(
-                        color: liveRoom.isLive
-                            ? AppColors.liveText
-                            : const Color(0xFFF2994A),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Spacer(),
-              const FaIcon(
-                FontAwesomeIcons.towerBroadcast,
-                color: Color(0xFF5A75FF),
-                size: 20,
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Text(
-            liveRoom.title,
-            style: const TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 17,
-              color: Color(0xFF1F2937),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            liveRoom.instructorName,
-            style: const TextStyle(
-              color: Color(0xFF9CA3AF),
-              fontSize: 14,
-              fontWeight: FontWeight.w400,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            liveRoom.formattedTime,
-            style: TextStyle(
-              color: const Color(0xFF9CA3AF).withValues(alpha: 0.7),
-              fontSize: 12,
-              fontWeight: FontWeight.w400,
-            ),
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton(
-            onPressed: () {
-              if (liveRoom.isLive) {
-                // Navigate to live stream screen
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => LiveStreamScreen(liveRoom: liveRoom),
-                  ),
-                );
-              } else {
-                // Navigate to live sessions screen for upcoming sessions
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const LiveSessionsScreen(),
-                  ),
-                );
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: liveRoom.isLive
-                  ? AppColors.joinLiveGreen
-                  : const Color(0xFF5A75FF),
-              foregroundColor: Colors.white,
-              minimumSize: const Size(double.infinity, 52),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              elevation: 0,
-            ),
-            child: Text(
-              liveRoom.isLive ? 'JOIN LIVE' : 'VIEW DETAILS',
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.5,
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

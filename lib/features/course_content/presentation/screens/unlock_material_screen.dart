@@ -1,14 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../data/library_repository.dart';
-import 'pdf_viewer_screen.dart';
+import 'library_material_detail_screen.dart';
 
 class UnlockMaterialScreen extends StatefulWidget {
   final dynamic library;
 
+  /// When true, a successful activation pops with `true` so the caller (the
+  /// material detail screen) can refresh in place, which is what the website's
+  /// activation modal does. Otherwise the material's detail page replaces this
+  /// screen.
+  final bool returnOnSuccess;
+
   const UnlockMaterialScreen({
     super.key,
     required this.library,
+    this.returnOnSuccess = false,
   });
 
   @override
@@ -60,7 +67,7 @@ class _UnlockMaterialScreenState extends State<UnlockMaterialScreen> {
         });
 
         if (result['success']) {
-          _openPdf();
+          _onActivated();
         } else {
           _showError(result['message'] ?? 'Invalid activation code');
         }
@@ -75,35 +82,25 @@ class _UnlockMaterialScreenState extends State<UnlockMaterialScreen> {
     }
   }
 
-  void _openPdf() {
-    final attributes = widget.library['attributes'] ?? {};
-    final title = attributes['title']?.toString() ?? 'Material';
-    final attachments = attributes['attachments'] as List<dynamic>? ?? [];
+  /// After a successful activation the student lands on the material's page,
+  /// where opening and downloading follow the website's rules (watermark,
+  /// downloadable flag). The screen used to open the raw PDF directly.
+  void _onActivated() {
+    if (widget.returnOnSuccess) {
+      Navigator.pop(context, true);
+      return;
+    }
 
-    final pdfAttachment = attachments.firstWhere(
-      (attachment) {
-        final ext = attachment['attributes']?['extension']?.toString().toLowerCase() ?? '';
-        return ext == 'pdf';
-      },
-      orElse: () => null,
-    );
-
-    final pdfUrl = pdfAttachment?['attributes']?['path']?.toString() ?? '';
-
-    if (pdfUrl.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('PDF not available')),
-      );
+    final id = widget.library is Map ? widget.library['id']?.toString() : null;
+    if (id == null || id.isEmpty) {
+      Navigator.pop(context, true);
       return;
     }
 
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (context) => PdfViewerScreen(
-          pdfUrl: pdfUrl,
-          title: title,
-        ),
+        builder: (context) => LibraryMaterialDetailScreen(materialId: id),
       ),
     );
   }

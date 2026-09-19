@@ -84,9 +84,15 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
 
   @override
   void dispose() {
-    for (final c in _replyControllers.values) c.dispose();
+    for (final c in _replyControllers.values) {
+      c.dispose();
+    }
     super.dispose();
   }
+
+  /// Colours for the sheet, resolved against the current theme so typed text,
+  /// hints and comment bodies stay readable in dark mode.
+  _DiscussionPalette get _p => _DiscussionPalette.of(context);
 
   TextEditingController _getReplyController(String id) =>
       _replyControllers.putIfAbsent(id, () => TextEditingController());
@@ -128,9 +134,9 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
           ),
           Expanded(
             child: Container(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+              decoration: BoxDecoration(
+                color: _p.sheet,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
               ),
               child: Column(
                 children: [
@@ -139,7 +145,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                     width: 40,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: Colors.grey[300],
+                      color: _p.border,
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -153,10 +159,10 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                             children: [
                               Text(
                                 'course.ask_about_moment_title'.tr(),
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 20,
                                   fontWeight: FontWeight.bold,
-                                  color: Color(0xFF1F2937),
+                                  color: _p.title,
                                 ),
                               ),
                               if (widget.currentPositionSeconds > 0) ...[
@@ -165,14 +171,14 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 8, vertical: 3),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFFEEF2FF),
+                                    color: _p.chip,
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: Text(
                                     _formatMoment(widget.currentPositionSeconds),
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 12,
-                                      color: Color(0xFF3451E5),
+                                      color: _p.accent,
                                       fontWeight: FontWeight.w700,
                                     ),
                                   ),
@@ -183,7 +189,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                         ),
                         IconButton(
                           onPressed: widget.onClose,
-                          icon: const Icon(Icons.close, color: Color(0xFF9CA3AF)),
+                          icon: Icon(Icons.close, color: _p.faint),
                         ),
                       ],
                     ),
@@ -211,7 +217,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
       margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: const Color(0xFFF3F4F6),
+        color: _p.tabsBg,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
@@ -233,7 +239,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
           duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color: isSelected ? Colors.white : Colors.transparent,
+            color: isSelected ? _p.tabSelected : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
             boxShadow: isSelected
                 ? [
@@ -251,7 +257,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
             style: TextStyle(
               fontSize: 13,
               fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-              color: isSelected ? const Color(0xFF3451E5) : const Color(0xFF6B7280),
+              color: isSelected ? _p.accent : _p.muted,
             ),
           ),
         ),
@@ -264,9 +270,9 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
       margin: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _p.sheet,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFF3F4F6)),
+        border: Border.all(color: _p.border),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.03),
@@ -282,23 +288,25 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
             children: [
               Text(
                 'course.about_moment'.tr(args: [_formatMoment(widget.currentPositionSeconds)]),
-                style: const TextStyle(
+                style: TextStyle(
                   fontWeight: FontWeight.bold,
                   fontSize: 14,
-                  color: Color(0xFF1F2937),
+                  color: _p.title,
                 ),
               ),
               const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFEEF2FF),
+                  color: _p.chip,
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
-                  widget.currentTab == 'comment' ? 'comment' : 'voice',
-                  style: const TextStyle(
-                    color: Color(0xFF3451E5),
+                  widget.currentTab == 'comment'
+                      ? 'course.comment'.tr()
+                      : 'course.voice'.tr(),
+                  style: TextStyle(
+                    color: _p.accent,
                     fontSize: 10,
                     fontWeight: FontWeight.w600,
                   ),
@@ -307,7 +315,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
               const Spacer(),
               GestureDetector(
                 onTap: () => widget.onTabChanged('all'),
-                child: const Icon(Icons.close, size: 18, color: Color(0xFF9CA3AF)),
+                child: Icon(Icons.close, size: 18, color: _p.faint),
               ),
             ],
           ),
@@ -317,14 +325,24 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
             TextField(
               controller: widget.commentController,
               maxLines: 4,
+              style: TextStyle(color: _p.title, fontSize: 14, height: 1.4),
+              cursorColor: _p.accent,
               decoration: InputDecoration(
                 hintText: 'course.write_comment_moment'.tr(),
-                hintStyle: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
+                hintStyle: TextStyle(color: _p.faint, fontSize: 14),
                 filled: true,
-                fillColor: const Color(0xFFF9FAFB),
+                fillColor: _p.field,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide.none,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: _p.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: _p.accent, width: 1.5),
                 ),
                 contentPadding: const EdgeInsets.all(16),
               ),
@@ -362,7 +380,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         decoration: BoxDecoration(
-          color: const Color(0xFFF9FAFB),
+          color: _p.field,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -375,7 +393,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
             const SizedBox(width: 12),
             Text(
               'course.capturing_moment'.tr(),
-              style: const TextStyle(color: Color(0xFF6B7280), fontSize: 13),
+              style: TextStyle(color: _p.muted, fontSize: 13),
             ),
           ],
         ),
@@ -389,9 +407,9 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF9FAFB),
+        color: _p.field,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        border: Border.all(color: _p.border),
       ),
       child: Row(
         children: [
@@ -402,7 +420,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
               width: 84,
               height: 52,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(
+              errorBuilder: (_, _, _) => Container(
                 width: 84,
                 height: 52,
                 color: const Color(0xFFE5E7EB),
@@ -422,18 +440,18 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
               children: [
                 Text(
                   'course.frame_attached'.tr(),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF111827),
+                    color: _p.title,
                   ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   _formatMoment(widget.currentPositionSeconds),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
-                    color: Color(0xFF6B7280),
+                    color: _p.muted,
                   ),
                 ),
               ],
@@ -457,7 +475,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 24),
       decoration: BoxDecoration(
-        color: const Color(0xFFF9FAFB),
+        color: _p.field,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -465,13 +483,13 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
           Icon(
             widget.isRecording ? Icons.mic : Icons.mic_none,
             size: 48,
-            color: widget.isRecording ? const Color(0xFF3451E5) : const Color(0xFF9CA3AF),
+            color: widget.isRecording ? _p.accent : _p.faint,
           ),
           const SizedBox(height: 12),
           Text(
             widget.isRecording ? 'course.recording'.tr() : 'course.tap_to_record'.tr(),
             style: TextStyle(
-              color: widget.isRecording ? const Color(0xFF3451E5) : const Color(0xFF6B7280),
+              color: widget.isRecording ? _p.accent : _p.muted,
               fontSize: 14,
               fontWeight: FontWeight.w500,
             ),
@@ -522,7 +540,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFF9FAFB),
+        color: _p.field,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
@@ -535,7 +553,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                   widget.currentlyPlayingUrl == 'recorded'
                       ? Icons.pause_rounded
                       : Icons.play_arrow_rounded,
-                  color: const Color(0xFF3451E5),
+                  color: _p.accent,
                   size: 32,
                 ),
               ),
@@ -551,7 +569,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                           value: totalDuration.inMilliseconds > 0
                               ? position.inMilliseconds / totalDuration.inMilliseconds
                               : 0.0,
-                          backgroundColor: const Color(0xFFE5E7EB),
+                          backgroundColor: _p.border,
                           valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF3451E5)),
                           borderRadius: BorderRadius.circular(4),
                         );
@@ -566,8 +584,8 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                 builder: (context, totalDuration, child) {
                   return Text(
                     _formatDuration(totalDuration),
-                    style: const TextStyle(
-                      color: Color(0xFF6B7280),
+                    style: TextStyle(
+                      color: _p.muted,
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
                     ),
@@ -628,8 +646,8 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
       padding: const EdgeInsets.symmetric(horizontal: 20),
       itemCount: 5,
       itemBuilder: (context, index) => Shimmer.fromColors(
-        baseColor: Colors.grey[200]!,
-        highlightColor: Colors.grey[50]!,
+        baseColor: _p.field,
+        highlightColor: _p.border,
         child: Padding(
           padding: const EdgeInsets.only(bottom: 20),
           child: Row(
@@ -661,13 +679,13 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.chat_bubble_outline, size: 48, color: Color(0xFFD1D5DB)),
+          Icon(Icons.chat_bubble_outline, size: 48, color: _p.faint),
           const SizedBox(height: 16),
           Text('course.no_discussions_yet'.tr(),
-              style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 16)),
+              style: TextStyle(color: _p.muted, fontSize: 16)),
           const SizedBox(height: 8),
           Text('course.be_the_first_discussion'.tr(),
-              style: const TextStyle(color: Color(0xFFD1D5DB), fontSize: 13)),
+              style: TextStyle(color: _p.faint, fontSize: 13)),
         ],
       ),
     );
@@ -724,7 +742,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
             imageUrl: imageUrl,
           ),
           Padding(
-            padding: const EdgeInsets.only(left: 48, top: 8),
+            padding: const EdgeInsetsDirectional.only(start: 48, top: 8),
             child: Wrap(
               spacing: 8,
               children: [
@@ -761,14 +779,14 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
           if (showReplyInput) _buildReplyComposer(id),
           if (isExpanded && allReplies.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(left: 56, top: 8),
+              padding: const EdgeInsetsDirectional.only(start: 56, top: 8),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
                     width: 2,
-                    margin: const EdgeInsets.only(right: 12, top: 4),
-                    color: const Color(0xFFE5E7EB),
+                    margin: const EdgeInsetsDirectional.only(end: 12, top: 4),
+                    color: _p.border,
                   ),
                   Expanded(
                     child: Column(
@@ -797,11 +815,11 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
       children: [
         CircleAvatar(
           radius: 18,
-          backgroundColor: const Color(0xFFE5E7EB),
+          backgroundColor: _p.border,
           child: Text(
             firstName.isNotEmpty ? firstName[0].toUpperCase() : 'U',
-            style: const TextStyle(
-              color: Color(0xFF6B7280),
+            style: TextStyle(
+              color: _p.muted,
               fontSize: 13,
               fontWeight: FontWeight.bold,
             ),
@@ -817,18 +835,18 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                   Expanded(
                     child: Text(
                       '$firstName $lastName'.trim().isEmpty
-                          ? 'User'
+                          ? 'community.unknown_user'.tr()
                           : '$firstName $lastName'.trim(),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 14,
-                        color: Color(0xFF1F2937),
+                        color: _p.title,
                       ),
                     ),
                   ),
                   Text(
                     _formatDate(createdAt),
-                    style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 11),
+                    style: TextStyle(color: _p.faint, fontSize: 11),
                   ),
                 ],
               ),
@@ -836,13 +854,13 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFEEF2FF),
+                  color: _p.chip,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   _formatMoment(moment),
-                  style: const TextStyle(
-                    color: Color(0xFF3451E5),
+                  style: TextStyle(
+                    color: _p.accent,
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
                   ),
@@ -851,12 +869,12 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
               const SizedBox(height: 8),
               if (type == 'text' && content.isNotEmpty)
                 Text(content,
-                    style: const TextStyle(
-                        fontSize: 14, color: Color(0xFF4B5563), height: 1.5)),
+                    style: TextStyle(
+                        fontSize: 14, color: _p.body, height: 1.5)),
               if (type == 'voice' && content.isNotEmpty) _buildAudioPlayer(content),
               if (type == 'voice' && content.isEmpty)
                 Text('course.voice_question_linked'.tr(),
-                    style: const TextStyle(color: Color(0xFF6B7280), fontSize: 13)),
+                    style: TextStyle(color: _p.muted, fontSize: 13)),
               if (imageUrl.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 _buildNetworkImage(imageUrl, height: 160),
@@ -886,9 +904,9 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: const Color(0xFFF8F9FF),
+          color: _p.replyCard,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE5E7EB)),
+          border: Border.all(color: _p.border),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -898,11 +916,11 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                 CircleAvatar(
                   radius: 14,
                   backgroundColor:
-                      isInstructor ? const Color(0xFF3451E5) : const Color(0xFFE5E7EB),
+                      isInstructor ? const Color(0xFF3451E5) : _p.border,
                   child: Text(
                     firstName.isNotEmpty ? firstName[0].toUpperCase() : 'U',
                     style: TextStyle(
-                      color: isInstructor ? Colors.white : const Color(0xFF6B7280),
+                      color: isInstructor ? Colors.white : _p.muted,
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
                     ),
@@ -912,12 +930,12 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                 Expanded(
                   child: Text(
                     '$firstName $lastName'.trim().isEmpty
-                        ? 'User'
+                        ? 'community.unknown_user'.tr()
                         : '$firstName $lastName'.trim(),
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 13,
-                      color: isInstructor ? const Color(0xFF3451E5) : const Color(0xFF1F2937),
+                      color: isInstructor ? _p.accent : _p.title,
                     ),
                   ),
                 ),
@@ -937,14 +955,14 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                   ),
                 const SizedBox(width: 6),
                 Text(_formatDate(createdAt),
-                    style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 10)),
+                    style: TextStyle(color: _p.faint, fontSize: 10)),
               ],
             ),
             const SizedBox(height: 8),
             if (type == 'text' && content.isNotEmpty)
               Text(content,
-                  style: const TextStyle(
-                      fontSize: 13, color: Color(0xFF4B5563), height: 1.5)),
+                  style: TextStyle(
+                      fontSize: 13, color: _p.body, height: 1.5)),
             if (type == 'voice' && content.isNotEmpty) _buildAudioPlayer(content),
             if (imageUrl.isNotEmpty) ...[
               const SizedBox(height: 8),
@@ -962,13 +980,13 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
     final parentIdInt = int.tryParse(discussionId);
 
     return Padding(
-      padding: const EdgeInsets.only(left: 48, top: 10, bottom: 4),
+      padding: const EdgeInsetsDirectional.only(start: 48, top: 10, bottom: 4),
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: const Color(0xFFF9FAFB),
+          color: _p.field,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE5E7EB)),
+          border: Border.all(color: _p.border),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
@@ -977,22 +995,24 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
               controller: controller,
               maxLines: 3,
               minLines: 1,
+              style: TextStyle(color: _p.title, fontSize: 13, height: 1.4),
+              cursorColor: _p.accent,
               decoration: InputDecoration(
                 hintText: 'course.write_reply'.tr(),
-                hintStyle: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 13),
+                hintStyle: TextStyle(color: _p.faint, fontSize: 13),
                 filled: true,
-                fillColor: Colors.white,
+                fillColor: _p.sheet,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                  borderSide: BorderSide(color: _p.border),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                  borderSide: BorderSide(color: _p.border),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: Color(0xFF3451E5), width: 1.5),
+                  borderSide: BorderSide(color: _p.accent, width: 1.5),
                 ),
                 contentPadding: const EdgeInsets.all(12),
               ),
@@ -1007,7 +1027,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                     setState(() => _showReplyInput.remove(discussionId));
                   },
                   child: Text('course.cancel_reply'.tr(),
-                      style: const TextStyle(color: Color(0xFF6B7280))),
+                      style: TextStyle(color: _p.muted)),
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
@@ -1055,7 +1075,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFEEF2FF),
+        color: _p.chip,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
@@ -1103,8 +1123,8 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
             builder: (context, totalDuration, child) {
               return Text(
                 _formatDuration(totalDuration),
-                style: const TextStyle(
-                  color: Color(0xFF3451E5),
+                style: TextStyle(
+                  color: _p.accent,
                   fontSize: 10,
                   fontWeight: FontWeight.bold,
                 ),
@@ -1124,13 +1144,13 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
         height: height,
         width: double.infinity,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+        errorBuilder: (_, _, _) => const SizedBox.shrink(),
         loadingBuilder: (_, child, progress) {
           if (progress == null) return child;
           return Container(
             height: height,
             width: double.infinity,
-            color: const Color(0xFFF3F4F6),
+            color: _p.field,
             child: const Center(
               child: CircularProgressIndicator(
                 strokeWidth: 2,
@@ -1155,19 +1175,19 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: active ? const Color(0xFF3451E5) : const Color(0xFFEEF2FF),
+          color: active ? const Color(0xFF3451E5) : _p.chip,
           borderRadius: BorderRadius.circular(20),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 14, color: active ? Colors.white : const Color(0xFF3451E5)),
+            Icon(icon, size: 14, color: active ? Colors.white : _p.accent),
             const SizedBox(width: 4),
             Text(
               label,
               style: TextStyle(
                 fontSize: 12,
-                color: active ? Colors.white : const Color(0xFF3451E5),
+                color: active ? Colors.white : _p.accent,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -1198,4 +1218,27 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
       return dateStr;
     }
   }
+}
+
+/// Theme-resolved colours for [DiscussionPanel].
+class _DiscussionPalette {
+  const _DiscussionPalette._(this.isDark);
+
+  factory _DiscussionPalette.of(BuildContext context) =>
+      _DiscussionPalette._(Theme.of(context).brightness == Brightness.dark);
+
+  final bool isDark;
+
+  Color get sheet => isDark ? const Color(0xFF1E212B) : Colors.white;
+  Color get title => isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937);
+  Color get body => isDark ? const Color(0xFFE2E8F0) : const Color(0xFF4B5563);
+  Color get muted => isDark ? const Color(0xFFCBD5E1) : const Color(0xFF6B7280);
+  Color get faint => isDark ? const Color(0xFF94A3B8) : const Color(0xFF9CA3AF);
+  Color get field => isDark ? const Color(0xFF262A36) : const Color(0xFFF9FAFB);
+  Color get border => isDark ? const Color(0xFF383E52) : const Color(0xFFE5E7EB);
+  Color get chip => isDark ? const Color(0xFF2A3154) : const Color(0xFFEEF2FF);
+  Color get accent => isDark ? const Color(0xFF8BA1FF) : const Color(0xFF3451E5);
+  Color get tabsBg => isDark ? const Color(0xFF13151B) : const Color(0xFFF3F4F6);
+  Color get tabSelected => isDark ? const Color(0xFF262A36) : Colors.white;
+  Color get replyCard => isDark ? const Color(0xFF232838) : const Color(0xFFF8F9FF);
 }

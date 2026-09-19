@@ -11,46 +11,51 @@ class HelpFaqScreen extends StatefulWidget {
 class _HelpFaqScreenState extends State<HelpFaqScreen> {
   int _expandedIndex = 0;
 
-  final List<Map<String, String>> _faqs = [
+  List<Map<String, String>> get _faqs => [
     {
-      'question': 'How do I join a live session?',
-      'answer': 'Lorem ipsum dolor sit amet consectetur. Proin fermentum morbi gravida magna molestie lacinia id purus felis.',
+      'question': 'help_faq.q1'.tr(),
+      'answer': 'help_faq.a1'.tr(),
     },
     {
-      'question': 'Where can I find my course notes?',
-      'answer': 'You can find your course notes in the materials section of your respective course dashboard.',
+      'question': 'help_faq.q2'.tr(),
+      'answer': 'help_faq.a2'.tr(),
     },
     {
-      'question': 'How to reset my password?',
-      'answer': 'Go to the login screen and tap on "Forgot Password" to receive a reset link on your registered email.',
+      'question': 'help_faq.q3'.tr(),
+      'answer': 'help_faq.a3'.tr(),
     },
     {
-      'question': 'Troubleshooting video playback',
-      'answer': 'Check your internet connection or try clearing the app cache if you experience video playback issues.',
+      'question': 'help_faq.q4'.tr(),
+      'answer': 'help_faq.a4'.tr(),
     },
   ];
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final faqsList = _faqs;
+
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: isDark ? const Color(0xFF13151B) : Colors.white,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: isDark ? const Color(0xFF13151B) : Colors.white,
         elevation: 0,
         leading: Padding(
-          padding: const EdgeInsets.only(left: 16.0),
+          padding: const EdgeInsets.only(left: 16.0, right: 16.0),
           child: IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.black87),
+            icon: Icon(Icons.arrow_back, color: isDark ? Colors.white : Colors.black87),
             onPressed: () => Navigator.pop(context),
             style: IconButton.styleFrom(
-              shape: CircleBorder(side: BorderSide(color: Colors.grey[200]!)),
+              shape: CircleBorder(
+                side: BorderSide(color: isDark ? const Color(0xFF383E52) : Colors.grey[200]!),
+              ),
             ),
           ),
         ),
         title: Text(
           'help_faq.title'.tr(),
-          style: const TextStyle(
-            color: Color(0xFF2D3748),
+          style: TextStyle(
+            color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF2D3748),
             fontWeight: FontWeight.bold,
             fontSize: 20,
           ),
@@ -63,26 +68,36 @@ class _HelpFaqScreenState extends State<HelpFaqScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             TextField(
+              style: TextStyle(color: isDark ? const Color(0xFFF8FAFC) : Colors.black87),
               decoration: InputDecoration(
                 hintText: 'help_faq.search'.tr(),
-                hintStyle: const TextStyle(color: Color(0xFFA0AEC0)),
-                prefixIcon: const Icon(Icons.search, color: Color(0xFFA0AEC0)),
+                hintStyle: TextStyle(
+                  color: isDark ? const Color(0xFF64748B) : const Color(0xFFA0AEC0),
+                ),
+                prefixIcon: Icon(
+                  Icons.search,
+                  color: isDark ? const Color(0xFF64748B) : const Color(0xFFA0AEC0),
+                ),
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                filled: true,
+                fillColor: isDark ? const Color(0xFF1E212B) : Colors.white,
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: Colors.grey[200]!),
+                  borderSide: BorderSide(
+                    color: isDark ? const Color(0xFF383E52) : Colors.grey[200]!,
+                  ),
                 ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Color(0xFF263EE2)),
+                focusedBorder: const OutlineInputBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(12)),
+                  borderSide: BorderSide(color: Color(0xFF263EE2)),
                 ),
               ),
             ),
             const SizedBox(height: 24),
             Text(
               'help_faq.common_questions'.tr(),
-              style: const TextStyle(
-                color: Color(0xFF64748B),
+              style: TextStyle(
+                color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
                 fontWeight: FontWeight.bold,
                 fontSize: 14,
               ),
@@ -90,15 +105,17 @@ class _HelpFaqScreenState extends State<HelpFaqScreen> {
             const SizedBox(height: 12),
             Container(
               decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border.all(color: Colors.grey[200]!),
+                color: isDark ? const Color(0xFF1E212B) : Colors.white,
+                border: Border.all(
+                  color: isDark ? const Color(0xFF2E3344) : Colors.grey[200]!,
+                ),
                 borderRadius: BorderRadius.circular(16),
               ),
               clipBehavior: Clip.antiAlias,
               child: Column(
-                children: List.generate(_faqs.length, (index) {
+                children: List.generate(faqsList.length, (index) {
                   final isExpanded = _expandedIndex == index;
-                  final isLast = index == _faqs.length - 1;
+                  final isLast = index == faqsList.length - 1;
                   return Column(
                     children: [
                       InkWell(
@@ -117,26 +134,34 @@ class _HelpFaqScreenState extends State<HelpFaqScreen> {
                                 children: [
                                   Expanded(
                                     child: Text(
-                                      _faqs[index]['question']!,
-                                      style: const TextStyle(
-                                        color: Color(0xFF334155),
+                                      faqsList[index]['question']!,
+                                      style: TextStyle(
+                                        color: isDark
+                                            ? const Color(0xFFF8FAFC)
+                                            : const Color(0xFF334155),
                                         fontWeight: FontWeight.w600,
                                         fontSize: 15,
                                       ),
                                     ),
                                   ),
                                   Icon(
-                                    isExpanded ? Icons.keyboard_arrow_down : Icons.chevron_right,
-                                    color: const Color(0xFF94A3B8),
+                                    isExpanded
+                                        ? Icons.keyboard_arrow_down
+                                        : Icons.chevron_right,
+                                    color: isDark
+                                        ? const Color(0xFF64748B)
+                                        : const Color(0xFF94A3B8),
                                   ),
                                 ],
                               ),
                               if (isExpanded) ...[
                                 const SizedBox(height: 12),
                                 Text(
-                                  _faqs[index]['answer']!,
-                                  style: const TextStyle(
-                                    color: Color(0xFF64748B),
+                                  faqsList[index]['answer']!,
+                                  style: TextStyle(
+                                    color: isDark
+                                        ? const Color(0xFFCBD5E1)
+                                        : const Color(0xFF64748B),
                                     height: 1.5,
                                     fontSize: 14,
                                   ),
@@ -147,7 +172,11 @@ class _HelpFaqScreenState extends State<HelpFaqScreen> {
                         ),
                       ),
                       if (!isLast)
-                        Divider(height: 1, color: Colors.grey[200], thickness: 1),
+                        Divider(
+                          height: 1,
+                          color: isDark ? const Color(0xFF2E3344) : Colors.grey[200],
+                          thickness: 1,
+                        ),
                     ],
                   );
                 }),
@@ -159,16 +188,21 @@ class _HelpFaqScreenState extends State<HelpFaqScreen> {
               height: 50,
               child: OutlinedButton.icon(
                 onPressed: () {},
-                icon: const Icon(Icons.email_outlined, color: Color(0xFF475569)),
+                icon: Icon(
+                  Icons.email_outlined,
+                  color: isDark ? const Color(0xFFCBD5E1) : const Color(0xFF475569),
+                ),
                 label: Text(
                   'help_faq.contact_support'.tr(),
-                  style: const TextStyle(
-                    color: Color(0xFF334155),
+                  style: TextStyle(
+                    color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF334155),
                     fontWeight: FontWeight.w600,
                   ),
                 ),
                 style: OutlinedButton.styleFrom(
-                  side: BorderSide(color: Colors.grey[300]!),
+                  side: BorderSide(
+                    color: isDark ? const Color(0xFF383E52) : Colors.grey[300]!,
+                  ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),

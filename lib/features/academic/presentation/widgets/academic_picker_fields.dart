@@ -204,6 +204,8 @@ class _AcademicPickerFieldsState extends State<AcademicPickerFields> {
     required List<AcademicOption> options,
     required ValueChanged<String?> onChanged,
   }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: Column(
@@ -211,18 +213,20 @@ class _AcademicPickerFieldsState extends State<AcademicPickerFields> {
         children: [
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF374151),
+              color: isDark ? const Color(0xFFE2E8F0) : const Color(0xFF374151),
             ),
           ),
           const SizedBox(height: 8),
           DecoratedBox(
             decoration: BoxDecoration(
-              color: const Color(0xFFF9FAFB),
+              color: isDark ? const Color(0xFF262A36) : const Color(0xFFF9FAFB),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFE5E7EB)),
+              border: Border.all(
+                color: isDark ? const Color(0xFF383E52) : const Color(0xFFE5E7EB),
+              ),
             ),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -230,11 +234,14 @@ class _AcademicPickerFieldsState extends State<AcademicPickerFields> {
                 child: DropdownButton<String>(
                   isExpanded: true,
                   value: value,
+                  dropdownColor: isDark ? const Color(0xFF1E212B) : Colors.white,
+                  iconEnabledColor: isDark ? const Color(0xFFCBD5E1) : Colors.grey[700],
+                  iconDisabledColor: isDark ? const Color(0xFF64748B) : Colors.grey[400],
                   hint: Text(
                     hint,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 14,
-                      color: Color(0xFF9CA3AF),
+                      color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF9CA3AF),
                     ),
                   ),
                   items: options
@@ -244,9 +251,9 @@ class _AcademicPickerFieldsState extends State<AcademicPickerFields> {
                           child: Text(
                             option.label,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 14,
-                              color: Color(0xFF1F2937),
+                              color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
                             ),
                           ),
                         ),

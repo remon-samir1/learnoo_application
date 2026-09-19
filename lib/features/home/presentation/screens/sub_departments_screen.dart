@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/widgets/cover_image.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:learnoo/features/category_tree/presentation/screens/category_tree_screen.dart';
@@ -261,7 +262,7 @@ class SubDepartmentsScreen extends StatelessWidget {
         crossAxisCount: 2,
         crossAxisSpacing: 16,
         mainAxisSpacing: 16,
-        childAspectRatio: 0.85,
+        childAspectRatio: 0.72,
       ),
       itemCount: subDepartments.length,
       itemBuilder: (context, index) {
@@ -298,7 +299,6 @@ class SubDepartmentsScreen extends StatelessWidget {
     Color bgColor,
     Color iconColor,
   ) {
-    final firstLetter = title.isNotEmpty ? title[0].toUpperCase() : '?';
 
     // Check if this department has children
     final deptId = department['id']?.toString() ?? '';
@@ -328,71 +328,81 @@ class SubDepartmentsScreen extends StatelessWidget {
       onTap: () => _navigateToDetail(context, department),
       child: Container(
         decoration: BoxDecoration(
-          color: bgColor,
+          color: Colors.white,
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.03),
-              blurRadius: 10,
+              color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 12,
               offset: const Offset(0, 4),
             ),
           ],
         ),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Image or Icon
-            if (imageUrl.isNotEmpty)
-              ClipOval(
-                child: Image.network(
-                  imageUrl,
-                  width: 64,
-                  height: 64,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    return _buildIconFallback(firstLetter, iconColor);
-                  },
-                ),
-              )
-            else
-              _buildIconFallback(firstLetter, iconColor),
-            const SizedBox(height: 16),
-            // Title
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text(
-                title,
-                style: TextStyle(
-                  color: iconColor,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 14,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
+            // Image — prominent cover, like the web's card
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+              child: CoverImage(
+                url: imageUrl,
+                title: title,
+                height: 120,
+                icon: Icons.menu_book_rounded,
+                cacheWidth: 240,
               ),
             ),
-            const SizedBox(height: 8),
-            // Courses count or arrow for sub-departments
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (hasChildren) ...[
-                  FaIcon(
-                    FontAwesomeIcons.chevronRight,
-                    color: iconColor.withValues(alpha: 0.7),
-                    size: 14,
-                  ),
-                ] else ...[
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    '$coursesCount ${'home.courses'.tr()}',
+                    title,
                     style: TextStyle(
-                      color: iconColor.withValues(alpha: 0.7),
-                      fontSize: 12,
+                      color: iconColor,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
                     ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      if (hasChildren) ...[
+                        Icon(
+                          Icons.folder_open_outlined,
+                          color: iconColor.withValues(alpha: 0.6),
+                          size: 13,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'home.sub_departments'.tr(),
+                          style: TextStyle(
+                            color: iconColor.withValues(alpha: 0.6),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ] else ...[
+                        Icon(
+                          Icons.menu_book_outlined,
+                          color: iconColor.withValues(alpha: 0.6),
+                          size: 13,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$coursesCount ${"home.courses".tr()}',
+                          style: TextStyle(
+                            color: iconColor.withValues(alpha: 0.6),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
-              ],
+              ),
             ),
           ],
         ),
@@ -400,24 +410,4 @@ class SubDepartmentsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildIconFallback(String letter, Color color) {
-    return Container(
-      width: 64,
-      height: 64,
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.2),
-        shape: BoxShape.circle,
-      ),
-      child: Center(
-        child: Text(
-          letter,
-          style: TextStyle(
-            color: color,
-            fontWeight: FontWeight.bold,
-            fontSize: 24,
-          ),
-        ),
-      ),
-    );
-  }
 }

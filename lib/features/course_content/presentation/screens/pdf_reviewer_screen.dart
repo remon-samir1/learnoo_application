@@ -12,16 +12,24 @@ import '../models/pdf_annotation.dart';
 import '../managers/pdf_annotation_manager.dart';
 import '../../../../core/services/pdf_watermark_service.dart';
 import '../widgets/pdf_navigation_bar.dart';
+import '../../../../core/services/library_pdf_watermark.dart';
 
 
 class PdfReviewerScreen extends StatefulWidget {
   final String pdfUrl;
   final String title;
 
+  /// Watermark bucket for this document. Chapter files use `files`; the
+  /// electronic library passes `library`, which is drawn with the same grid
+  /// the website stamps into a downloaded library PDF so the preview and the
+  /// download look identical.
+  final String watermarkType;
+
   const PdfReviewerScreen({
     super.key,
     required this.pdfUrl,
     required this.title,
+    this.watermarkType = 'files',
   });
 
   @override
@@ -99,10 +107,29 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
 
           // 1. Get watermark text
           final watermark = _watermarkText;
-          final watermarkConfig = _featureManager.getWatermarkConfig('files');
+          final watermarkConfig =
+              _featureManager.getWatermarkConfig(widget.watermarkType);
 
-          // 2. Apply built-in watermark if enabled
-          if (watermark != null && watermarkConfig.enabled) {
+          if (widget.watermarkType == 'library' && watermarkConfig.enabled) {
+            // Library documents use the website's download watermark. On
+            // failure the document is not shown unwatermarked.
+            setState(() => _isLoading = true);
+            await _loadUserData();
+            final target = File(
+              finalPath.replaceFirst(RegExp(r'\.pdf$'), '_wm.pdf'),
+            );
+            await const LibraryPdfWatermarker().apply(
+              source: File(finalPath),
+              destination: target,
+              text: buildDownloadWatermarkText(
+                config: watermarkConfig,
+                studentCode: _studentCode,
+                phone: _phoneNumber,
+              ),
+              config: watermarkConfig,
+            );
+            finalPath = target.path;
+          } else if (watermark != null && watermarkConfig.enabled) {
             try {
               setState(() => _isLoading = true);
               final watermarkedPath = await PdfWatermarkService().embedWatermark(
@@ -163,7 +190,7 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
 
   /// Get combined watermark text based on feature settings
   String? get _watermarkText {
-    final config = _featureManager.getWatermarkConfig('files');
+    final config = _featureManager.getWatermarkConfig(widget.watermarkType);
     final parts = <String>[];
     
     if (config.useStudentCode && _studentCode.isNotEmpty) {

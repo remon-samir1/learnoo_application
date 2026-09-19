@@ -2,6 +2,8 @@ import 'dart:io';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/material.dart';
 
+import 'device_downloads.dart';
+
 /// Service for managing local notifications including download progress
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -47,11 +49,38 @@ class NotificationService {
 
     _isInitialized = true;
     debugPrint('NotificationService initialized');
+
+    // A tap on a "download complete" notification that launched the app.
+    try {
+      final launch = await _notificationsPlugin.getNotificationAppLaunchDetails();
+      final payload = launch?.notificationResponse?.payload;
+      if ((launch?.didNotificationLaunchApp ?? false) && payload != null) {
+        _openDownloadFromPayload(payload);
+      }
+    } catch (_) {}
+  }
+
+  static const String _openDownloadPrefix = 'open_download|';
+
+  /// Payload for a completed download notification: tapping it opens the file.
+  static String openDownloadPayload(SavedDownload saved) =>
+      '$_openDownloadPrefix${saved.mimeType}|${saved.uri}';
+
+  void _openDownloadFromPayload(String payload) {
+    if (!payload.startsWith(_openDownloadPrefix)) return;
+    final rest = payload.substring(_openDownloadPrefix.length);
+    final split = rest.indexOf('|');
+    if (split <= 0) return;
+    const DeviceDownloads().open(
+      mimeType: rest.substring(0, split),
+      uri: rest.substring(split + 1),
+    );
   }
 
   /// Handle notification tap
   void _onNotificationResponse(NotificationResponse response) {
-    debugPrint('Notification tapped: ${response.payload}');
+    final payload = response.payload;
+    if (payload != null) _openDownloadFromPayload(payload);
   }
 
   /// Request notification permissions (mainly for iOS)
@@ -198,6 +227,7 @@ class NotificationService {
     required String url,
     required String title,
     required String body,
+    String? payload,
   }) async {
     if (!_isInitialized) await initialize();
 
@@ -235,7 +265,7 @@ class NotificationService {
       title,
       body,
       notificationDetails,
-      payload: url,
+      payload: payload ?? url,
     );
 
     // Clean up the notification ID mapping

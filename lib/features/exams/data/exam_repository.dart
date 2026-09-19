@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/network/api_client.dart';
@@ -30,7 +31,11 @@ class ExamRepository {
     if (error is ApiException) {
       return {
         'success': false,
-        'message': error.display(fallback),
+        // Transport failures carry an English client-side message
+        // ("No internet connection"); show the localized one instead.
+        'message': error.isNetwork
+            ? 'exams.network_error'.tr()
+            : error.display(fallback),
         'errors': error.errors,
         'statusCode': error.status,
       };
@@ -61,7 +66,7 @@ class ExamRepository {
             'search': title.trim(),
           },
         },
-        fallback: 'Failed to fetch quizzes',
+        fallback: 'exams.load_failed'.tr(),
       );
 
       final quizzes = unwrapList(payload)
@@ -82,7 +87,7 @@ class ExamRepository {
         'hasNextPage': hasNextPage,
       };
     } catch (e) {
-      return _fail(e, 'Failed to fetch quizzes');
+      return _fail(e, 'exams.load_failed'.tr());
     }
   }
 
@@ -95,16 +100,16 @@ class ExamRepository {
       final payload = await _api.get(
         '${ApiConstants.quiz}/$quizId',
         skipAuthRedirect: true,
-        fallback: 'Failed to fetch quiz',
+        fallback: 'exams.load_exam_failed'.tr(),
       );
 
       final data = unwrapMap(payload);
       if (data == null) {
-        return {'success': false, 'message': 'Quiz not found'};
+        return {'success': false, 'message': 'exams.exam_not_found'.tr()};
       }
       return {'success': true, 'data': Quiz.fromJson(data)};
     } catch (e) {
-      return _fail(e, 'Failed to fetch quiz');
+      return _fail(e, 'exams.load_exam_failed'.tr());
     }
   }
 
@@ -200,12 +205,12 @@ class ExamRepository {
         ApiConstants.quizAttempt,
         body: {'quiz_id': quizId},
         skipAuthRedirect: true,
-        fallback: 'Failed to start quiz attempt',
+        fallback: 'exams.failed_start'.tr(),
       );
 
       final data = unwrapMap(payload);
       if (data == null) {
-        return {'success': false, 'message': 'Failed to start quiz attempt'};
+        return {'success': false, 'message': 'exams.failed_start'.tr()};
       }
 
       return {
@@ -214,7 +219,7 @@ class ExamRepository {
         'message': payload is Map ? payload['message'] : null,
       };
     } catch (e) {
-      return _fail(e, 'Failed to start quiz attempt');
+      return _fail(e, 'exams.failed_start'.tr());
     }
   }
 
@@ -235,7 +240,7 @@ class ExamRepository {
         '${ApiConstants.quizAttempt}/$attemptId',
         body: {'score': score, 'total_score': totalScore},
         skipAuthRedirect: true,
-        fallback: 'Failed to submit quiz',
+        fallback: 'exams.failed_submit_exam'.tr(),
       );
 
       final data = unwrapMap(payload);
@@ -246,7 +251,7 @@ class ExamRepository {
         'message': payload is Map ? payload['message'] : null,
       };
     } catch (e) {
-      return _fail(e, 'Failed to submit quiz');
+      return _fail(e, 'exams.failed_submit_exam'.tr());
     }
   }
 
@@ -310,11 +315,11 @@ class ExamRepository {
       final payload = await _api.get(
         ApiConstants.quizAttemptResult(attemptId),
         skipAuthRedirect: true,
-        fallback: 'Failed to load result',
+        fallback: 'exams.load_result_failed'.tr(),
       );
       return {'success': true, 'data': payload};
     } catch (e) {
-      return _fail(e, 'Failed to load result');
+      return _fail(e, 'exams.load_result_failed'.tr());
     }
   }
 
@@ -422,7 +427,7 @@ class ExamRepository {
           'item_id': quizId,
         },
         skipAuthRedirect: true,
-        fallback: 'Invalid activation code',
+        fallback: 'exams.invalid_activation_code'.tr(),
       );
 
       return {
@@ -431,7 +436,7 @@ class ExamRepository {
         'message': payload is Map ? payload['message'] : null,
       };
     } catch (e) {
-      return _fail(e, 'Invalid activation code');
+      return _fail(e, 'exams.invalid_activation_code'.tr());
     }
   }
 }

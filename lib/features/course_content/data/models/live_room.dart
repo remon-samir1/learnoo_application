@@ -1,16 +1,19 @@
 import '../../../../core/utils/coerce.dart';
 
-/// A scheduled or running live session.
+/// A scheduled or running live session (`GET /v1/live-room`).
 ///
-/// Status now comes from the API's own `status` field first, falling back to
-/// the timestamp comparison the app used to rely on exclusively. The web reads
-/// the same field (`src/lib/student-live-room.ts`), so a session an instructor
-/// has actually started shows as live in both places even when the clock says
-/// otherwise.
+/// Mirrors the website's student helpers in `src/lib/student-live-room.ts`
+/// and `src/lib/student-faculty-tree.ts`: the status comes only from the API's
+/// own `status` field, the instructor and course titles are resolved the same
+/// way, and [accessFor] reproduces `resolveLiveRoomAccessState`.
 class LiveRoom {
   final String id;
   final String title;
   final String description;
+
+  /// Resolved like `getInstructorDisplayName`: course instructor's
+  /// `full_name`, then the room owner's `full_name`.
+  final String instructorFullName;
   final String instructorFirstName;
   final String instructorLastName;
   final String instructorEmail;
@@ -18,15 +21,36 @@ class LiveRoom {
   final String? courseTitle;
   final String? courseThumbnail;
 
+  /// Every course title attached to the session (`getCourseTitles`).
+  final List<String> courseTitles;
+
   /// Every course this session belongs to — the API may attach several.
   final List<String> courseIds;
 
   /// Raw `attributes.status`, lower-cased. Empty when the API omits it.
   final String rawStatus;
 
+  /// Raw `attributes.is_public`, lower-cased (`public`, `private`, `included`).
+  final String isPublic;
+
+  /// `attributes.has_activation` — the student activated this private room.
+  final bool hasActivation;
+
+  /// `attributes.enable_chat` — only an explicit `false` disables chat.
+  final bool enableChat;
+
+  /// First non-empty of `recording_url`, `playback_url`, `video_url`.
+  final String? recordingUrl;
+
+  /// `started_at` as sent by the API, `null` when absent or unparsable.
+  final DateTime? startedAtValue;
+
   final DateTime startedAt;
   final DateTime endedAt;
   final DateTime maxJoinTime;
+
+  /// `max_students` when the API sends a number.
+  final int? maxStudentsValue;
   final int maxStudents;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -35,54 +59,88 @@ class LiveRoom {
     required this.id,
     required this.title,
     required this.description,
+    this.instructorFullName = '',
     required this.instructorFirstName,
     required this.instructorLastName,
     required this.instructorEmail,
     this.courseId,
     this.courseTitle,
     this.courseThumbnail,
+    this.courseTitles = const [],
     this.courseIds = const [],
     this.rawStatus = '',
+    this.isPublic = '',
+    this.hasActivation = false,
+    this.enableChat = true,
+    this.recordingUrl,
+    this.startedAtValue,
     required this.startedAt,
     required this.endedAt,
     required this.maxJoinTime,
+    this.maxStudentsValue,
     required this.maxStudents,
     required this.createdAt,
     required this.updatedAt,
   });
 
-  String get instructorName => '$instructorFirstName $instructorLastName'.trim();
+  String get instructorName {
+    if (instructorFullName.trim().isNotEmpty) return instructorFullName.trim();
+    return '$instructorFirstName $instructorLastName'.trim();
+  }
 
-  /// Session state, API-first.
+  /// Course titles joined the way the website joins them.
+  String get courseTitlesLabel => courseTitles.join('، ');
+
+  bool get hasRecording => recordingUrl != null;
+
+  /// Session state, from the API `status` only — exactly like the website.
   ///
-  /// `live` and `started` both mean "join now" on the web; `ended`,
-  /// `completed` and `finished` all mean it is over.
+  /// `live`/`started` mean "join now"; `upcoming` (and `pending`, which the
+  /// website detail page and course tab also treat as upcoming) mean it has
+  /// not started; `ended`/`completed`/`finished` mean it is over. Anything
+  /// else is [SessionStatus.unknown].
   SessionStatus get status {
     switch (rawStatus) {
       case 'live':
       case 'started':
         return SessionStatus.now;
       case 'upcoming':
-      case 'scheduled':
+      case 'pending':
         return SessionStatus.upcoming;
       case 'ended':
       case 'completed':
       case 'finished':
         return SessionStatus.recorded;
     }
-
-    final now = DateTime.now().toUtc();
-    if (now.isAfter(startedAt) && now.isBefore(endedAt)) {
-      return SessionStatus.now;
-    } else if (now.isBefore(startedAt)) {
-      return SessionStatus.upcoming;
-    }
-    return SessionStatus.recorded;
+    return SessionStatus.unknown;
   }
 
   bool get isLive => status == SessionStatus.now;
   bool get isUpcoming => status == SessionStatus.upcoming;
   bool get isEnded => status == SessionStatus.recorded;
+
+  /// Port of `resolveLiveRoomAccessState`.
+  ///
+  /// [enrolledCourseIds] are the student's unlocked courses.
+  LiveRoomAccess accessFor(Set<String> enrolledCourseIds) {
+    final pub = isPublic.isEmpty ? 'unknown' : isPublic;
+
+    if (pub == 'included') {
+      if (courseIds.isNotEmpty &&
+          !courseIds.any(enrolledCourseIds.contains)) {
+        return LiveRoomAccess.courseNotEnrolled;
+      }
+      return LiveRoomAccess.available;
+    }
+
+    if (pub == 'false' || pub == 'private') {
+      return hasActivation
+          ? LiveRoomAccess.available
+          : LiveRoomAccess.lockedPrivate;
+    }
+
+    return LiveRoomAccess.available;
+  }
 
   String get formattedTime {
     final now = DateTime.now();
@@ -126,26 +184,40 @@ class LiveRoom {
   }
 
   factory LiveRoom.fromJson(Map<String, dynamic> json) {
-    final attributes = json['attributes'] ?? {};
-    final userData = attributes['user']?['data']?['attributes'] ?? {};
-    final courseData = attributes['course']?['data'];
+    final rawAttributes = json['attributes'];
+    final Map attributes = rawAttributes is Map ? rawAttributes : const {};
+    final userData = _attrsOf(attributes['user']);
+    final courseRel = attributes['course'];
+    final courseData = courseRel is Map
+        ? (courseRel['data'] is Map ? courseRel['data'] as Map : courseRel)
+        : null;
+    final courseAttrs = _attrsOf(courseRel);
+
+    final startedAtValue =
+        DateTime.tryParse(attributes['started_at']?.toString() ?? '')?.toUtc();
 
     return LiveRoom(
       id: json['id']?.toString() ?? '',
-      title: attributes['title']?.toString() ?? '',
-      description: attributes['description']?.toString() ?? '',
+      title: coerceString(attributes['title']) ?? '',
+      description: coerceString(attributes['description']) ?? '',
+      instructorFullName: _instructorFullName(attributes),
       instructorFirstName: userData['first_name']?.toString() ?? '',
       instructorLastName: userData['last_name']?.toString() ?? '',
       instructorEmail: userData['email']?.toString() ?? '',
-      courseId: courseData?['id']?.toString() ?? coerceId(attributes['course_id']),
-      courseTitle: courseData?['attributes']?['title']?.toString(),
-      courseThumbnail: courseData?['attributes']?['thumbnail']?.toString(),
+      courseId: coerceId(courseData?['id']) ?? coerceId(attributes['course_id']),
+      courseTitle: coerceString(courseAttrs['title']),
+      courseThumbnail: extractCourseThumbnail(attributes),
+      courseTitles: extractCourseTitles(attributes),
       courseIds: extractCourseIds(attributes),
-      rawStatus:
-          (attributes['status']?.toString() ?? '').trim().toLowerCase(),
-      startedAt:
-          DateTime.tryParse(attributes['started_at']?.toString() ?? '')?.toUtc() ??
-              DateTime.now().toUtc(),
+      rawStatus: (attributes['status']?.toString() ?? '').trim().toLowerCase(),
+      isPublic: (attributes['is_public']?.toString() ?? '').trim().toLowerCase(),
+      hasActivation: attributes['has_activation'] == true,
+      enableChat: attributes['enable_chat'] != false,
+      recordingUrl: coerceString(attributes['recording_url']) ??
+          coerceString(attributes['playback_url']) ??
+          coerceString(attributes['video_url']),
+      startedAtValue: startedAtValue,
+      startedAt: startedAtValue ?? DateTime.now().toUtc(),
       endedAt:
           DateTime.tryParse(attributes['ended_at']?.toString() ?? '')?.toUtc() ??
               DateTime.now().toUtc(),
@@ -153,6 +225,9 @@ class LiveRoom {
                   attributes['max_join_time']?.toString() ?? '')
               ?.toUtc() ??
           DateTime.now().toUtc(),
+      maxStudentsValue: attributes['max_students'] is num
+          ? (attributes['max_students'] as num).toInt()
+          : null,
       maxStudents:
           int.tryParse(attributes['max_students']?.toString() ?? '0') ?? 0,
       createdAt:
@@ -162,6 +237,107 @@ class LiveRoom {
           DateTime.tryParse(attributes['updated_at']?.toString() ?? '')?.toUtc() ??
               DateTime.now().toUtc(),
     );
+  }
+
+  /// `attributes` of a JSON:API relation (`{data: {attributes}}`) or of a bare
+  /// object (`{attributes}`), or the object itself.
+  static Map _attrsOf(dynamic rel) {
+    if (rel is! Map) return const {};
+    final data = rel['data'];
+    if (data is Map) {
+      final a = data['attributes'];
+      return a is Map ? a : data;
+    }
+    final a = rel['attributes'];
+    return a is Map ? a : rel;
+  }
+
+  static String _instructorFullName(Map attributes) {
+    final course = attributes['course'];
+    if (course is Map && course['data'] is Map) {
+      final courseAttrs = (course['data'] as Map)['attributes'];
+      if (courseAttrs is Map) {
+        final instructor = _attrsOf(courseAttrs['instructor']);
+        final name = coerceString(instructor['full_name']);
+        if (name != null) return name;
+      }
+    }
+    final user = attributes['user'];
+    if (user is Map && user['data'] is Map) {
+      final userAttrs = (user['data'] as Map)['attributes'];
+      if (userAttrs is Map) {
+        final name = coerceString(userAttrs['full_name']);
+        if (name != null) return name;
+      }
+    }
+    return '';
+  }
+
+  static List? _coursesList(Map attrs) {
+    final raw = attrs['courses'];
+    if (raw is List) return raw;
+    if (raw is Map && raw['data'] is List) return raw['data'] as List;
+    return null;
+  }
+
+  /// Port of `getCourseTitles`.
+  static List<String> extractCourseTitles(Map attributes) {
+    final titles = <String>[];
+    void add(dynamic t) {
+      final s = coerceString(t);
+      if (s != null && !titles.contains(s)) titles.add(s);
+    }
+
+    final list = _coursesList(attributes);
+    if (list != null) {
+      for (final c in list) {
+        if (c is! Map) continue;
+        final attrs = c['attributes'];
+        final data = c['data'];
+        add((attrs is Map ? attrs['title'] : null) ??
+            c['title'] ??
+            (data is Map && data['attributes'] is Map
+                ? (data['attributes'] as Map)['title']
+                : null) ??
+            (data is Map ? data['title'] : null));
+      }
+    }
+
+    final single = attributes['course'];
+    if (single is Map) {
+      final data = single['data'];
+      final attrs = single['attributes'];
+      add((data is Map && data['attributes'] is Map
+              ? (data['attributes'] as Map)['title']
+              : null) ??
+          (attrs is Map ? attrs['title'] : null) ??
+          (data is Map ? data['title'] : null) ??
+          single['title']);
+    }
+    return titles;
+  }
+
+  /// Port of `getCourseThumbnail`.
+  static String? extractCourseThumbnail(Map attributes) {
+    String? fromThumb(dynamic th) {
+      if (th is String) return coerceString(th);
+      if (th is Map) return coerceString(th['url']);
+      return null;
+    }
+
+    final single = _attrsOf(attributes['course']);
+    final fromSingle = fromThumb(single['thumbnail']);
+    if (fromSingle != null) return fromSingle;
+
+    final list = _coursesList(attributes);
+    if (list != null) {
+      for (final c in list) {
+        if (c is! Map) continue;
+        final t = fromThumb(_attrsOf(c)['thumbnail']);
+        if (t != null) return t;
+      }
+    }
+    return null;
   }
 
   /// Every course id attached to a session.
@@ -189,13 +365,7 @@ class LiveRoom {
       }
     }
 
-    final rawCourses = attrs['courses'];
-    final coursesList = rawCourses is List
-        ? rawCourses
-        : (rawCourses is Map && rawCourses['data'] is List
-            ? rawCourses['data'] as List
-            : null);
-
+    final coursesList = _coursesList(attrs);
     if (coursesList != null) {
       for (final course in coursesList) {
         if (course is! Map) continue;
@@ -227,10 +397,15 @@ class LiveRoom {
         'title': title,
         'description': description,
         'status': rawStatus,
-        'started_at': startedAt.toIso8601String(),
+        'is_public': isPublic,
+        'has_activation': hasActivation,
+        'enable_chat': enableChat,
+        'recording_url': recordingUrl,
+        'started_at': startedAtValue?.toIso8601String(),
         'ended_at': endedAt.toIso8601String(),
         'max_join_time': maxJoinTime.toIso8601String(),
-        'max_students': maxStudents,
+        'max_students': maxStudentsValue,
+        'course_ids': courseIds,
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
       },
@@ -238,4 +413,8 @@ class LiveRoom {
   }
 }
 
-enum SessionStatus { now, upcoming, recorded }
+/// `unknown` covers any status the API sends that the website does not map.
+enum SessionStatus { now, upcoming, recorded, unknown }
+
+/// The website's `LiveRoomAccessState`.
+enum LiveRoomAccess { available, lockedPrivate, courseNotEnrolled }

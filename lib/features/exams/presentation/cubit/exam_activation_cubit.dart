@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../data/exam_repository.dart';
 import '../../domain/quiz_activation_lock.dart';
@@ -50,7 +51,7 @@ class ExamActivationCubit extends Cubit<ExamActivationState> {
 
       if (result['success'] != true) {
         emit(ExamActivationError(
-          result['message'] ?? 'Invalid activation code. Please try again.',
+          result['message']?.toString() ?? 'exams.invalid_activation_code'.tr(),
         ));
         return;
       }
@@ -60,7 +61,7 @@ class ExamActivationCubit extends Cubit<ExamActivationState> {
       // body is what stops a rejected code from opening a locked exam.
       if (!activateCodeUnlocksQuiz(result['data'])) {
         emit(ExamActivationError(
-          result['message'] ?? 'Invalid activation code. Please try again.',
+          result['message']?.toString() ?? 'exams.invalid_activation_code'.tr(),
         ));
         return;
       }
@@ -75,7 +76,7 @@ class ExamActivationCubit extends Cubit<ExamActivationState> {
 
       emit(ExamActivationSuccess(updatedQuiz));
     } catch (e) {
-      emit(ExamActivationError('Connection error: $e'));
+      emit(ExamActivationError('exams.network_error'.tr()));
     }
   }
 

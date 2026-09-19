@@ -1,4 +1,5 @@
 import '../../../core/utils/coerce.dart';
+import '../domain/exam_media_url.dart';
 import '../domain/quiz_activation_lock.dart';
 
 // Quiz/Exam Model
@@ -262,22 +263,44 @@ class QuizQuestion {
   });
 
   factory QuizQuestion.fromJson(Map<String, dynamic> json) {
-    final attributes = json['attributes'] ?? {};
-    final List<dynamic> answersData = attributes['answers'] ?? [];
-    final answers = answersData.map((a) => QuizAnswer.fromJson(a)).toList();
+    final rawAttributes = json['attributes'];
+    final Map attributes = rawAttributes is Map ? rawAttributes : json;
+    final rawAnswers = attributes['answers'];
+    final List<dynamic> answersData = rawAnswers is List
+        ? rawAnswers
+        : (rawAnswers is Map && rawAnswers['data'] is List)
+            ? rawAnswers['data'] as List
+            : const [];
+    final answers = answersData
+        .whereType<Map>()
+        .map((a) => QuizAnswer.fromJson(Map<String, dynamic>.from(a)))
+        .toList();
 
     return QuizQuestion(
       id: json['id']?.toString() ?? '',
-      questionId: int.tryParse(json['id']?.toString() ?? '0') ?? 0,
-      quizId: attributes['quiz_id'] ?? 0,
-      text: attributes['text'] ?? '',
-      image: attributes['image'],
-      score: attributes['score'] ?? 0,
-      type: attributes['type'] ?? 'single_choice',
-      autoCorrect: attributes['auto_correct'] ?? true,
-      createdAt: DateTime.tryParse(attributes['created_at'] ?? '') ?? DateTime.now(),
+      questionId: coerceInt(json['id'] ?? attributes['id']),
+      quizId: coerceInt(attributes['quiz_id']),
+      text: attributes['text']?.toString() ?? '',
+      // Same field the website reads (`attributes.image`); the attempt-result
+      // payload names it `image_url`. Relative paths are made absolute.
+      image: readExamMediaUrl(attributes, const ['image', 'image_url']),
+      score: _coerceScore(attributes['score']),
+      type: attributes['type']?.toString() ?? 'single_choice',
+      autoCorrect: coerceFlagOrNull(attributes['auto_correct']) ?? true,
+      createdAt:
+          DateTime.tryParse(attributes['created_at']?.toString() ?? '') ??
+              DateTime.now(),
       answers: answers,
     );
+  }
+
+  static int _coerceScore(dynamic value) {
+    if (value is num) return value.round();
+    if (value is String) {
+      final n = num.tryParse(value.trim());
+      if (n != null) return n.round();
+    }
+    return 0;
   }
 
   // Helper methods for question types
@@ -318,6 +341,7 @@ class QuizAnswer {
   final String text;
   final String? image; // URL for answer image
   final String? reason; // Explanation for why this answer is correct/incorrect
+  final String? reasonImage; // Explanation image (`reason_image`)
   final bool isCorrect;
   final DateTime createdAt;
 
@@ -328,24 +352,40 @@ class QuizAnswer {
     required this.text,
     this.image,
     this.reason,
+    this.reasonImage,
     required this.isCorrect,
     required this.createdAt,
   });
 
   factory QuizAnswer.fromJson(Map<String, dynamic> json) {
-    final attributes = json['attributes'] ?? {};
+    final rawAttributes = json['attributes'];
+    final Map attributes = rawAttributes is Map ? rawAttributes : json;
+    final reason = attributes['reason']?.toString().trim();
 
     return QuizAnswer(
       id: json['id']?.toString() ?? '',
-      answerId: int.tryParse(attributes['id']?.toString() ?? '0') ?? 0,
-      quizQuestionId: attributes['quiz_question_id'] ?? 0,
-      text: attributes['text'] ?? '',
-      image: attributes['image'],
-      reason: attributes['reason'],
-      isCorrect: attributes['is_correct'] ?? false,
-      createdAt: DateTime.tryParse(attributes['created_at'] ?? '') ?? DateTime.now(),
+      // The website keys answers by the resource `id`; `attributes.id` is not
+      // always present, and defaulting every answer to 0 made every choice
+      // match the first one (wrong selection, wrong review image).
+      answerId: coerceInt(attributes['id'] ?? json['id']),
+      quizQuestionId: coerceInt(attributes['quiz_question_id']),
+      text: attributes['text']?.toString() ?? '',
+      image: readExamMediaUrl(attributes, const ['image', 'image_url']),
+      reason:
+          (reason == null || reason.isEmpty || reason == 'null') ? null : reason,
+      reasonImage: readExamMediaUrl(
+        attributes,
+        const ['reason_image', 'reason_image_url'],
+      ),
+      isCorrect: coerceFlag(attributes['is_correct']),
+      createdAt:
+          DateTime.tryParse(attributes['created_at']?.toString() ?? '') ??
+              DateTime.now(),
     );
   }
+
+  // Check if the explanation has an image (`reason_image`)
+  bool get hasReasonImage => reasonImage != null && reasonImage!.isNotEmpty;
 
   // Check if answer has an image
   bool get hasImage => image != null && image!.isNotEmpty;
@@ -393,6 +433,129 @@ class QuizAttempt {
 
   double get percentage => totalScore > 0 ? (score / totalScore) * 100 : 0;
   bool get isCompleted => finishedAt != null;
+}
+
+/// One graded answer row from `GET /v1/quiz-attempts/{id}/result`
+/// (`data.answers[]` or `answers[]`, JSON:API or flat — the website accepts
+/// both, see `ExamAnswersReview.tsx`).
+class QuizAnswerReview {
+  final String questionId;
+  final String answerText;
+  final bool? isCorrect;
+  final num? scoreEarned;
+  final String? feedback;
+
+  /// Images the student attached to the answer (essay questions).
+  final List<String> answerImages;
+
+  /// Correction images the teacher attached while grading.
+  final List<String> feedbackImages;
+
+  const QuizAnswerReview({
+    required this.questionId,
+    this.answerText = '',
+    this.isCorrect,
+    this.scoreEarned,
+    this.feedback,
+    this.answerImages = const [],
+    this.feedbackImages = const [],
+  });
+
+  static const _answerImageKeys = [
+    'answer_image',
+    'answer_image_url',
+    'answer_images',
+    'image',
+    'image_url',
+    'images',
+    'attachment',
+    'attachments',
+    'file',
+    'files',
+  ];
+
+  static const _feedbackImageKeys = [
+    'feedback_image',
+    'feedback_image_url',
+    'feedback_images',
+    'correction_image',
+    'correction_image_url',
+    'correction_images',
+    'teacher_image',
+    'teacher_images',
+    'reviewer_image',
+  ];
+
+  static List<String> _images(Map attributes, List<String> keys) {
+    final out = <String>[];
+    void add(dynamic value) {
+      if (value is List) {
+        for (final item in value) {
+          add(item);
+        }
+        return;
+      }
+      if (value is Map && value['data'] != null) {
+        add(value['data']);
+        return;
+      }
+      if (value is Map && value['attributes'] is Map) {
+        add(value['attributes']);
+        return;
+      }
+      final url = resolveExamMediaUrl(value);
+      if (url == null || out.contains(url)) return;
+      final path = url.split('?').first.toLowerCase();
+      const nonImage = ['.pdf', '.doc', '.docx', '.mp3', '.mp4', '.m4a', '.zip'];
+      if (nonImage.any(path.endsWith)) return;
+      out.add(url);
+    }
+
+    for (final key in keys) {
+      add(attributes[key]);
+    }
+    return out;
+  }
+
+  static QuizAnswerReview? fromJson(dynamic json) {
+    if (json is! Map) return null;
+    final rawAttributes = json['attributes'];
+    final Map attributes = rawAttributes is Map ? rawAttributes : json;
+    final nestedQuestion = attributes['quiz_question'];
+    final questionId = coerceId(attributes['quiz_question_id']) ??
+        coerceId(attributes['question_id']) ??
+        (nestedQuestion is Map ? coerceId(nestedQuestion['id']) : null);
+    if (questionId == null) return null;
+
+    final rawScore = attributes['score_earned'];
+    return QuizAnswerReview(
+      questionId: questionId,
+      answerText: attributes['answer_text']?.toString() ?? '',
+      isCorrect: coerceFlagOrNull(attributes['is_correct']),
+      scoreEarned: rawScore is num
+          ? rawScore
+          : num.tryParse(rawScore?.toString() ?? ''),
+      feedback: coerceString(attributes['feedback']),
+      answerImages: _images(attributes, _answerImageKeys),
+      feedbackImages: _images(attributes, _feedbackImageKeys),
+    );
+  }
+
+  /// Answer rows keyed by question id, from the whole result payload.
+  static Map<String, QuizAnswerReview> mapFromResultPayload(dynamic payload) {
+    final result = <String, QuizAnswerReview>{};
+    if (payload is! Map) return result;
+    final data = payload['data'];
+    dynamic answers = data is Map ? data['answers'] : null;
+    answers ??= payload['answers'];
+    if (answers is Map && answers['data'] is List) answers = answers['data'];
+    if (answers is! List) return result;
+    for (final row in answers) {
+      final parsed = QuizAnswerReview.fromJson(row);
+      if (parsed != null) result[parsed.questionId] = parsed;
+    }
+    return result;
+  }
 }
 
 // Quiz Result for local use

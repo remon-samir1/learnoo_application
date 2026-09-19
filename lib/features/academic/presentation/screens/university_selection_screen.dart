@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/primary_button.dart';
 import '../../../auth/data/auth_repository.dart';
@@ -43,30 +44,34 @@ class _UniversitySelectionScreenState extends State<UniversitySelectionScreen> {
       _authRepository.getFaculties(),
     ]);
 
-    if (mounted) {
-      setState(() {
-        _isLoading = false;
-        final uniResult = results[0];
-        final centerResult = results[1];
-        final facultyResult = results[2];
+    final uniRes = results[0];
+    final centerRes = results[1];
+    final facRes = results[2];
 
-        if (uniResult['success'] && centerResult['success'] && facultyResult['success']) {
-          _universities = uniResult['data'] ?? [];
-          _filteredUniversities = _universities;
-          _centers = centerResult['data'] ?? [];
-          _faculties = facultyResult['data'] ?? [];
-        } else {
-          _errorMessage = uniResult['message'] ?? centerResult['message'] ?? facultyResult['message'];
-        }
-      });
-    }
+    setState(() {
+      _isLoading = false;
+      if (uniRes['success']) {
+        _universities = uniRes['data'];
+        _filteredUniversities = _universities;
+      } else {
+        _errorMessage = uniRes['message'] ?? 'auth.failed_fetch'.tr();
+      }
+
+      if (centerRes['success']) {
+        _centers = centerRes['data'];
+      }
+
+      if (facRes['success']) {
+        _faculties = facRes['data'];
+      }
+    });
   }
 
   void _onSearchChanged() {
     final query = _searchController.text.toLowerCase();
     setState(() {
-      _filteredUniversities = _universities.where((uni) {
-        final name = uni['attributes']['name']?.toLowerCase() ?? '';
+      _filteredUniversities = _universities.where((u) {
+        final name = (u['attributes']['name'] ?? '').toString().toLowerCase();
         return name.contains(query);
       }).toList();
     });
@@ -80,14 +85,16 @@ class _UniversitySelectionScreenState extends State<UniversitySelectionScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
-      backgroundColor: AppColors.backgroundWhite,
+      backgroundColor: isDark ? const Color(0xFF13151B) : AppColors.backgroundWhite,
       body: Column(
         children: [
           // Header
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.only(top: 60, bottom: 40, left: 24, right: 24),
+            padding: const EdgeInsets.only(top: 60, bottom: 24, left: 24, right: 24),
             decoration: const BoxDecoration(
               gradient: AppColors.mainGradient,
               borderRadius: BorderRadius.only(
@@ -110,11 +117,11 @@ class _UniversitySelectionScreenState extends State<UniversitySelectionScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                const Text('Step 1 of 3', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                Text('step_x_of_y'.tr(args: ['1', '3']), style: const TextStyle(color: Colors.white70, fontSize: 12)),
                 const SizedBox(height: 24),
-                const Text(
-                  'Select Your University',
-                  style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+                Text(
+                  'select_university'.tr(),
+                  style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
                 ),
               ],
             ),
@@ -127,13 +134,25 @@ class _UniversitySelectionScreenState extends State<UniversitySelectionScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: TextField(
               controller: _searchController,
+              style: TextStyle(color: isDark ? const Color(0xFFF8FAFC) : AppColors.textDark),
               decoration: InputDecoration(
-                hintText: 'Search universities...',
-                prefixIcon: const Icon(Icons.search, color: AppColors.textGray),
+                hintText: 'search_universities'.tr(),
+                hintStyle: TextStyle(color: isDark ? const Color(0xFF64748B) : AppColors.textGray),
+                prefixIcon: Icon(Icons.search, color: isDark ? const Color(0xFF64748B) : AppColors.textGray),
                 filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.inputBorder)),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.inputBorder)),
+                fillColor: isDark ? const Color(0xFF1E212B) : Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: isDark ? const Color(0xFF383E52) : AppColors.inputBorder),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: isDark ? const Color(0xFF383E52) : AppColors.inputBorder),
+                ),
+                focusedBorder: const OutlineInputBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(12)),
+                  borderSide: BorderSide(color: AppColors.primaryBlue, width: 2),
+                ),
               ),
             ),
           ),
@@ -151,62 +170,88 @@ class _UniversitySelectionScreenState extends State<UniversitySelectionScreen> {
                           children: [
                             Text(_errorMessage!, style: const TextStyle(color: Colors.red)),
                             const SizedBox(height: 16),
-                            ElevatedButton(onPressed: _fetchData, child: const Text('Retry')),
+                            ElevatedButton(
+                              onPressed: _fetchData,
+                              child: Text('profile.retry'.tr()),
+                            ),
                           ],
                         ),
                       )
                     : _filteredUniversities.isEmpty
-                        ? const Center(child: Text('No options available'))
+                        ? Center(
+                            child: Text(
+                              'no_options_available'.tr(),
+                              style: TextStyle(
+                                color: isDark ? const Color(0xFF94A3B8) : Colors.grey,
+                                fontSize: 16,
+                              ),
+                            ),
+                          )
                         : ListView.separated(
                             padding: const EdgeInsets.symmetric(horizontal: 24),
                             itemCount: _filteredUniversities.length,
-                        separatorBuilder: (context, index) => const SizedBox(height: 12),
-                        itemBuilder: (context, index) {
-                          final uni = _filteredUniversities[index];
-                          final id = uni['id'];
-                          final attributes = uni['attributes'];
-                          final name = attributes['name'] ?? 'Unknown';
-                          final isSelected = _selectedUniversityId == id;
-                          
-                          return GestureDetector(
-                            onTap: () => setState(() {
-                              _selectedUniversityId = id;
-                              _selectedUniversityName = name;
-                            }),
-                              child: Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(color: isSelected ? AppColors.primaryBlue : AppColors.inputBorder, width: isSelected ? 2 : 1),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      width: 48,
-                                      height: 48,
-                                      decoration: BoxDecoration(color: AppColors.inputFill, borderRadius: BorderRadius.circular(8)),
-                                      child: const Icon(Icons.school, color: AppColors.primaryBlue),
+                            separatorBuilder: (context, index) => const SizedBox(height: 12),
+                            itemBuilder: (context, index) {
+                              final uni = _filteredUniversities[index];
+                              final id = uni['id'];
+                              final attributes = uni['attributes'];
+                              final name = attributes['name'] ?? '';
+                              final isSelected = _selectedUniversityId == id;
+                              
+                              return GestureDetector(
+                                onTap: () => setState(() {
+                                  _selectedUniversityId = id;
+                                  _selectedUniversityName = name;
+                                }),
+                                child: Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: isDark ? const Color(0xFF1E212B) : Colors.white,
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: isSelected
+                                          ? AppColors.primaryBlue
+                                          : (isDark ? const Color(0xFF383E52) : AppColors.inputBorder),
+                                      width: isSelected ? 2 : 1,
                                     ),
-                                    const SizedBox(width: 16),
-                                    Expanded(
-                                      child: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                    ),
-                                    if (isSelected)
-                                      const Icon(Icons.check_circle, color: AppColors.primaryBlue),
-                                  ],
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 48,
+                                        height: 48,
+                                        decoration: BoxDecoration(
+                                          color: isDark ? const Color(0xFF262A36) : AppColors.inputFill,
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: const Icon(Icons.school, color: AppColors.primaryBlue),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      Expanded(
+                                        child: Text(
+                                          name,
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16,
+                                            color: isDark ? const Color(0xFFF8FAFC) : AppColors.textDark,
+                                          ),
+                                        ),
+                                      ),
+                                      if (isSelected)
+                                        const Icon(Icons.check_circle, color: AppColors.primaryBlue),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                            );
-                          },
-                        ),
+                              );
+                            },
+                          ),
           ),
 
           // Bottom Button
           Padding(
             padding: const EdgeInsets.all(24),
             child: PrimaryButton(
-              text: 'NEXT',
+              text: 'next'.tr(),
               onPressed: _selectedUniversityId == null
                   ? null
                   : () {

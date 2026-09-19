@@ -1,4 +1,10 @@
+import '../../domain/chapter_access.dart';
+import '../../domain/library_material.dart';
+import 'library_material_detail_screen.dart';
 import 'package:flutter/material.dart';
+
+import '../../../community/presentation/widgets/post_images.dart';
+import '../../../../core/widgets/cover_image.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:shimmer/shimmer.dart';
@@ -18,7 +24,8 @@ import '../../../exams/models/quiz_models.dart';
 import 'course_detail_screen.dart';
 import 'pdf_reviewer_screen.dart';
 import 'unlock_material_screen.dart';
-import 'pdf_viewer_screen.dart';
+import 'live_session_detail_screen.dart';
+import '../widgets/live_room_widgets.dart';
 import '../../../community/data/repositories/community_repository.dart';
 import '../../../community/data/models/post_model.dart';
 import '../../../community/data/models/social_link_model.dart';
@@ -282,7 +289,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
       for (final lecture in lectures) {
         final lectureAttrs = lecture['attributes'] ?? {};
         final lectureName = lectureAttrs['title']?.toString();
-        final chapters = lectureAttrs['chapters'] as List<dynamic>? ?? [];
+        final chapters = studentVisibleChapters(lecture);
         for (final chapter in chapters) {
           final chapterAttrs = chapter['attributes'] ?? {};
           final chapterId = int.tryParse(chapter['id']?.toString() ?? '');
@@ -551,36 +558,14 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
   }
 
   void _openLibraryPdf(dynamic library) {
-    final attributes = library['attributes'] ?? {};
-    final title = attributes['title']?.toString() ?? 'course.material'.tr();
-    final attachments = attributes['attachments'] as List<dynamic>? ?? [];
-
-    // Find first PDF attachment that is not locked or downloadable
-    final pdfAttachment = attachments.firstWhere(
-      (attachment) {
-        final ext = attachment['attributes']?['extension']?.toString().toLowerCase() ?? '';
-        final isLocked = attachment['attributes']?['is_locked'] == true;
-        final downloadable = attachment['attributes']?['downloadable'] == true;
-        return ext == 'pdf' && (!isLocked || downloadable);
-      },
-      orElse: () => null,
-    );
-
-    final pdfUrl = pdfAttachment?['attributes']?['path']?.toString() ?? '';
-
-    if (pdfUrl.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('course.pdf_not_available'.tr())),
-      );
-      return;
-    }
-
+    final id = libraryId(library);
+    if (id == null) return;
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => PdfViewerScreen(
-          pdfUrl: pdfUrl,
-          title: title,
+        builder: (context) => LibraryMaterialDetailScreen(
+          materialId: id,
+          initialMaterial: library,
         ),
       ),
     );
@@ -1356,17 +1341,13 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: thumbnail.isNotEmpty
-                      ? Image.network(
-                          thumbnail,
-                          width: 100,
-                          height: 75,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            return _buildCourseImagePlaceholder();
-                          },
-                        )
-                      : _buildCourseImagePlaceholder(),
+                  child: CoverImage(
+                    url: thumbnail,
+                    title: title,
+                    width: 100,
+                    height: 75,
+                    cacheWidth: 100,
+                  ),
                 ),
                 Positioned.fill(
                   child: Center(
@@ -1430,24 +1411,6 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
     );
   }
 
-  Widget _buildCourseImagePlaceholder() {
-    return Container(
-      width: 100,
-      height: 75,
-      decoration: BoxDecoration(
-        color: const Color(0xFFF3F4F6),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: const Center(
-        child: Icon(
-          Icons.image_not_supported,
-          color: Color(0xFF9CA3AF),
-          size: 24,
-        ),
-      ),
-    );
-  }
-
   Future<void> _loadLiveRooms() async {
     if (!mounted) return;
     setState(() => _isLoadingLiveRooms = true);
@@ -1462,7 +1425,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
             .toSet();
         setState(() {
           _liveRooms = allLiveRooms
-              .where((room) => courseIds.contains(room.courseId))
+              .where((room) => room.courseIds.any(courseIds.contains))
               .toList();
           _isLoadingLiveRooms = false;
         });
@@ -1482,15 +1445,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
     }
 
     if (_liveRooms.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Text(
-            'course.no_live_subject'.tr(),
-            style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
-          ),
-        ),
-      );
+      return LiveRoomsEmptyState(message: 'course.no_live_subject'.tr());
     }
 
     return ListView.builder(
@@ -1570,197 +1525,15 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
   }
 
   Widget _buildLiveRoomCard(lr.LiveRoom room) {
-    final isLive = room.status == lr.SessionStatus.now;
-    final isUpcoming = room.status == lr.SessionStatus.upcoming;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: isLive
-                      ? const Color(0xFFFFF0F0)
-                      : (isUpcoming
-                            ? const Color(0xFFFFF9F0)
-                            : const Color(0xFFF0F2FF)),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 3,
-                      backgroundColor: isLive
-                          ? const Color(0xFFFF4B4B)
-                          : (isUpcoming
-                                ? const Color(0xFFF2994A)
-                                : const Color(0xFF5A75FF)),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      isLive
-                          ? 'course.live_uppercase'.tr()
-                          : (isUpcoming
-                                ? 'course.upcoming_uppercase'.tr()
-                                : 'course.recorded_uppercase'.tr()),
-                      style: TextStyle(
-                        color: isLive
-                            ? const Color(0xFFFF4B4B)
-                            : (isUpcoming
-                                  ? const Color(0xFFF2994A)
-                                  : const Color(0xFF5A75FF)),
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Spacer(),
-              FaIcon(
-                FontAwesomeIcons.towerBroadcast,
-                color: isLive
-                    ? const Color(0xFFFF4B4B)
-                    : const Color(0xFF5A75FF),
-                size: 18,
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Text(
-            room.title,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 17,
-              color: Color(0xFF1F2937),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            room.instructorName,
-            style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '${room.formattedTime} • ${room.duration}',
-            style: TextStyle(
-              color: const Color(0xFF9CA3AF).withValues(alpha: 0.7),
-              fontSize: 12,
-            ),
-          ),
-          const SizedBox(height: 20),
-          if (isLive)
-            ElevatedButton(
-              onPressed: () {
-                // Handle join live
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF2DBC77),
-                foregroundColor: Colors.white,
-                minimumSize: const Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 0,
-              ),
-              child: Text(
-                'course.join_live'.tr(),
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 15,
-                ),
-              ),
-            )
-          else if (isUpcoming)
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () {
-                      // Handle view details
-                    },
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF6B7280),
-                      side: const BorderSide(color: Color(0xFFD1D5DB)),
-                      minimumSize: const Size(double.infinity, 44),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    child: Text(
-                      'course.view_details'.tr(),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () {
-                      // Handle set reminder
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF5A75FF),
-                      foregroundColor: Colors.white,
-                      minimumSize: const Size(double.infinity, 44),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      elevation: 0,
-                    ),
-                    child: Text(
-                      'course.set_reminder'.tr(),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            )
-          else
-            ElevatedButton(
-              onPressed: () {
-                // Handle watch recorded
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF5A75FF),
-                foregroundColor: Colors.white,
-                minimumSize: const Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 0,
-              ),
-              child: const Text(
-                'WATCH RECORDING',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-              ),
-            ),
-        ],
+    // Website course tab: "Join Now" when live, otherwise "View" — both open
+    // the live session page.
+    return LiveRoomCourseCard(
+      room: room,
+      onOpen: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) =>
+              LiveSessionDetailScreen(roomId: room.id, initialRoom: room),
+        ),
       ),
     );
   }
@@ -1859,7 +1632,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
     final description = attributes['description']?.toString() ?? '';
     final materialType = attributes['material_type']?.toString() ?? 'reference';
     final coverImage = attributes['cover_image']?.toString() ?? '';
-    final isLocked = attributes['is_locked'] == true;
+    final isLocked = libraryIsLocked(library);
     final price = attributes['price']?.toString() ?? '0';
 
     return Container(
@@ -2304,8 +2077,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
     int fileCount = chapterAttachments.length;
 
     for (final lecture in lectures) {
-      final lectureAttrs = lecture['attributes'] ?? {};
-      final chapters = lectureAttrs['chapters'] as List<dynamic>? ?? [];
+      final chapters = studentVisibleChapters(lecture);
       for (final chapter in chapters) {
         final chapterAttrs = chapter['attributes'] ?? {};
         final attachments = chapterAttrs['attachments'] as List<dynamic>? ?? [];
@@ -2325,7 +2097,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
     final lectureAttrs = lecture['attributes'] ?? {};
     final lectureName =
         lectureAttrs['title']?.toString() ?? 'course.untitled_lecture'.tr();
-    final chapters = lectureAttrs['chapters'] as List<dynamic>? ?? [];
+    final chapters = studentVisibleChapters(lecture);
 
     final isExpanded = _expandedLectures[lectureId] ?? false;
 
@@ -3965,6 +3737,10 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
               decoration: TextDecoration.underline,
             ),
           ),
+          if (post.attributes.images.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            PostImages(images: post.attributes.images),
+          ],
           const SizedBox(height: 12),
           if (course != null) ...[
             _buildTagChip('#\${course.attributes.title}'),

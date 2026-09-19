@@ -42,7 +42,12 @@ class ScreenProtectionManager: NSObject {
     private var methodChannel: FlutterMethodChannel?
     private var eventSink: FlutterEventSink?
     
-    private var isGlobalEnabled = true
+    // Dashboard policy ("Block Screenshots & Recording"), persisted so it
+    // applies on cold start before Dart runs. Defaults to protected.
+    private static let policyDefaultsKey = "learnoo_global_protection_enabled"
+    private var isGlobalEnabled: Bool = {
+        UserDefaults.standard.object(forKey: ScreenProtectionManager.policyDefaultsKey) as? Bool ?? true
+    }()
     private var protectionWindow: UIWindow?
     private var cancellables = Set<AnyCancellable>()
     
@@ -71,10 +76,10 @@ class ScreenProtectionManager: NSObject {
     private func handleMethodCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
         case "enableGlobalProtection":
-            isGlobalEnabled = true
+            setGlobalEnabled(true)
             result(true)
         case "disableGlobalProtection":
-            isGlobalEnabled = false
+            setGlobalEnabled(false)
             result(true)
         case "isJailbroken":
             result(isJailbroken())
@@ -91,10 +96,22 @@ class ScreenProtectionManager: NSObject {
         }
     }
     
+    private func setGlobalEnabled(_ enabled: Bool) {
+        isGlobalEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: ScreenProtectionManager.policyDefaultsKey)
+        if !enabled {
+            hideBlackOverlay()
+        } else if UIScreen.main.isCaptured {
+            showBlackOverlay()
+        }
+    }
+
     private func handleCapturedDidChange() {
         let isCaptured = UIScreen.main.isCaptured
         if isCaptured {
-            showBlackOverlay()
+            // Events are still sent; Dart ignores them when the dashboard
+            // policy is off. The native overlay follows the policy.
+            if isGlobalEnabled { showBlackOverlay() }
             sendEvent(name: "recording_started")
         } else {
             hideBlackOverlay()

@@ -76,7 +76,7 @@ class _PostCommentsSectionState extends State<PostCommentsSection> {
     if (result['success'] != true) {
       setState(() {
         _isLoading = false;
-        _error = result['message']?.toString();
+        _error = 'community.failed_load_comments'.tr();
       });
       return;
     }
@@ -112,7 +112,7 @@ class _PostCommentsSectionState extends State<PostCommentsSection> {
     setState(() => _isSubmitting = false);
 
     if (result['success'] != true) {
-      _showMessage(result['message']?.toString() ?? 'community.comment_failed'.tr());
+      _showMessage('community.comment_failed'.tr());
       return;
     }
 
@@ -149,7 +149,7 @@ class _PostCommentsSectionState extends State<PostCommentsSection> {
     if (!mounted) return;
 
     if (result['success'] != true) {
-      _showMessage(result['message']?.toString() ?? 'community.delete_failed'.tr());
+      _showMessage('community.delete_failed'.tr());
       return;
     }
 
@@ -161,7 +161,7 @@ class _PostCommentsSectionState extends State<PostCommentsSection> {
     final result = await _repository.reactToPost(comment.id, 'like');
     if (!mounted) return;
     if (result['success'] != true) {
-      _showMessage(result['message']?.toString() ?? 'community.reaction_failed'.tr());
+      _showMessage('community.reaction_failed'.tr());
       return;
     }
     await _load();
@@ -179,13 +179,21 @@ class _PostCommentsSectionState extends State<PostCommentsSection> {
     return comment.attributes.user?.id == userId;
   }
 
+  bool get _isDark => Theme.of(context).brightness == Brightness.dark;
+
+  Color get _mutedColor =>
+      _isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+
+  Color get _borderColor =>
+      _isDark ? const Color(0xFF383E52) : const Color(0xFFE2E8F0);
+
   @override
   Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.only(top: 12),
       padding: const EdgeInsets.only(top: 12),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: _borderColor)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -194,20 +202,20 @@ class _PostCommentsSectionState extends State<PostCommentsSection> {
             onTap: _toggle,
             child: Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.chat_bubble_outline,
                   size: 16,
-                  color: Color(0xFF64748B),
+                  color: _mutedColor,
                 ),
                 const SizedBox(width: 8),
                 Text(
                   _expanded
                       ? 'community.hide_comments'.tr(args: ['$_count'])
                       : 'community.show_comments'.tr(args: ['$_count']),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF64748B),
+                    color: _mutedColor,
                   ),
                 ),
               ],
@@ -228,10 +236,10 @@ class _PostCommentsSectionState extends State<PostCommentsSection> {
             else if (_comments.isEmpty)
               Text(
                 'community.no_comments_yet'.tr(),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   fontStyle: FontStyle.italic,
-                  color: Color(0xFF64748B),
+                  color: _mutedColor,
                 ),
               )
             else
@@ -256,7 +264,7 @@ class _PostCommentsSectionState extends State<PostCommentsSection> {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: _isDark ? const Color(0xFF262A36) : const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -267,22 +275,27 @@ class _PostCommentsSectionState extends State<PostCommentsSection> {
               Expanded(
                 child: Text(
                   name,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF0F172A),
+                    color: _isDark
+                        ? const Color(0xFFF8FAFC)
+                        : const Color(0xFF0F172A),
                   ),
                 ),
               ),
               if (_canDelete(comment))
-                InkWell(
-                  onTap: () => _delete(comment),
-                  child: const Padding(
-                    padding: EdgeInsets.all(4),
-                    child: Icon(
-                      Icons.delete_outline,
-                      size: 16,
-                      color: Color(0xFF94A3B8),
+                Tooltip(
+                  message: 'community.delete_comment_title'.tr(),
+                  child: InkWell(
+                    onTap: () => _delete(comment),
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(
+                        Icons.delete_outline,
+                        size: 16,
+                        color: Color(0xFF94A3B8),
+                      ),
                     ),
                   ),
                 ),
@@ -291,10 +304,10 @@ class _PostCommentsSectionState extends State<PostCommentsSection> {
           const SizedBox(height: 6),
           Text(
             comment.attributes.content,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               height: 1.5,
-              color: Color(0xFF475569),
+              color: _isDark ? const Color(0xFFE2E8F0) : const Color(0xFF475569),
             ),
           ),
           const SizedBox(height: 8),
@@ -308,11 +321,12 @@ class _PostCommentsSectionState extends State<PostCommentsSection> {
                   size: 14,
                   color: comment.attributes.userReaction == null
                       ? const Color(0xFF94A3B8)
-                      : AppColors.primaryBlue,
+                      : (_isDark ? AppColors.lightBlue : AppColors.primaryBlue),
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  '${comment.attributes.reactionsCount}',
+                  'community.likes_count'
+                      .tr(args: ['${comment.attributes.reactionsCount}']),
                   style: const TextStyle(
                     fontSize: 12,
                     color: Color(0xFF94A3B8),
@@ -335,30 +349,44 @@ class _PostCommentsSectionState extends State<PostCommentsSection> {
             controller: _composerController,
             minLines: 1,
             maxLines: 4,
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: _isDark ? const Color(0xFFF8FAFC) : AppColors.textDark,
+            ),
+            cursorColor: _isDark ? AppColors.lightBlue : AppColors.primaryBlue,
             decoration: InputDecoration(
               isDense: true,
               hintText: 'community.write_comment'.tr(),
-              hintStyle: const TextStyle(fontSize: 13),
+              hintStyle: TextStyle(
+                fontSize: 13,
+                color: _isDark ? const Color(0xFF94A3B8) : AppColors.inputHint,
+              ),
+              filled: true,
+              fillColor: _isDark ? const Color(0xFF262A36) : Colors.white,
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                borderSide: BorderSide(color: _borderColor),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                borderSide: BorderSide(color: _borderColor),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide:
-                    const BorderSide(color: AppColors.primaryBlue, width: 1.5),
+                borderSide: BorderSide(
+                  color: _isDark ? AppColors.lightBlue : AppColors.primaryBlue,
+                  width: 1.5,
+                ),
               ),
             ),
           ),
         ),
         const SizedBox(width: 8),
         IconButton(
+          tooltip: 'community.send_comment'.tr(),
           onPressed: _isSubmitting ? null : _submit,
           icon: _isSubmitting
               ? const SizedBox(
@@ -366,7 +394,10 @@ class _PostCommentsSectionState extends State<PostCommentsSection> {
                   width: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(Icons.send, color: AppColors.primaryBlue),
+              : Icon(
+                  Icons.send,
+                  color: _isDark ? AppColors.lightBlue : AppColors.primaryBlue,
+                ),
         ),
       ],
     );

@@ -39,42 +39,16 @@ class PdfNavigationBar extends StatelessWidget {
   Future<void> _promptForPage(BuildContext context) async {
     if (pageCount <= 1) return;
 
-    final textController = TextEditingController(
-      text: currentPage > 0 ? '$currentPage' : '',
-    );
-
+    // The dialog owns its text controller. Disposing it here, right after
+    // `showDialog` returned, crashed: the route's closing animation still
+    // rebuilds the TextField after the future completes.
     final page = await showDialog<int>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('pdf.go_to_page'.tr()),
-        content: TextField(
-          controller: textController,
-          autofocus: true,
-          keyboardType: TextInputType.number,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          decoration: InputDecoration(
-            hintText: 'pdf.page_range'.tr(args: ['$pageCount']),
-          ),
-          onSubmitted: (value) =>
-              Navigator.pop(context, int.tryParse(value.trim())),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('profile.cancel'.tr()),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(
-              context,
-              int.tryParse(textController.text.trim()),
-            ),
-            child: Text('pdf.go'.tr()),
-          ),
-        ],
+      builder: (_) => _PageJumpDialog(
+        initialPage: currentPage,
+        pageCount: pageCount,
       ),
     );
-
-    textController.dispose();
 
     if (page == null) return;
     // Out-of-range input is clamped rather than rejected, so a typo still lands
@@ -157,6 +131,61 @@ class PdfNavigationBar extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// "Go to page" prompt. Stateful so the text controller lives exactly as long
+/// as the dialog, including its exit animation.
+class _PageJumpDialog extends StatefulWidget {
+  const _PageJumpDialog({required this.initialPage, required this.pageCount});
+
+  final int initialPage;
+  final int pageCount;
+
+  @override
+  State<_PageJumpDialog> createState() => _PageJumpDialogState();
+}
+
+class _PageJumpDialogState extends State<_PageJumpDialog> {
+  late final TextEditingController _text = TextEditingController(
+    text: widget.initialPage > 0 ? '${widget.initialPage}' : '',
+  );
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    Navigator.pop(context, int.tryParse(_text.text.trim()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('pdf.go_to_page'.tr()),
+      content: TextField(
+        controller: _text,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        decoration: InputDecoration(
+          hintText: 'pdf.page_range'.tr(args: ['${widget.pageCount}']),
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text('profile.cancel'.tr()),
+        ),
+        TextButton(
+          onPressed: _submit,
+          child: Text('pdf.go'.tr()),
+        ),
+      ],
     );
   }
 }

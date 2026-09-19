@@ -47,6 +47,38 @@ class LibraryRepository {
     }
   }
 
+  /// `GET /v1/library/{id}` — the detail page's source, like `useLibrary` on
+  /// the website. Returns the material itself so its lock and attachment
+  /// flags are current rather than whatever the list happened to cache.
+  Future<Map<String, dynamic>> getLibraryById(String id) async {
+    final token = await getToken();
+    if (token == null) return {'success': false, 'message': 'No token found'};
+
+    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.libraries}/$id');
+    try {
+      final response = await http.get(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data is Map) {
+        return {'success': true, 'data': data['data']};
+      }
+      return {
+        'success': false,
+        'message': data is Map ? data['message'] : null,
+        'statusCode': response.statusCode,
+      };
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
   Future<Map<String, dynamic>> activateCode({
     required String code,
     required int itemId,

@@ -54,13 +54,20 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
   void initState() {
     super.initState();
     _loadQuizzes(page: 1);
+    // Start a periodic timer to update countdown timers every second
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
+
+  Timer? _countdownTimer;
 
   @override
   void dispose() {
     _scrollController.dispose();
     _searchController.dispose();
     _debounceTimer?.cancel();
+    _countdownTimer?.cancel();
     super.dispose();
   }
 
@@ -154,7 +161,7 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
         }
       } else {
         setState(() {
-          _errorMessage = quizResult['message'] ?? 'Failed to load exams';
+          _errorMessage = quizResult['message']?.toString() ?? 'exams.load_failed'.tr();
           _isLoading = false;
           _isSearching = false;
         });
@@ -162,7 +169,7 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _errorMessage = 'Connection error: $e';
+          _errorMessage = 'exams.network_error'.tr();
           _isLoading = false;
           _isSearching = false;
         });
@@ -477,6 +484,11 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
                 ],
               ),
             ],
+            // Countdown timer for upcoming exams
+            if (!quiz.isAvailable && !quiz.isExpired) ...[
+              const SizedBox(height: 10),
+              _buildCountdownTimer(quiz.startTime),
+            ],
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -612,11 +624,71 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
     );
   }
 
+  Widget _buildCountdownTimer(DateTime startTime) {
+    final now = DateTime.now().toUtc();
+    final remaining = startTime.difference(now);
+
+    if (remaining.isNegative) return const SizedBox.shrink();
+
+    final days = remaining.inDays;
+    final hours = remaining.inHours % 24;
+    final minutes = remaining.inMinutes % 60;
+    final seconds = remaining.inSeconds % 60;
+
+    String countdownText;
+    if (days > 0) {
+      countdownText = 'exams.countdown_days_hours_minutes'.tr(args: [
+        '$days',
+        hours.toString().padLeft(2, '0'),
+        minutes.toString().padLeft(2, '0'),
+      ]);
+    } else {
+      countdownText =
+          '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFFFF4E6), Color(0xFFFFEDD5)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFFDBA74).withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.timer_outlined,
+            size: 15,
+            color: Color(0xFFF97316),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            'exams.starts_in'.tr(args: [countdownText]),
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFFC2410C),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   String _formatDateRange(DateTime start, DateTime end) {
-    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    final startStr = '${months[start.month - 1]} ${start.day}';
-    final endStr = '${months[end.month - 1]} ${end.day}';
-    return '$startStr - $endStr';
+    // Month names follow the app language (e.g. "١٢ مايو" in Arabic).
+    DateFormat format;
+    try {
+      format = DateFormat.MMMd(context.locale.toString());
+    } catch (_) {
+      format = DateFormat.MMMd('en');
+    }
+    return '${format.format(start.toLocal())} - ${format.format(end.toLocal())}';
   }
 
   Widget _buildSkeletonList() {

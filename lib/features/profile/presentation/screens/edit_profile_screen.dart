@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:learnoo/features/academic/presentation/widgets/academic_picker_fields.dart';
 import 'package:learnoo/features/auth/data/auth_repository.dart';
 import 'package:learnoo/features/auth/domain/student_profile.dart';
@@ -88,9 +89,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   void _showImagePickerOptions() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: isDark ? const Color(0xFF1E212B) : Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -100,12 +103,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
-                'Change Profile Photo',
+              Text(
+                'profile.change_photo'.tr(),
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF1F2937),
+                  color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
                 ),
               ),
               const SizedBox(height: 24),
@@ -114,22 +117,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   Expanded(
                     child: _buildPickerOption(
                       icon: FontAwesomeIcons.camera,
-                      label: 'Camera',
+                      label: 'profile.camera'.tr(),
                       onTap: () {
                         Navigator.pop(context);
                         _pickImage(ImageSource.camera);
                       },
+                      isDark: isDark,
                     ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
                     child: _buildPickerOption(
                       icon: FontAwesomeIcons.image,
-                      label: 'Gallery',
+                      label: 'profile.gallery'.tr(),
                       onTap: () {
                         Navigator.pop(context);
                         _pickImage(ImageSource.gallery);
                       },
+                      isDark: isDark,
                     ),
                   ),
                 ],
@@ -138,7 +143,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 const SizedBox(height: 16),
                 _buildPickerOption(
                   icon: FontAwesomeIcons.trash,
-                  label: 'Remove Photo',
+                  label: 'profile.remove_photo'.tr(),
                   color: Colors.red,
                   onTap: () {
                     Navigator.pop(context);
@@ -147,6 +152,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       _currentImageUrl = null;
                     });
                   },
+                  isDark: isDark,
                 ),
               ],
             ],
@@ -161,6 +167,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     required String label,
     required VoidCallback onTap,
     Color? color,
+    required bool isDark,
   }) {
     return InkWell(
       onTap: onTap,
@@ -168,7 +175,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
         decoration: BoxDecoration(
-          color: color?.withOpacity(0.1) ?? const Color(0xFFF0F2FF),
+          color: color != null
+              ? color.withValues(alpha: 0.1)
+              : (isDark ? const Color(0xFF262A36) : const Color(0xFFF0F2FF)),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Column(
@@ -182,9 +191,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             Text(
               label,
               style: TextStyle(
-                color: color ?? const Color(0xFF1F2937),
+                fontSize: 14,
                 fontWeight: FontWeight.w600,
-                fontSize: 13,
+                color: color ?? (isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937)),
               ),
             ),
           ],
@@ -193,25 +202,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
-  /// The academic half of the update body, matching the web's
-  /// `buildStudentAcademicUpdatePayload`: a `centers[]` entry alongside the
-  /// singular `center_id`, and `department_id` only when one is chosen.
   Map<String, dynamic> _academicPayload() {
-    final university = _universityId;
-    final center = _centerId;
-    final faculty = _facultyId;
-    if (university == null || center == null || faculty == null) {
-      return const {};
-    }
-    final department = _departmentId;
-    return {
-      'university_id': university,
-      'faculty_id': faculty,
-      'centers[]': center,
-      'center_id': center,
-      if (department != null && department.isNotEmpty)
-        'department_id': department,
-    };
+    final map = <String, dynamic>{};
+    if (_universityId != null) map['university_id'] = _universityId;
+    if (_centerId != null) map['center_id'] = _centerId;
+    if (_facultyId != null) map['faculty_id'] = _facultyId;
+    if (_departmentId != null) map['department_id'] = _departmentId;
+    return map;
   }
 
   Future<void> _handleSave() async {
@@ -240,14 +237,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(result['message'] ?? 'Profile updated successfully'),
+            content: Text(result['message'] ?? 'profile.profile_updated'.tr()),
             backgroundColor: Colors.green,
           ),
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(result['message'] ?? 'Failed to update profile'),
+            content: Text(result['message'] ?? 'profile.failed_update_profile'.tr()),
             backgroundColor: Colors.red,
           ),
         );
@@ -257,10 +254,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.only(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E212B) : Colors.white,
+        borderRadius: const BorderRadius.only(
           topLeft: Radius.circular(30),
           topRight: Radius.circular(30),
         ),
@@ -279,19 +278,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  'Edit Profile',
+                Text(
+                  'profile.edit_profile'.tr(),
                   style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.bold,
-                    color: Color(0xFF1F2937),
+                    color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
                   ),
                 ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close, color: Colors.grey),
+                  icon: Icon(Icons.close, color: isDark ? const Color(0xFF94A3B8) : Colors.grey),
                   style: IconButton.styleFrom(
-                    backgroundColor: const Color(0xFFF9FAFB),
+                    backgroundColor: isDark ? const Color(0xFF262A36) : const Color(0xFFF9FAFB),
                   ),
                 ),
               ],
@@ -305,13 +304,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     Container(
                       padding: const EdgeInsets.all(4),
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: isDark ? const Color(0xFF1E212B) : Colors.white,
                         shape: BoxShape.circle,
-                        border: Border.all(color: const Color(0xFFE5E7EB), width: 2),
+                        border: Border.all(
+                          color: isDark ? const Color(0xFF383E52) : const Color(0xFFE5E7EB),
+                          width: 2,
+                        ),
                       ),
                       child: CircleAvatar(
                         radius: 50,
-                        backgroundColor: const Color(0xFFF0F2FF),
+                        backgroundColor: isDark ? const Color(0xFF262A36) : const Color(0xFFF0F2FF),
                         backgroundImage: _selectedImage != null
                             ? FileImage(_selectedImage!)
                             : (_currentImageUrl != null && _currentImageUrl!.isNotEmpty
@@ -357,23 +359,47 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             Row(
               children: [
                 Expanded(
-                  child: _buildTextField('First Name', _firstNameController, Icons.person_outline),
+                  child: _buildTextField(
+                    'profile.first_name'.tr(),
+                    _firstNameController,
+                    Icons.person_outline,
+                    isDark: isDark,
+                  ),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
-                  child: _buildTextField('Last Name', _lastNameController, Icons.person_outline),
+                  child: _buildTextField(
+                    'profile.last_name'.tr(),
+                    _lastNameController,
+                    Icons.person_outline,
+                    isDark: isDark,
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: 16),
-            _buildTextField('Email Address', _emailController, Icons.email_outlined),
+            _buildTextField(
+              'profile.email_address'.tr(),
+              _emailController,
+              Icons.email_outlined,
+              isDark: isDark,
+            ),
             const SizedBox(height: 16),
-            _buildTextField('Phone Number', _phoneController, Icons.phone_outlined, enabled: false),
-            const Padding(
-              padding: EdgeInsets.only(top: 8, left: 4),
+            _buildTextField(
+              'profile.phone_number'.tr(),
+              _phoneController,
+              Icons.phone_outlined,
+              enabled: false,
+              isDark: isDark,
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 8, left: 4, right: 4),
               child: Text(
-                'Phone number cannot be changed',
-                style: TextStyle(color: Colors.grey, fontSize: 12),
+                'profile.phone_cannot_change'.tr(),
+                style: TextStyle(
+                  color: isDark ? const Color(0xFF94A3B8) : Colors.grey,
+                  fontSize: 12,
+                ),
               ),
             ),
             const SizedBox(height: 24),
@@ -412,7 +438,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ),
                 child: _isLoading 
                     ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                    : const Text('SAVE CHANGES', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    : Text(
+                        'profile.save_changes'.tr(),
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                      ),
               ),
             ),
           ],
@@ -421,29 +450,48 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
-  Widget _buildTextField(String label, TextEditingController controller, IconData icon, {bool enabled = true}) {
+  Widget _buildTextField(
+    String label,
+    TextEditingController controller,
+    IconData icon, {
+    bool enabled = true,
+    required bool isDark,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label,
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF374151)),
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: isDark ? const Color(0xFFCBD5E1) : const Color(0xFF374151),
+          ),
         ),
         const SizedBox(height: 8),
         TextField(
           controller: controller,
           enabled: enabled,
+          style: TextStyle(
+            color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
+          ),
           decoration: InputDecoration(
-            prefixIcon: Icon(icon, color: Colors.grey, size: 20),
+            prefixIcon: Icon(icon, color: isDark ? const Color(0xFF94A3B8) : Colors.grey, size: 20),
             filled: true,
-            fillColor: enabled ? const Color(0xFFF9FAFB) : const Color(0xFFF3F4F6),
+            fillColor: enabled
+                ? (isDark ? const Color(0xFF262A36) : const Color(0xFFF9FAFB))
+                : (isDark ? const Color(0xFF1B1D25) : const Color(0xFFF3F4F6)),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+              borderSide: BorderSide(
+                color: isDark ? const Color(0xFF383E52) : const Color(0xFFE5E7EB),
+              ),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+              borderSide: BorderSide(
+                color: isDark ? const Color(0xFF383E52) : const Color(0xFFE5E7EB),
+              ),
             ),
             contentPadding: const EdgeInsets.symmetric(vertical: 16),
           ),

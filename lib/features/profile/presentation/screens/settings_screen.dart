@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:easy_localization/easy_localization.dart';
 
+import '../../../../core/theme/dynamic_theme.dart';
 import 'change_password_screen.dart';
 import 'help_faq_screen.dart';
 import 'terms_privacy_screen.dart';
@@ -14,14 +15,38 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  final DynamicThemeService _themeService = DynamicThemeService();
   bool _notificationsEnabled = true;
   bool _darkModeEnabled = false;
   bool _autoDownloadEnabled = false;
 
   @override
+  void initState() {
+    super.initState();
+    _darkModeEnabled = _themeService.isDarkMode;
+    _themeService.addListener(_onThemeChanged);
+  }
+
+  @override
+  void dispose() {
+    _themeService.removeListener(_onThemeChanged);
+    super.dispose();
+  }
+
+  void _onThemeChanged() {
+    if (mounted) {
+      setState(() {
+        _darkModeEnabled = _themeService.isDarkMode;
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFFAFBFF),
+      backgroundColor: isDark ? const Color(0xFF13151B) : const Color(0xFFFAFBFF),
       body: Column(
         children: [
           _buildHeader(context),
@@ -29,20 +54,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: ListView(
               padding: const EdgeInsets.all(20),
               children: [
-                _buildSectionHeader('settings.section_preferences'.tr()),
+                _buildSectionHeader('settings.section_preferences'.tr(), isDark),
                 _buildToggleItem(
                   icon: FontAwesomeIcons.bell,
                   label: 'settings.notifications'.tr(),
                   value: _notificationsEnabled,
                   onChanged: (val) => setState(() => _notificationsEnabled = val),
                   iconColor: const Color(0xFF3B82F6),
+                  isDark: isDark,
                 ),
                 _buildToggleItem(
                   icon: FontAwesomeIcons.moon,
                   label: 'settings.dark_mode'.tr(),
                   value: _darkModeEnabled,
-                  onChanged: (val) => setState(() => _darkModeEnabled = val),
+                  onChanged: (val) async {
+                    setState(() => _darkModeEnabled = val);
+                    await _themeService.toggleDarkMode(val);
+                  },
                   iconColor: const Color(0xFF8B5CF6),
+                  isDark: isDark,
                 ),
                 _buildToggleItem(
                   icon: FontAwesomeIcons.globe,
@@ -50,9 +80,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   value: _autoDownloadEnabled,
                   onChanged: (val) => setState(() => _autoDownloadEnabled = val),
                   iconColor: const Color(0xFF10B981),
+                  isDark: isDark,
                 ),
                 const SizedBox(height: 24),
-                _buildSectionHeader('settings.section_account'.tr()),
+                _buildSectionHeader('settings.section_account'.tr(), isDark),
                 _buildNavigationItem(
                   icon: FontAwesomeIcons.lock,
                   label: 'settings.change_password'.tr(),
@@ -65,12 +96,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     );
                   },
                   iconColor: const Color(0xFFF59E0B),
+                  isDark: isDark,
                 ),
                 Container(
                   margin: const EdgeInsets.only(bottom: 2),
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    border: Border(bottom: BorderSide(color: Color(0xFFF3F4F6))),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF1E212B) : Colors.white,
+                    border: Border(
+                      bottom: BorderSide(
+                        color: isDark ? const Color(0xFF2E3344) : const Color(0xFFF3F4F6),
+                      ),
+                    ),
                   ),
                   child: ListTile(
                     leading: Container(
@@ -84,25 +120,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         child: FaIcon(FontAwesomeIcons.globe, color: Color(0xFF14B8A6), size: 16),
                       ),
                     ),
-                    title: Text('settings.language'.tr(), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
-                    trailing: DropdownButton<String>(
-                      value: context.locale.languageCode,
-                      underline: const SizedBox(),
-                      icon: const Icon(Icons.arrow_drop_down, color: Colors.grey),
-                      items: const [
-                        DropdownMenuItem(value: 'en', child: Text('English')),
-                        DropdownMenuItem(value: 'ar', child: Text('العربية')),
-                      ],
-                      onChanged: (String? newLanguage) {
-                        if (newLanguage != null) {
-                          context.setLocale(Locale(newLanguage));
-                        }
-                      },
+                    title: Text(
+                      'settings.language'.tr(),
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                        color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
+                      ),
+                    ),
+                    trailing: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: context.locale.languageCode,
+                        dropdownColor: isDark ? const Color(0xFF1E212B) : Colors.white,
+                        icon: Icon(
+                          Icons.arrow_drop_down,
+                          color: isDark ? const Color(0xFFCBD5E1) : Colors.grey,
+                        ),
+                        items: [
+                          DropdownMenuItem(
+                            value: 'en',
+                            child: Text(
+                              'English',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: 'ar',
+                            child: Text(
+                              'العربية',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                        onChanged: (String? newLanguage) {
+                          if (newLanguage != null) {
+                            context.setLocale(Locale(newLanguage));
+                          }
+                        },
+                      ),
                     ),
                   ),
                 ),
                 const SizedBox(height: 24),
-                _buildSectionHeader('settings.section_support'.tr()),
+                _buildSectionHeader('settings.section_support'.tr(), isDark),
                 _buildNavigationItem(
                   icon: FontAwesomeIcons.circleQuestion,
                   label: 'settings.help_faq'.tr(),
@@ -115,6 +183,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     );
                   },
                   iconColor: const Color(0xFF6366F1),
+                  isDark: isDark,
                 ),
                 _buildNavigationItem(
                   icon: FontAwesomeIcons.shieldHalved,
@@ -128,12 +197,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     );
                   },
                   iconColor: const Color(0xFF64748B),
+                  isDark: isDark,
                 ),
                 const SizedBox(height: 32),
                 Center(
                   child: Text(
                     'Learnoo v1.0.0',
-                    style: TextStyle(color: Colors.grey[400], fontSize: 13),
+                    style: TextStyle(
+                      color: isDark ? const Color(0xFF64748B) : Colors.grey[400],
+                      fontSize: 13,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 40),
@@ -146,6 +219,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildHeader(BuildContext context) {
+    final textDir = Directionality.of(context);
+
     return Container(
       width: double.infinity,
       height: 180,
@@ -164,8 +239,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: Stack(
           alignment: Alignment.center,
           children: [
-            Positioned(
-              left: 10,
+            Positioned.directional(
+              textDirection: textDir,
+              start: 10,
               child: IconButton(
                 onPressed: () => Navigator.pop(context),
                 icon: const Icon(Icons.arrow_back, color: Colors.white),
@@ -188,15 +264,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildSectionHeader(String title) {
+  Widget _buildSectionHeader(String title, bool isDark) {
     return Padding(
-      padding: const EdgeInsets.only(left: 4, bottom: 12),
+      padding: const EdgeInsets.only(left: 4, right: 4, bottom: 12),
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.bold,
-          color: Color(0xFF1F2937),
+          color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF1F2937),
           letterSpacing: 0.5,
         ),
       ),
@@ -209,12 +285,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required bool value,
     required ValueChanged<bool> onChanged,
     required Color iconColor,
+    required bool isDark,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 2),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Color(0xFFF3F4F6))),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E212B) : Colors.white,
+        border: Border(
+          bottom: BorderSide(
+            color: isDark ? const Color(0xFF2E3344) : const Color(0xFFF3F4F6),
+          ),
+        ),
       ),
       child: ListTile(
         leading: Container(
@@ -224,13 +305,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
             color: iconColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Center(child: FaIcon(icon is FaIconData ? icon : FontAwesomeIcons.circleQuestion, color: iconColor, size: 16)),
+          child: Center(
+            child: FaIcon(
+              icon is FaIconData ? icon : FontAwesomeIcons.circleQuestion,
+              color: iconColor,
+              size: 16,
+            ),
+          ),
         ),
-        title: Text(label, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+        title: Text(
+          label,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+            color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
+          ),
+        ),
         trailing: Switch(
           value: value,
           onChanged: onChanged,
-          activeColor: const Color(0xFF263EE2),
+          activeColor: const Color(0xFF5A75FF),
         ),
       ),
     );
@@ -242,12 +336,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     String? trailing,
     required VoidCallback onTap,
     required Color iconColor,
+    required bool isDark,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 2),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Color(0xFFF3F4F6))),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E212B) : Colors.white,
+        border: Border(
+          bottom: BorderSide(
+            color: isDark ? const Color(0xFF2E3344) : const Color(0xFFF3F4F6),
+          ),
+        ),
       ),
       child: ListTile(
         onTap: onTap,
@@ -258,19 +357,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
             color: iconColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Center(child: FaIcon(icon is FaIconData ? icon : FontAwesomeIcons.circleQuestion, color: iconColor, size: 16)),
+          child: Center(
+            child: FaIcon(
+              icon is FaIconData ? icon : FontAwesomeIcons.circleQuestion,
+              color: iconColor,
+              size: 16,
+            ),
+          ),
         ),
-        title: Text(label, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+        title: Text(
+          label,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+            color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
+          ),
+        ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (trailing != null)
               Text(
                 trailing,
-                style: const TextStyle(color: Colors.grey, fontSize: 13),
+                style: TextStyle(
+                  color: isDark ? const Color(0xFF94A3B8) : Colors.grey,
+                  fontSize: 13,
+                ),
               ),
             const SizedBox(width: 8),
-            const Icon(Icons.chevron_right, color: Colors.grey, size: 20),
+            Icon(
+              Icons.chevron_right,
+              color: isDark ? const Color(0xFF64748B) : Colors.grey,
+              size: 20,
+            ),
           ],
         ),
       ),

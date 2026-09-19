@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
 import 'package:shimmer/shimmer.dart';
 import '../../../../core/services/student_scope.dart';
@@ -464,6 +465,8 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
     final content = attributes['content']?.toString() ?? '';
     final linkedLecture = attributes['linked_lecture']?.toString();
     final createdAt = attributes['created_at']?.toString();
+    final imageUrl = attributes['image']?.toString() ??
+        attributes['thumbnail']?.toString() ?? '';
 
     final styles = _getTypeStyles(type);
     final preview = content.length > 100 ? '${content.substring(0, 100)}...' : content;
@@ -473,7 +476,6 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
       onTap: () => _navigateToSummaryDetail(item),
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
@@ -489,97 +491,139 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
+            // Top image or colored icon header
+            if (imageUrl.isNotEmpty)
+              ClipRRect(
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                child: CachedNetworkImage(
+                  imageUrl: imageUrl,
+                  width: double.infinity,
+                  height: 140,
+                  fit: BoxFit.cover,
+                  placeholder: (context, url) => Container(
+                    height: 140,
                     color: styles['iconBgColor'],
-                    borderRadius: BorderRadius.circular(12),
+                    child: Center(
+                      child: FaIcon(
+                        styles['icon'],
+                        color: styles['iconColor'],
+                        size: 32,
+                      ),
+                    ),
                   ),
-                  child: Center(
-                    child: FaIcon(
-                      styles['icon'],
-                      color: styles['iconColor'],
-                      size: 20,
+                  errorWidget: (context, url, error) => Container(
+                    height: 140,
+                    color: styles['iconBgColor'],
+                    child: Center(
+                      child: FaIcon(
+                        styles['icon'],
+                        color: styles['iconColor'],
+                        size: 32,
+                      ),
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+              ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF1F2937),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: styles['typeBgColor'],
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              styles['typeLabel'],
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                                color: styles['typeColor'],
-                              ),
+                      if (imageUrl.isEmpty)
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: styles['iconBgColor'],
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Center(
+                            child: FaIcon(
+                              styles['icon'],
+                              color: styles['iconColor'],
+                              size: 20,
                             ),
                           ),
-                          if (linkedLecture != null) ...[
-                            const SizedBox(width: 8),
+                        ),
+                      if (imageUrl.isEmpty) const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                             Text(
-                              linkedLecture,
+                              title,
                               style: const TextStyle(
-                                fontSize: 12,
-                                color: Color(0xFF9CA3AF),
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1F2937),
                               ),
                             ),
+                            const SizedBox(height: 6),
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: styles['typeBgColor'],
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    styles['typeLabel'],
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      color: styles['typeColor'],
+                                    ),
+                                  ),
+                                ),
+                                if (linkedLecture != null) ...[
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    linkedLecture,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Color(0xFF9CA3AF),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
                           ],
-                        ],
+                        ),
                       ),
                     ],
                   ),
-                ),
-              ],
+                  if (preview.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      preview,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF6B7280),
+                        height: 1.4,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  if (date.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      date,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF9CA3AF),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
-            if (preview.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text(
-                preview,
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: Color(0xFF6B7280),
-                  height: 1.4,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-            if (date.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                date,
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: Color(0xFF9CA3AF),
-                ),
-              ),
-            ],
           ],
         ),
       ),

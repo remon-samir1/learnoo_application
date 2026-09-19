@@ -165,7 +165,7 @@ class ExamAccessUseCase {
       return {
         'success': false,
         'accessStatus': ExamAccessStatus.error,
-        'message': result['message'] ?? 'Failed to access exam',
+        'message': result['message'] ?? 'exams.access_denied'.tr(),
       };
     }
 

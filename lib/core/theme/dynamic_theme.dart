@@ -1,29 +1,70 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/feature_manager.dart';
 import 'app_colors.dart';
 
-/// Dynamic Theme Service - Creates ThemeData based on remote feature settings
+/// Dynamic Theme Service - Creates ThemeData based on remote feature settings and manages ThemeMode
 class DynamicThemeService extends ChangeNotifier {
   static final DynamicThemeService _instance = DynamicThemeService._internal();
   factory DynamicThemeService() => _instance;
   DynamicThemeService._internal();
 
+  static const String _themeModeKey = 'app_theme_mode';
   final FeatureManager _featureManager = FeatureManager();
   bool _isInitialized = false;
 
+  ThemeMode _themeMode = ThemeMode.system;
   ThemeData? _cachedTheme;
   ThemeData? _cachedDarkTheme;
 
   bool get isInitialized => _isInitialized;
+  ThemeMode get themeMode => _themeMode;
+  bool get isDarkMode => _themeMode == ThemeMode.dark;
 
   /// Initialize the theme service
   Future<void> initialize() async {
     if (_isInitialized) return;
 
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedMode = prefs.getString(_themeModeKey);
+      if (savedMode == 'dark') {
+        _themeMode = ThemeMode.dark;
+      } else if (savedMode == 'light') {
+        _themeMode = ThemeMode.light;
+      } else {
+        _themeMode = ThemeMode.system;
+      }
+    } catch (e) {
+      debugPrint('Error loading saved theme mode: $e');
+    }
+
     _featureManager.addListener(_onFeaturesChanged);
     _isInitialized = true;
     notifyListeners();
+  }
+
+  /// Change theme mode and persist to SharedPreferences
+  Future<void> setThemeMode(ThemeMode mode) async {
+    if (_themeMode == mode) return;
+    _themeMode = mode;
+    notifyListeners();
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      String value = 'system';
+      if (mode == ThemeMode.dark) value = 'dark';
+      if (mode == ThemeMode.light) value = 'light';
+      await prefs.setString(_themeModeKey, value);
+    } catch (e) {
+      debugPrint('Error saving theme mode: $e');
+    }
+  }
+
+  /// Toggle dark mode on or off
+  Future<void> toggleDarkMode(bool isDark) async {
+    await setThemeMode(isDark ? ThemeMode.dark : ThemeMode.light);
   }
 
   void _onFeaturesChanged() {
@@ -77,38 +118,119 @@ class DynamicThemeService extends ChangeNotifier {
     required String fontFamily,
   }) {
     final isDark = brightness == Brightness.dark;
+
+    // Dark mode colors
+    const darkScaffoldBg = Color(0xFF13151B);
+    const darkSurface = Color(0xFF1E212B);
+    const darkInputFill = Color(0xFF262A36);
+    const darkBorder = Color(0xFF383E52);
+    const darkDivider = Color(0xFF2E3344);
+    const darkTextPrimary = Color(0xFFF8FAFC);
+    const darkTextSecondary = Color(0xFFCBD5E1);
+    const darkTextMuted = Color(0xFF94A3B8);
+
+    // Light mode colors
+    const lightTextPrimary = Color(0xFF111827);
+    const lightTextSecondary = Color(0xFF4B5563);
+    const lightTextMuted = Color(0xFF9CA3AF);
+
+    final fontName = fontFamily.isNotEmpty ? fontFamily : 'Inter';
+
     final defaultColorScheme = ColorScheme.fromSeed(
       seedColor: primaryColor,
       brightness: brightness,
       primary: primaryColor,
       secondary: accentColor,
+      surface: isDark ? darkSurface : Colors.white,
+      onSurface: isDark ? darkTextPrimary : lightTextPrimary,
     );
+
+    final baseTextTheme = Typography.material2021(platform: TargetPlatform.android);
+    final textThemeToUse = isDark ? baseTextTheme.white : baseTextTheme.black;
 
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
       colorScheme: defaultColorScheme,
-      fontFamily: fontFamily.isNotEmpty ? fontFamily : 'Inter',
-      scaffoldBackgroundColor: isDark ? const Color(0xFF1A1A1A) : Colors.white,
+      fontFamily: fontName,
+      scaffoldBackgroundColor: isDark ? darkScaffoldBg : Colors.white,
+      canvasColor: isDark ? darkSurface : Colors.white,
+      cardColor: isDark ? darkSurface : Colors.white,
+      dialogBackgroundColor: isDark ? darkSurface : Colors.white,
+      dividerColor: isDark ? darkDivider : const Color(0xFFE5E7EB),
+      dividerTheme: DividerThemeData(
+        color: isDark ? darkDivider : const Color(0xFFE5E7EB),
+        thickness: 1,
+      ),
       appBarTheme: AppBarTheme(
-        backgroundColor: isDark ? const Color(0xFF2D2D2D) : primaryColor,
+        backgroundColor: isDark ? darkSurface : primaryColor,
         foregroundColor: Colors.white,
         elevation: 0,
         systemOverlayStyle: SystemUiOverlayStyle(
-          statusBarColor: isDark ? const Color(0xFF2D2D2D) : primaryColor,
-          statusBarIconBrightness: isDark ? Brightness.light : Brightness.light,
+          statusBarColor: isDark ? darkSurface : primaryColor,
+          statusBarIconBrightness: Brightness.light,
+          statusBarBrightness: Brightness.dark,
         ),
       ),
       bottomNavigationBarTheme: BottomNavigationBarThemeData(
-        backgroundColor: isDark ? const Color(0xFF2D2D2D) : Colors.white,
+        backgroundColor: isDark ? darkSurface : Colors.white,
         selectedItemColor: primaryColor,
-        unselectedItemColor: isDark ? Colors.grey : Colors.grey[600],
+        unselectedItemColor: isDark ? darkTextMuted : Colors.grey[600],
       ),
       cardTheme: CardThemeData(
-        color: isDark ? const Color(0xFF2D2D2D) : Colors.white,
-        elevation: 2,
+        color: isDark ? darkSurface : Colors.white,
+        elevation: isDark ? 0 : 2,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
+          side: isDark ? const BorderSide(color: darkDivider, width: 1) : BorderSide.none,
+        ),
+      ),
+      dropdownMenuTheme: DropdownMenuThemeData(
+        menuStyle: MenuStyle(
+          backgroundColor: WidgetStatePropertyAll(isDark ? darkSurface : Colors.white),
+          elevation: const WidgetStatePropertyAll(4),
+          shape: WidgetStatePropertyAll(
+            RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: isDark ? darkBorder : const Color(0xFFE2E8F0)),
+            ),
+          ),
+        ),
+        textStyle: TextStyle(
+          color: isDark ? darkTextPrimary : lightTextPrimary,
+          fontFamily: fontName,
+          fontSize: 14,
+        ),
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: isDark ? darkSurface : Colors.white,
+        surfaceTintColor: Colors.transparent,
+        textStyle: TextStyle(
+          color: isDark ? darkTextPrimary : lightTextPrimary,
+          fontFamily: fontName,
+          fontSize: 14,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: isDark ? darkBorder : const Color(0xFFE2E8F0)),
+        ),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: isDark ? darkSurface : Colors.white,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        titleTextStyle: TextStyle(
+          color: isDark ? darkTextPrimary : lightTextPrimary,
+          fontSize: 18,
+          fontWeight: FontWeight.bold,
+          fontFamily: fontName,
+        ),
+        contentTextStyle: TextStyle(
+          color: isDark ? darkTextSecondary : lightTextSecondary,
+          fontSize: 14,
+          fontFamily: fontName,
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
@@ -128,14 +250,23 @@ class DynamicThemeService extends ChangeNotifier {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: isDark ? const Color(0xFF3D3D3D) : Colors.white,
+        fillColor: isDark ? darkInputFill : Colors.white,
+        hintStyle: TextStyle(
+          color: isDark ? darkTextMuted : lightTextMuted,
+          fontSize: 14,
+          fontFamily: fontName,
+        ),
+        labelStyle: TextStyle(
+          color: isDark ? darkTextSecondary : lightTextSecondary,
+          fontFamily: fontName,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: isDark ? Colors.grey[700]! : Colors.grey[300]!),
+          borderSide: BorderSide(color: isDark ? darkBorder : Colors.grey[300]!),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: isDark ? Colors.grey[700]! : Colors.grey[300]!),
+          borderSide: BorderSide(color: isDark ? darkBorder : Colors.grey[300]!),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -144,6 +275,11 @@ class DynamicThemeService extends ChangeNotifier {
       ),
       progressIndicatorTheme: ProgressIndicatorThemeData(
         color: primaryColor,
+      ),
+      textTheme: textThemeToUse.apply(
+        fontFamily: fontName,
+        bodyColor: isDark ? darkTextPrimary : lightTextPrimary,
+        displayColor: isDark ? darkTextPrimary : lightTextPrimary,
       ),
     );
   }
@@ -159,7 +295,7 @@ class DynamicThemeService extends ChangeNotifier {
   }
 }
 
-/// Animated Theme Wrapper that reacts to feature changes
+/// Animated Theme Wrapper that reacts to feature and theme mode changes
 class DynamicThemeWrapper extends StatefulWidget {
   final Widget child;
 
@@ -192,8 +328,12 @@ class _DynamicThemeWrapperState extends State<DynamicThemeWrapper> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = _themeService.isDarkMode ||
+        (_themeService.themeMode == ThemeMode.system &&
+            MediaQuery.platformBrightnessOf(context) == Brightness.dark);
+
     return AnimatedTheme(
-      data: _themeService.getLightTheme(),
+      data: isDark ? _themeService.getDarkTheme() : _themeService.getLightTheme(),
       duration: const Duration(milliseconds: 300),
       child: widget.child,
     );
