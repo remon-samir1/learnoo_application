@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import '../cubit/category_tree_cubit.dart';
 import '../cubit/category_tree_state.dart';
@@ -19,13 +20,13 @@ class CategoryTreeHeader extends StatelessWidget {
     final canGoBack = state.canGoBack;
     final title = state.selectedCategory != null
         ? state.selectedCategory!.name
-        : 'Educational Programs';
+        : 'category_tree.educational_programs'.tr();
 
     final subtitle = state.showCategories
-        ? '${state.currentCategories.length} categories available'
+        ? 'category_tree.categories_available'.plural(state.currentCategories.length)
         : (state.showCourses
-            ? '${state.currentCourses.length} courses available'
-            : 'Explore courses & departments');
+            ? 'category_tree.courses_available'.plural(state.currentCourses.length)
+            : 'category_tree.explore'.tr());
 
     return Container(
       width: double.infinity,
@@ -134,7 +135,9 @@ class CategoryTreeHeader extends StatelessWidget {
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          state.showCourses ? 'Courses' : 'Levels',
+                          state.showCourses
+                              ? 'category_tree.mode_courses'.tr()
+                              : 'category_tree.mode_levels'.tr(),
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 12,
@@ -173,13 +176,13 @@ class CategoryTreeHeader extends StatelessWidget {
             // Home / Root item
             InkWell(
               onTap: () => cubit.navigateToBreadcrumb(null),
-              child: const Row(
+              child: Row(
                 children: [
-                  Icon(Icons.home_rounded, color: Colors.white, size: 15),
-                  SizedBox(width: 4),
+                  const Icon(Icons.home_rounded, color: Colors.white, size: 15),
+                  const SizedBox(width: 4),
                   Text(
-                    'Root',
-                    style: TextStyle(
+                    'category_tree.root'.tr(),
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 12,
                       fontWeight: FontWeight.w600,

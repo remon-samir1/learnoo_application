@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'electronic_library_screen.dart';
@@ -11,23 +12,19 @@ class MaterialUnlockedScreen extends StatelessWidget {
     required this.library,
   });
 
-  String get _currentDate {
-    final now = DateTime.now();
-    final months = [
-      'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'
-    ];
-    return '${months[now.month - 1]} ${now.day}, ${now.year}';
+  String _currentDate(BuildContext context) {
+    return DateFormat.yMMMMd(context.locale.languageCode)
+        .format(DateTime.now());
   }
 
   void _openPdf(BuildContext context) {
     final attributes = library['attributes'] ?? {};
-    final title = attributes['title']?.toString() ?? 'Material';
+    final title = attributes['title']?.toString() ?? 'library.material_fallback'.tr();
     final pdfUrl = attributes['file_url']?.toString() ?? attributes['pdf_url']?.toString() ?? '';
 
     if (pdfUrl.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('PDF URL not available')),
+        SnackBar(content: Text('library.pdf_url_unavailable'.tr())),
       );
       return;
     }
@@ -156,9 +153,9 @@ class MaterialUnlockedScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 40),
                   // Title
-                  const Text(
-                    'Material Unlocked!',
-                    style: TextStyle(
+                  Text(
+                    'library.material_unlocked_title'.tr(),
+                    style: const TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.w700,
                       color: Color(0xFF1F2937),
@@ -167,7 +164,7 @@ class MaterialUnlockedScreen extends StatelessWidget {
                   const SizedBox(height: 12),
                   // Subtitle
                   Text(
-                    'You can now access this material an anytime from your Electronic Library.',
+                    'library.material_unlocked_desc'.tr(),
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 14,
@@ -198,7 +195,7 @@ class MaterialUnlockedScreen extends StatelessWidget {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    library['attributes']?['title']?.toString() ?? 'Untitled',
+                                    library['attributes']?['title']?.toString() ?? 'common.untitled'.tr(),
                                     style: const TextStyle(
                                       fontSize: 15,
                                       fontWeight: FontWeight.w600,
@@ -215,7 +212,7 @@ class MaterialUnlockedScreen extends StatelessWidget {
                                       ),
                                       const SizedBox(width: 6),
                                       Text(
-                                        library['attributes']?['material_type']?.toString() ?? 'Unknown',
+                                        library['attributes']?['material_type']?.toString() ?? 'common.unknown'.tr(),
                                         style: TextStyle(
                                           fontSize: 12,
                                           color: Colors.grey[500],
@@ -238,7 +235,7 @@ class MaterialUnlockedScreen extends StatelessWidget {
                             ),
                             const SizedBox(width: 10),
                             Text(
-                              'Unlocked on',
+                              'library.unlocked_on'.tr(),
                               style: TextStyle(
                                 fontSize: 13,
                                 color: Colors.grey[500],
@@ -246,7 +243,7 @@ class MaterialUnlockedScreen extends StatelessWidget {
                             ),
                             const SizedBox(width: 12),
                             Text(
-                              _currentDate,
+                              _currentDate(context),
                               style: const TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w500,
@@ -287,14 +284,16 @@ class MaterialUnlockedScreen extends StatelessWidget {
                   // Back to Library Button
                   TextButton.icon(
                     onPressed: () => _backToLibrary(context),
-                    icon: const FaIcon(
-                      FontAwesomeIcons.arrowLeft,
+                    icon: FaIcon(
+                      Directionality.of(context) == TextDirection.rtl
+                          ? FontAwesomeIcons.arrowRight
+                          : FontAwesomeIcons.arrowLeft,
                       size: 14,
                       color: Color(0xFF5A75FF),
                     ),
-                    label: const Text(
-                      'Back to Library',
-                      style: TextStyle(
+                    label: Text(
+                      'library.back_to_library_btn'.tr(),
+                      style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
                         color: Color(0xFF5A75FF),

@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:learnoo/core/widgets/secure_wrapper.dart';
 import 'package:learnoo/core/widgets/watermark_widget.dart';
@@ -86,13 +87,13 @@ class _SecurePDFViewerState extends State<SecurePDFViewer> {
                          );
                       },
                       errorBuilder: (context, error, stackTrace) {
-                        return const Center(
+                        return Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.broken_image, color: Colors.white54, size: 48),
-                              SizedBox(height: 8),
-                              Text("Failed to load page secure image.", style: TextStyle(color: Colors.white54)),
+                              const Icon(Icons.broken_image, color: Colors.white54, size: 48),
+                              const SizedBox(height: 8),
+                              Text('security.secure_page_failed'.tr(), style: const TextStyle(color: Colors.white54)),
                             ],
                           ),
                         );

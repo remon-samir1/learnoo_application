@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:equatable/equatable.dart';
 import '../../../../core/utils/coerce.dart';
 
@@ -108,7 +109,7 @@ class CourseItem extends Equatable {
 
     final title = coerceString(attrs['title']) ??
         coerceString(attrs['name']) ??
-        'Untitled Course';
+        'category_tree.untitled_course'.tr();
     final subTitle = coerceString(attrs['sub_title']) ??
         coerceString(attrs['subtitle']) ??
         coerceString(attrs['description']);
@@ -206,7 +207,7 @@ class Category extends Equatable {
 
     final name = coerceString(attrs['name']) ??
         coerceString(attrs['title']) ??
-        'Untitled Category';
+        'category_tree.untitled_category'.tr();
     final image = coerceString(attrs['image']) ??
         coerceString(attrs['thumbnail']) ??
         coerceString(attrs['icon']);

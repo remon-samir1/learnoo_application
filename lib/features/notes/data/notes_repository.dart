@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../../../core/network/api_constants.dart';
@@ -29,7 +30,7 @@ class NotesRepository {
   /// `GET /v1/note`, optionally scoped to one course.
   Future<Map<String, dynamic>> getNotes({int? courseId}) async {
     final token = await _authRepository.getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.notes}')
         .replace(
@@ -56,17 +57,17 @@ class NotesRepository {
       } else {
         return {
           'success': false,
-          'message': _handleError(data, 'Failed to fetch notes'),
+          'message': _handleError(data, 'errors.failed_fetch_notes'.tr()),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   Future<Map<String, dynamic>> getNoteById(String id) async {
     final token = await _authRepository.getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.notes}/$id');
 
@@ -89,11 +90,11 @@ class NotesRepository {
       } else {
         return {
           'success': false,
-          'message': _handleError(data, 'Failed to fetch note details'),
+          'message': _handleError(data, 'errors.failed_fetch_note_details'.tr()),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 }

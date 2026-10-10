@@ -91,6 +91,67 @@ class ExamRepository {
     }
   }
 
+  /// Every quiz the API returns for this student, across all server pages.
+  ///
+  /// The exams list filters to the student's own courses on the client. Doing
+  /// that per server page left whole pages empty (page 1 and 2 held only other
+  /// courses' exams, so "no exams" showed until page 3). Collecting every page
+  /// first lets the caller filter once and paginate the result locally.
+  ///
+  /// Asks for large pages ([perPage]) and walks `meta.last_page` /
+  /// `links.next`; stops on an empty page, a page with nothing new, or after
+  /// [maxPages] as a safety net against a backend that ignores `page`.
+  Future<Map<String, dynamic>> getAllQuizzes({
+    String? title,
+    int? courseId,
+    int perPage = 100,
+    int maxPages = 30,
+  }) async {
+    final byId = <String, Quiz>{};
+    final order = <String>[];
+
+    for (var page = 1; page <= maxPages; page++) {
+      final result = await getQuizzes(
+        page: page,
+        perPage: perPage,
+        title: title,
+        courseId: courseId,
+      );
+      if (result['success'] != true) {
+        // The first page failing is a real failure; a later one just ends the
+        // walk with what we already have.
+        if (page == 1) return result;
+        break;
+      }
+
+      final quizzes = (result['data'] as List<Quiz>?) ?? const <Quiz>[];
+      var added = 0;
+      for (final quiz in quizzes) {
+        final key = quiz.id.isNotEmpty ? quiz.id : '${quiz.quizId}';
+        if (byId.containsKey(key)) continue;
+        byId[key] = quiz;
+        order.add(key);
+        added++;
+      }
+
+      final meta = result['meta'] as Map<String, dynamic>?;
+      final current = coercePositiveInt(meta?['current_page']) ?? page;
+      final last = coercePositiveInt(meta?['last_page']);
+
+      if (quizzes.isEmpty || added == 0) break;
+      if (last != null) {
+        if (current >= last) break;
+      } else if (result['hasNextPage'] != true) {
+        break;
+      }
+    }
+
+    return {
+      'success': true,
+      'data': [for (final key in order) byId[key]!],
+    };
+  }
+
   /// `GET /v1/quiz/{id}` — also the server-side access check.
   ///
   /// A 403 here is a business rule (exam not activated), so the session must
@@ -119,7 +180,7 @@ class ExamRepository {
         ApiConstants.quizQuestion,
         query: {'quiz_id': quizId},
         skipAuthRedirect: true,
-        fallback: 'Failed to fetch quiz questions',
+        fallback: 'errors.failed_fetch_quiz_questions'.tr(),
       );
 
       final questions = unwrapList(payload)
@@ -129,7 +190,7 @@ class ExamRepository {
 
       return {'success': true, 'data': questions};
     } catch (e) {
-      return _fail(e, 'Failed to fetch quiz questions');
+      return _fail(e, 'errors.failed_fetch_quiz_questions'.tr());
     }
   }
 
@@ -139,7 +200,7 @@ class ExamRepository {
       final payload = await _api.get(
         ApiConstants.quizAnswer,
         query: questionId == null ? null : {'quiz_question_id': questionId},
-        fallback: 'Failed to fetch quiz answers',
+        fallback: 'errors.failed_fetch_quiz_answers'.tr(),
       );
 
       final answers = unwrapList(payload)
@@ -149,7 +210,7 @@ class ExamRepository {
 
       return {'success': true, 'data': answers};
     } catch (e) {
-      return _fail(e, 'Failed to fetch quiz answers');
+      return _fail(e, 'errors.failed_fetch_quiz_answers'.tr());
     }
   }
 
@@ -162,7 +223,7 @@ class ExamRepository {
       final payload = await _api.get(
         ApiConstants.quizAttempt,
         query: {'quiz_id': quizId},
-        fallback: 'Failed to fetch quiz attempts',
+        fallback: 'errors.failed_fetch_quiz_attempts'.tr(),
       );
 
       final attempts = unwrapList(payload)
@@ -172,7 +233,7 @@ class ExamRepository {
 
       return {'success': true, 'data': attempts};
     } catch (e) {
-      return _fail(e, 'Failed to fetch quiz attempts');
+      return _fail(e, 'errors.failed_fetch_quiz_attempts'.tr());
     }
   }
 
@@ -180,7 +241,7 @@ class ExamRepository {
     try {
       final payload = await _api.get(
         ApiConstants.quizAttempt,
-        fallback: 'Failed to fetch attempts',
+        fallback: 'errors.failed_fetch_attempts'.tr(),
       );
 
       final attempts = unwrapList(payload)
@@ -190,7 +251,7 @@ class ExamRepository {
 
       return {'success': true, 'data': attempts};
     } catch (e) {
-      return _fail(e, 'Failed to fetch attempts');
+      return _fail(e, 'errors.failed_fetch_attempts'.tr());
     }
   }
 
@@ -275,7 +336,7 @@ class ExamRepository {
   }) async {
     final text = answerText.trim();
     if (text.isEmpty) {
-      return {'success': false, 'message': 'Empty answer'};
+      return {'success': false, 'message': 'errors.empty_answer'.tr()};
     }
 
     try {
@@ -284,7 +345,7 @@ class ExamRepository {
           '${ApiConstants.quizUserAnswer}/$existingAnswerId',
           body: {'answer_text': text},
           skipAuthRedirect: true,
-          fallback: 'Failed to update answer',
+          fallback: 'errors.failed_update_answer'.tr(),
         );
         return {'success': true, 'id': existingAnswerId};
       }
@@ -297,7 +358,7 @@ class ExamRepository {
           'answer_text': text,
         },
         skipAuthRedirect: true,
-        fallback: 'Failed to save answer',
+        fallback: 'errors.failed_save_answer'.tr(),
       );
 
       final data = unwrapMap(payload);
@@ -305,7 +366,7 @@ class ExamRepository {
       return {'success': true, 'id': id};
     } catch (e) {
       debugPrint('[quiz-user-answer] save failed: $e');
-      return _fail(e, 'Failed to save answer');
+      return _fail(e, 'errors.failed_save_answer'.tr());
     }
   }
 
@@ -387,7 +448,7 @@ class ExamRepository {
       final payload = await _api.get(
         '${ApiConstants.chapters}/$chapterId',
         skipAuthRedirect: true,
-        fallback: 'Failed to resolve chapter',
+        fallback: 'errors.failed_resolve_chapter'.tr(),
       );
 
       final data = unwrapMap(payload);
@@ -400,12 +461,12 @@ class ExamRepository {
       if (courseId == null) {
         return {
           'success': false,
-          'message': 'Course ID not found for this chapter',
+          'message': 'errors.course_id_not_found'.tr(),
         };
       }
       return {'success': true, 'data': courseId};
     } catch (e) {
-      return _fail(e, 'Failed to resolve chapter');
+      return _fail(e, 'errors.failed_resolve_chapter'.tr());
     }
   }
 

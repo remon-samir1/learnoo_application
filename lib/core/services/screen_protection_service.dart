@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, ValueNotifier, debugPrint, kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:screen_capture_event/screen_capture_event.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -43,6 +44,41 @@ class ScreenProtectionService {
   /// Dashboard policy. Defaults to protected until a value is known.
   bool _policyEnabled = true;
 
+  /// Recording/capture as reported by the native channel (Android display
+  /// listener + Android 15 screen-recording callback, iOS `isCaptured`) and
+  /// by the screen_capture_event plugin.
+  bool _nativeRecording = false;
+  bool _pluginRecording = false;
+  bool _closingForScreenRecording = false;
+  final ValueNotifier<bool> _mediaCaptureActive = ValueNotifier<bool>(false);
+
+  /// True while the screen is being recorded/captured and the dashboard
+  /// requires protection: video players must pause and stay muted (the
+  /// picture is already black, the sound must not leak either). Goes back to
+  /// false when capture stops or the dashboard turns protection off.
+  ValueListenable<bool> get mediaCaptureActive => _mediaCaptureActive;
+
+  void _updateMediaCapture() {
+    _mediaCaptureActive.value =
+        isProtectionActive && (_nativeRecording || _pluginRecording);
+    if (_mediaCaptureActive.value && Platform.isAndroid) {
+      unawaited(_closeForScreenRecording());
+    }
+  }
+
+  Future<void> _closeForScreenRecording() async {
+    if (_closingForScreenRecording) return;
+    _closingForScreenRecording = true;
+    try {
+      await _channel.invokeMethod<void>('closeForScreenRecording');
+    } on MissingPluginException {
+      _closingForScreenRecording = false;
+    } on PlatformException catch (e) {
+      _closingForScreenRecording = false;
+      debugPrint('[ScreenProtection] Recording shutdown failed: ${e.code}');
+    }
+  }
+
   Stream<bool> get onSecurityStatusChanged => _securityStatusController.stream;
   bool get isSecure => _isSecure;
 
@@ -78,14 +114,22 @@ class ScreenProtectionService {
     // Hybrid Detection: Plugin + Native
     _captureEvent.addScreenShotListener((_) => _handleSecurityBreach());
     _captureEvent.addScreenRecordListener((recording) {
+      _pluginRecording = recording;
+      _updateMediaCapture();
       if (recording) _handleSecurityBreach();
     });
     _captureEvent.watch();
 
     _eventChannel.receiveBroadcastStream().listen((data) {
-      if (data is Map && (data['event'] == 'recording_started' || data['event'] == 'screenshot')) {
+      if (data is Map && data['event'] == 'recording_started') {
+        _nativeRecording = true;
+        _updateMediaCapture();
+        _handleSecurityBreach();
+      } else if (data is Map && data['event'] == 'screenshot') {
         _handleSecurityBreach();
       } else if (data is Map && data['event'] == 'recording_stopped') {
+        _nativeRecording = false;
+        _updateMediaCapture();
         _resetSecurityStatus();
       }
     });
@@ -137,6 +181,7 @@ class ScreenProtectionService {
     }
     await _pushPolicyToNative();
     _policyController.add(enabled);
+    _updateMediaCapture();
     if (!isProtectionActive) {
       // Clear any breach overlay raised while protection was on.
       _resetSecurityStatus();
@@ -183,6 +228,8 @@ class ScreenProtectionService {
   Future<void> _checkInitialStatus() async {
     try {
       final status = await getProtectionStatus();
+      _nativeRecording = status['isRecording'] == true;
+      _updateMediaCapture();
       _isSecure = !isProtectionActive ||
           (!(status['isRecording'] ?? false) && !(status['isJailbroken'] ?? false));
     } catch (e) {

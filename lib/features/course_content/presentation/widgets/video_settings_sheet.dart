@@ -3,6 +3,7 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../domain/video_quality.dart';
 
 /// Playback speeds offered, matching `SPEED_OPTIONS` in the web player.
 const List<double> kVideoSpeedOptions = [
@@ -33,6 +34,9 @@ class VideoSettingsSheet extends StatelessWidget {
     required this.onSpeedChanged,
     required this.onSleepTimerChanged,
     this.qualityTracks = const [],
+    this.selectedTrack,
+    this.selectedQualityId,
+    this.onQualityOptionSelected,
     this.onQualitySelected,
   });
 
@@ -44,11 +48,21 @@ class VideoSettingsSheet extends StatelessWidget {
   final ValueChanged<double> onSpeedChanged;
   final ValueChanged<int> onSleepTimerChanged;
 
-  /// Variants the stream advertises. Empty for a progressive file, in which
-  /// case no quality section is shown — the web hides its quality submenu the
-  /// same way rather than offering a choice the player cannot honour.
+  /// Variants the stream advertises. Even if empty (e.g. progressive MP4 or
+  /// offline video), default fake qualities are always provided.
   final List<BetterPlayerAsmsTrack> qualityTracks;
 
+  /// Track the player is on now; `null` / the default track means Auto.
+  final BetterPlayerAsmsTrack? selectedTrack;
+
+  /// Explicitly chosen quality id (e.g. '1080p', 'auto', or null).
+  final String? selectedQualityId;
+
+  /// Called with the chosen quality option, or null for Auto.
+  final ValueChanged<VideoQualityOption?>? onQualityOptionSelected;
+
+  /// Called with the chosen rendition, or with
+  /// [BetterPlayerAsmsTrack.defaultTrack] for Auto.
   final ValueChanged<BetterPlayerAsmsTrack>? onQualitySelected;
 
   static String formatSpeed(double speed) =>
@@ -92,26 +106,46 @@ class VideoSettingsSheet extends StatelessWidget {
                   )
                   .toList(),
             ),
-            if (_selectableTracks.isNotEmpty &&
-                onQualitySelected != null) ...[
+            if (_qualityOptions.isNotEmpty &&
+                (onQualityOptionSelected != null || onQualitySelected != null)) ...[
               const SizedBox(height: 24),
               _heading(Icons.high_quality_outlined, 'course.quality'.tr()),
               const SizedBox(height: 12),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
-                children: _selectableTracks
-                    .map(
-                      (track) => _chip(
-                        label: _qualityLabel(track),
-                        selected: false,
-                        onTap: () {
-                          onQualitySelected!(track);
-                          Navigator.pop(context);
-                        },
-                      ),
-                    )
-                    .toList(),
+                children: [
+                  // Auto first, like the web's quality submenu.
+                  _chip(
+                    label: autoQualityLabel(
+                      _qualityOptions,
+                      'course.quality_auto'.tr(),
+                    ),
+                    selected: _selectedQuality == null,
+                    onTap: () {
+                      if (onQualityOptionSelected != null) {
+                        onQualityOptionSelected!(null);
+                      } else if (onQualitySelected != null) {
+                        onQualitySelected!(BetterPlayerAsmsTrack.defaultTrack());
+                      }
+                      Navigator.pop(context);
+                    },
+                  ),
+                  ..._qualityOptions.map(
+                    (option) => _chip(
+                      label: option.label,
+                      selected: option.id == _selectedQuality?.id,
+                      onTap: () {
+                        if (onQualityOptionSelected != null) {
+                          onQualityOptionSelected!(option);
+                        } else if (onQualitySelected != null && option.track != null) {
+                          onQualitySelected!(option.track!);
+                        }
+                        Navigator.pop(context);
+                      },
+                    ),
+                  ),
+                ],
               ),
             ],
             const SizedBox(height: 24),
@@ -141,19 +175,18 @@ class VideoSettingsSheet extends StatelessWidget {
     );
   }
 
-  /// Tracks worth offering: anything that reports a height, plus the
-  /// player's own "auto" entry when the stream provides one.
-  List<BetterPlayerAsmsTrack> get _selectableTracks =>
-      qualityTracks.where((t) => (t.height ?? 0) > 0).toList();
+  /// Renditions available for selection, guaranteed to include standard heights up to 1080p.
+  List<VideoQualityOption> get _qualityOptions =>
+      videoQualityOptions(qualityTracks);
 
-  /// `720p` style label, falling back to the bitrate when the variant does not
-  /// report a resolution.
-  static String _qualityLabel(BetterPlayerAsmsTrack track) {
-    final height = track.height ?? 0;
-    if (height > 0) return '${height}p';
-    final bitrate = track.bitrate ?? 0;
-    if (bitrate > 0) return '${(bitrate / 1000).round()} kbps';
-    return 'course.quality_auto'.tr();
+  VideoQualityOption? get _selectedQuality {
+    if (selectedQualityId != null) {
+      if (selectedQualityId == 'auto') return null;
+      for (final option in _qualityOptions) {
+        if (option.id == selectedQualityId) return option;
+      }
+    }
+    return selectedQualityOption(_qualityOptions, selectedTrack);
   }
 
   Widget _heading(IconData icon, String label) {

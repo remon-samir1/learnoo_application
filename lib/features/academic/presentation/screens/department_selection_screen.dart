@@ -4,6 +4,7 @@ import 'package:easy_localization/easy_localization.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/primary_button.dart';
 import '../../../auth/data/auth_repository.dart';
+import '../../data/academic_scope_service.dart';
 import '../../../home/presentation/screens/main_screen.dart';
 import '../../domain/academic_tree.dart';
 import 'onboarding_step_header.dart';
@@ -87,6 +88,12 @@ class _DepartmentSelectionScreenState extends State<DepartmentSelectionScreen> {
       departmentId: skipDepartment ? null : _selectedId,
     );
 
+    // The home shell opened next must not render content cached for an
+    // earlier selection (or an earlier account on this device).
+    if (result['success'] == true) {
+      await AcademicScopeService().invalidateCaches();
+    }
+
     if (!mounted) return;
     setState(() => _isSaving = false);
 
@@ -96,7 +103,7 @@ class _DepartmentSelectionScreenState extends State<DepartmentSelectionScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(result['message']?.toString() ??
-              'Failed to update profile'),
+              'profile.failed_update_profile'.tr()),
           backgroundColor: Colors.red,
         ),
       );
@@ -124,20 +131,20 @@ class _DepartmentSelectionScreenState extends State<DepartmentSelectionScreen> {
                 child: const Icon(Icons.check, color: Colors.white, size: 40),
               ),
               const SizedBox(height: 24),
-              const Text(
-                'Your academic profile has been set successfully.',
+              Text(
+                'academic.department_saved_title'.tr(),
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 12),
-              const Text(
-                'Courses will be filtered based on your specialization.',
+              Text(
+                'academic.department_saved_body'.tr(),
                 textAlign: TextAlign.center,
-                style: TextStyle(color: AppColors.textGray, fontSize: 14),
+                style: const TextStyle(color: AppColors.textGray, fontSize: 14),
               ),
               const SizedBox(height: 32),
               PrimaryButton(
-                text: 'GO TO HOME',
+                text: 'academic.go_to_home_caps'.tr(),
                 onPressed: () {
                   Navigator.pushAndRemoveUntil(
                     context,

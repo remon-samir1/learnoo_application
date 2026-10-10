@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -21,7 +22,7 @@ class ChapterRepository with OfflineFirstRepository {
   /// Get all chapters with offline-first support
   Future<Map<String, dynamic>> getChapters({int? courseId}) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final cacheKey = courseId != null
         ? 'chapters_course_$courseId'
@@ -55,7 +56,7 @@ class ChapterRepository with OfflineFirstRepository {
         } else {
           return {
             'success': false,
-            'message': data['message'] ?? 'Failed to fetch chapters',
+            'message': data['message'] ?? 'errors.failed_fetch_chapters'.tr(),
           };
         }
       },
@@ -68,7 +69,7 @@ class ChapterRepository with OfflineFirstRepository {
   /// Get chapter by ID with offline-first support
   Future<Map<String, dynamic>> getChapterById(String chapterId) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     // Clear any previous auth error data
     _authErrorData = null;
@@ -94,7 +95,7 @@ class ChapterRepository with OfflineFirstRepository {
           // Save error data and throw simple string to prevent cache fallback
           _authErrorData = {
             'statusCode': response.statusCode,
-            'message': data['message'] ?? 'Access denied',
+            'message': data['message'] ?? 'errors.access_denied'.tr(),
             'max_views': data['max_views'],
             'current_views': data['current_views'],
           };
@@ -102,7 +103,7 @@ class ChapterRepository with OfflineFirstRepository {
         } else {
           return {
             'success': false,
-            'message': data['message'] ?? 'Failed to fetch chapter details',
+            'message': data['message'] ?? 'errors.failed_fetch_chapter_details'.tr(),
             'max_views': data['max_views'],
             'current_views': data['current_views'],
             'statusCode': response.statusCode,
@@ -137,7 +138,7 @@ class ChapterRepository with OfflineFirstRepository {
     required String itemType,
   }) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse(
       '${ApiConstants.baseUrl}${ApiConstants.codeActivate}',
@@ -163,18 +164,18 @@ class ChapterRepository with OfflineFirstRepository {
       } else {
         return {
           'success': false,
-          'message': data['message'] ?? 'Invalid activation code',
+          'message': data['message'] ?? 'library.invalid_activation_code'.tr(),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   /// Get user progress with offline-first support
   Future<Map<String, dynamic>> getUserProgress() async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     return offlineFirstFetch(
       apiFetcher: () async {
@@ -196,7 +197,7 @@ class ChapterRepository with OfflineFirstRepository {
         } else {
           return {
             'success': false,
-            'message': data['message'] ?? 'Failed to fetch user progress',
+            'message': data['message'] ?? 'errors.failed_fetch_user_progress'.tr(),
           };
         }
       },
@@ -214,7 +215,7 @@ class ChapterRepository with OfflineFirstRepository {
     required bool isCompleted,
   }) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final payload = {
       'chapter_id': chapterId,
@@ -266,7 +267,7 @@ class ChapterRepository with OfflineFirstRepository {
             'success': true, // Optimistic success
             'offline': false,
             'queued': true,
-            'message': 'Progress saved locally, will sync when online',
+            'message': 'errors.progress_saved_offline'.tr(),
           };
         }
       } catch (e) {
@@ -281,7 +282,7 @@ class ChapterRepository with OfflineFirstRepository {
           'success': true, // Optimistic success
           'offline': true,
           'queued': true,
-          'message': 'Progress saved locally, will sync when online',
+          'message': 'errors.progress_saved_offline'.tr(),
         };
       }
     }
@@ -292,7 +293,7 @@ class ChapterRepository with OfflineFirstRepository {
       'offline': true,
       'queued': true,
       'actionId': queueResult['actionId'],
-      'message': 'Progress saved locally, will sync when online',
+      'message': 'errors.progress_saved_offline'.tr(),
     };
   }
 
@@ -313,7 +314,7 @@ class ChapterRepository with OfflineFirstRepository {
     required int watchedMinutes,
   }) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     try {
       final headers = {
@@ -344,11 +345,11 @@ class ChapterRepository with OfflineFirstRepository {
         final data = jsonDecode(response.body);
         return {
           'success': false,
-          'message': data['message'] ?? 'Failed to record view',
+          'message': data['message'] ?? 'errors.failed_record_view'.tr(),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 }

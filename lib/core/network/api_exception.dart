@@ -1,3 +1,5 @@
+import 'package:easy_localization/easy_localization.dart';
+
 /// Unified API error, mirroring `ApiError` in the Next.js dashboard
 /// (`src/lib/api.ts`). Replaces the six copies of `_handleError` that used to
 /// live in the repositories.
@@ -21,7 +23,7 @@ class ApiException implements Exception {
   ///
   /// Mirrors `getApiErrorMessage`: validation messages win over the generic
   /// `message` field, joined with " | ".
-  String display([String fallback = 'Request failed']) {
+  String display([String? fallback]) {
     final bag = errors;
     if (bag != null && bag.isNotEmpty) {
       final parts = <String>[];
@@ -39,17 +41,18 @@ class ApiException implements Exception {
       if (parts.isNotEmpty) return parts.join(' | ');
     }
     final m = message.trim();
-    return m.isNotEmpty ? m : fallback;
+    return m.isNotEmpty ? m : (fallback ?? 'errors.request_failed'.tr());
   }
 
   /// Builds an exception from a decoded JSON error body.
   factory ApiException.fromBody(
     int status,
     dynamic body, {
-    String fallback = 'Request failed',
+    String? fallback,
   }) {
+    final fallbackMessage = fallback ?? 'errors.request_failed'.tr();
     if (body is! Map) {
-      return ApiException(status, fallback);
+      return ApiException(status, fallbackMessage);
     }
 
     final rawErrors = body['errors'];
@@ -60,7 +63,7 @@ class ApiException implements Exception {
 
     return ApiException(
       status,
-      (message != null && message.isNotEmpty) ? message : fallback,
+      (message != null && message.isNotEmpty) ? message : fallbackMessage,
       bag,
     );
   }

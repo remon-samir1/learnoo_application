@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -19,7 +20,7 @@ class CourseRepository with OfflineFirstRepository {
   /// Returns cached data if offline or API fails
   Future<Map<String, dynamic>> getCourses({int? categoryId, String? include}) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final cacheKey = categoryId != null ? 'courses_category_$categoryId' : 'courses_all';
 
@@ -57,7 +58,7 @@ class CourseRepository with OfflineFirstRepository {
         } else {
           return {
             'success': false,
-            'message': data['message'] ?? 'Failed to fetch courses',
+            'message': data['message'] ?? 'errors.failed_fetch_courses'.tr(),
           };
         }
       },
@@ -71,7 +72,7 @@ class CourseRepository with OfflineFirstRepository {
   /// Uses the activated=1 query parameter to filter courses
   Future<Map<String, dynamic>> getActivatedCourses() async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     return offlineFirstFetch(
       apiFetcher: () async {
@@ -89,25 +90,104 @@ class CourseRepository with OfflineFirstRepository {
 
         final data = jsonDecode(response.body);
         if (response.statusCode == 200) {
-          return {'success': true, 'data': data['data']};
+          final activated = data['data'];
+          if (activated is! List || activated.isEmpty) {
+            return {'success': true, 'data': activated};
+          }
+          final catalogue = await _fetchCatalogue(token);
+          return {
+            'success': true,
+            'data': mergeActivatedWithCatalogue(activated, catalogue),
+          };
         } else {
           return {
             'success': false,
-            'message': data['message'] ?? 'Failed to fetch activated courses',
+            'message': data['message'] ?? 'errors.failed_fetch_activated_courses'.tr(),
           };
         }
       },
       boxName: HiveBoxes.courses,
-      cacheKey: 'courses_activated',
+      // v2: rows cached before the catalogue merge have no cover image.
+      cacheKey: 'courses_activated_v2',
       maxCacheAge: const Duration(hours: 24),
     );
+  }
+
+  /// `GET /v1/course?per_page=500` — the list the website's student course
+  /// pages render from (`STUDENT_COURSES_LIST_PARAMS`). Empty on failure, so
+  /// the activated rows are still shown as they are.
+  Future<List<dynamic>> _fetchCatalogue(String token) async {
+    try {
+      final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.courses}')
+          .replace(queryParameters: {'per_page': '500'});
+      final response = await http.get(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+      if (response.statusCode != 200) return const [];
+      final data = jsonDecode(response.body);
+      final rows = data is Map ? data['data'] : null;
+      return rows is List ? rows : const [];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Fields the website reads the course cover from.
+  static const _imageKeys = ['thumbnail', 'image', 'cover_image'];
+
+  /// Fills each activated course with the catalogue row of the same id.
+  ///
+  /// `?activated=1` decides *which* courses the student has, but its rows can
+  /// come back without the cover (the website stopped rendering from it for
+  /// that reason). The catalogue row supplies the cover and any other field
+  /// the activated row leaves empty; the activated row's own values win
+  /// otherwise, so enrolment state is unchanged.
+  static List<dynamic> mergeActivatedWithCatalogue(
+    List<dynamic> activated,
+    List<dynamic> catalogue,
+  ) {
+    if (catalogue.isEmpty) return activated;
+
+    final byId = <String, Map>{};
+    for (final row in catalogue) {
+      if (row is Map && row['id'] != null) byId[row['id'].toString()] = row;
+    }
+
+    bool isEmpty(dynamic v) =>
+        v == null || (v is String && (v.trim().isEmpty || v.trim() == 'null'));
+
+    return activated.map((row) {
+      if (row is! Map) return row;
+      final match = byId[row['id']?.toString()];
+      if (match == null) return row;
+
+      final own = row['attributes'] is Map
+          ? Map<String, dynamic>.from(row['attributes'] as Map)
+          : <String, dynamic>{};
+      final other = match['attributes'] is Map
+          ? Map<String, dynamic>.from(match['attributes'] as Map)
+          : <String, dynamic>{};
+
+      final merged = Map<String, dynamic>.from(own);
+      other.forEach((key, value) {
+        final preferCatalogue = _imageKeys.contains(key) && !isEmpty(value);
+        if (preferCatalogue || isEmpty(merged[key])) merged[key] = value;
+      });
+
+      return {...Map<String, dynamic>.from(row), 'attributes': merged};
+    }).toList();
   }
 
   /// Get course by ID with offline-first support
   /// Returns cached course data if offline or API fails
   Future<Map<String, dynamic>> getCourseById(String courseId) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     return offlineFirstFetch(
       apiFetcher: () async {
@@ -128,7 +208,7 @@ class CourseRepository with OfflineFirstRepository {
         } else {
           return {
             'success': false,
-            'message': data['message'] ?? 'Failed to fetch course details',
+            'message': data['message'] ?? 'errors.failed_fetch_course_details'.tr(),
           };
         }
       },

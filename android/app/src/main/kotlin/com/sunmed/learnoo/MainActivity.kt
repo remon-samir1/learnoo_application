@@ -6,7 +6,9 @@ import android.app.usage.UsageStatsManager
 import android.content.ActivityNotFoundException
 import android.content.ContentValues
 import android.content.Context
+import android.Manifest
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.content.Intent
 import android.hardware.display.DisplayManager
 import android.media.MediaScannerConnection
@@ -14,6 +16,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import android.provider.MediaStore
 import android.provider.Settings
@@ -27,6 +31,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.IOException
 import java.util.*
+import java.util.function.Consumer
 
 /**
  * MainActivity with Extreme Screen Protection implementation for Android
@@ -66,6 +71,7 @@ class MainActivity : FlutterActivity() {
 
     private lateinit var methodChannel: MethodChannel
     private var eventSink: EventChannel.EventSink? = null
+    private var closingForScreenRecording = false
     private lateinit var displayManager: DisplayManager
 
     private val displayListener = object : DisplayManager.DisplayListener {
@@ -94,6 +100,7 @@ class MainActivity : FlutterActivity() {
         
         displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
         displayManager.registerDisplayListener(displayListener, null)
+        checkScreenRecording()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -137,6 +144,11 @@ class MainActivity : FlutterActivity() {
             }
             "detectSuspiciousApps" -> {
                 result.success(detectSuspiciousApps())
+            }
+            "closeForScreenRecording" -> {
+                // Dart also receives recorder events from the capture plugin.
+                result.success(null)
+                closeForScreenRecording()
             }
             "isScreenRecording" -> {
                 result.success(isScreenRecordingActive())
@@ -263,6 +275,7 @@ class MainActivity : FlutterActivity() {
         runOnUiThread {
             applySecureFlag()
             isGlobalProtectionEnabled = true
+            if (::displayManager.isInitialized) checkScreenRecording()
         }
     }
 
@@ -280,6 +293,7 @@ class MainActivity : FlutterActivity() {
      * Hybrid detection: Check for external displays / virtual displays
      */
     private fun isScreenRecordingActive(): Boolean {
+        if (isRecordedPerSystemCallback) return true
         val displays = displayManager.displays
         if (displays.size > 1) {
             return true
@@ -292,11 +306,89 @@ class MainActivity : FlutterActivity() {
         return false
     }
 
+    /**
+     * Android 15+ (API 35): the system reports whether this app is visible in
+     * an active screen recording. Forwarded as recording_started/stopped over
+     * the same EventChannel; Dart applies the dashboard policy.
+     */
+    @Volatile
+    private var isRecordedPerSystemCallback = false
+    private var screenRecordingCallback: Consumer<Int>? = null
+
+    private fun registerScreenRecordingCallback() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return
+        if (screenRecordingCallback != null) return
+        if (checkSelfPermission(Manifest.permission.DETECT_SCREEN_RECORDING) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
+        val callback = Consumer<Int> { state ->
+            onSystemScreenRecordingState(state == WindowManager.SCREEN_RECORDING_STATE_VISIBLE)
+        }
+        try {
+            val initial = windowManager.addScreenRecordingCallback(mainExecutor, callback)
+            screenRecordingCallback = callback
+            onSystemScreenRecordingState(initial == WindowManager.SCREEN_RECORDING_STATE_VISIBLE)
+        } catch (e: SecurityException) {
+            screenRecordingCallback = null
+        }
+    }
+
+    private fun unregisterScreenRecordingCallback() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return
+        val callback = screenRecordingCallback ?: return
+        screenRecordingCallback = null
+        try {
+            windowManager.removeScreenRecordingCallback(callback)
+        } catch (e: SecurityException) {
+            // Permission revoked meanwhile; nothing registered to remove.
+        }
+    }
+
+    private fun onSystemScreenRecordingState(recorded: Boolean) {
+        if (recorded == isRecordedPerSystemCallback) return
+        isRecordedPerSystemCallback = recorded
+        checkScreenRecording()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        registerScreenRecordingCallback()
+    }
+
+    override fun onStop() {
+        unregisterScreenRecordingCallback()
+        super.onStop()
+    }
+
     private fun checkScreenRecording() {
         if (isScreenRecordingActive()) {
             eventSink?.success(mapOf("event" to "recording_started"))
+            closeForScreenRecording()
         } else {
             eventSink?.success(mapOf("event" to "recording_stopped"))
+        }
+    }
+
+    /** Close this application's tasks and its own process, including media playback. */
+    private fun closeForScreenRecording() {
+        if (screenCaptureAllowed || !isGlobalProtectionEnabled || closingForScreenRecording) return
+        closingForScreenRecording = true
+        // Queue so method-channel responses/events can complete before shutdown.
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+                for (task in activityManager.appTasks) {
+                    try {
+                        task.finishAndRemoveTask()
+                    } catch (_: RuntimeException) {
+                        // Continue removing other tasks; process shutdown is still required.
+                    }
+                }
+                finishAndRemoveTask()
+            } finally {
+                // Only our process; do not terminate recorder apps or other processes.
+                Process.killProcess(Process.myPid())
+            }
         }
     }
 
@@ -351,6 +443,7 @@ class MainActivity : FlutterActivity() {
         if (isGlobalProtectionEnabled || localProtectionCount > 0) {
             applySecureFlag()
         }
+        if (::displayManager.isInitialized) checkScreenRecording()
     }
 
     override fun onDestroy() {

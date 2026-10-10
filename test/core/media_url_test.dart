@@ -59,6 +59,35 @@ void main() {
     expect(CoverImage.gradientFor('Physics 101'), CoverImage.gradients[1]);
   });
 
+  testWidgets('course cards fall back to the Learnoo logo, like the website',
+      (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 240,
+            height: 160,
+            child: CoverImage(
+              url: null,
+              title: 'كورس تجربة',
+              height: 160,
+              fallback: CoverFallback.logo,
+            ),
+          ),
+        ),
+      ),
+    );
+    // Logo, not the gradient-with-title card.
+    expect(find.text('كورس تجربة'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(CoverImage),
+        matching: find.byType(CustomPaint),
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('no image shows the gradient with the title', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(

@@ -31,6 +31,14 @@ String? libraryId(dynamic material) =>
 bool libraryIsPublished(dynamic material) =>
     coerceFlagOrNull(libraryAttributes(material)['is_publish']) != false;
 
+/// Results of GET /v1/library?course_id= are already scoped by the server.
+/// Do not require a singular course_id: materials can belong to many courses
+/// or omit the course relation from the scoped response.
+List<dynamic> publishedCourseLibraryItems(Iterable<dynamic> items) => items
+    .whereType<Map>()
+    .where(libraryIsPublished)
+    .toList();
+
 /// Locked until an activation code is redeemed — the website's rule.
 bool libraryIsLocked(dynamic material) =>
     coerceFlag(libraryAttributes(material)['code_activation']);
@@ -55,6 +63,80 @@ String libraryCourseIdsLabel(dynamic material) {
   }
   final single = coerceId(libraryAttributes(material)['course_id']);
   return single ?? '';
+}
+
+/// Course names from embedded relations, with resolved names for ID-only APIs.
+String libraryCourseNamesLabel(dynamic material, {Map<String, String> resolvedNames = const {}}) {
+  final attrs = libraryAttributes(material);
+  final names = <String>{};
+  final embedded = <String, String>{};
+  void addCourse(dynamic course) {
+    if (course is! Map) return;
+    final data = course['data'] is Map ? course['data'] as Map : course;
+    final details = data['attributes'] is Map ? data['attributes'] as Map : data;
+    final title = coerceString(details['title'])?.trim();
+    if (title == null || title.isEmpty) return;
+    final id = coerceId(data['id']);
+    if (id != null) embedded[id] = title;
+    names.add(title);
+  }
+  final raw = attrs['courses'];
+  final courses = raw is List ? raw : (raw is Map ? raw['data'] : null);
+  if (courses is List) courses.forEach(addCourse);
+  addCourse(attrs['course']);
+  for (final id in libraryCourseIds(material)) {
+    final title = embedded[id] ?? resolvedNames[id];
+    if (title != null && title.trim().isNotEmpty) names.add(title.trim());
+  }
+  return names.join('، ');
+}
+
+/// Every course a material is attached to.
+///
+/// Admins attach a material to several courses at once, so the list endpoint
+/// carries `course_ids` (the website's library card prints exactly this
+/// field). The single `course_id` and a `courses` relation are read too for
+/// older rows. The app used to scope by `course_id` alone, which is absent on
+/// multi-course materials — the home preview came out empty and the full
+/// library was never scoped at all.
+List<String> libraryCourseIds(dynamic material) {
+  final attrs = libraryAttributes(material);
+  final ids = <String>{};
+
+  void addId(dynamic raw) {
+    if (raw is Map) {
+      final data = raw['data'];
+      addId(raw['id'] ?? (data is Map ? data['id'] : null));
+      return;
+    }
+    final id = coerceId(raw);
+    if (id != null && id != '0') ids.add(id);
+  }
+
+  final many = attrs['course_ids'];
+  if (many is List) {
+    many.forEach(addId);
+  } else if (many is String) {
+    for (final part in many.split(',')) {
+      addId(part.trim());
+    }
+  }
+
+  final courses = attrs['courses'];
+  final courseList = courses is List
+      ? courses
+      : (courses is Map && courses['data'] is List ? courses['data'] as List : null);
+  courseList?.forEach(addId);
+
+  addId(attrs['course_id']);
+  final course = attrs['course'];
+  if (course is Map) addId(course);
+
+  if (material is Map && material['course_id'] != null) {
+    addId(material['course_id']);
+  }
+
+  return ids.toList();
 }
 
 /// Price with two decimals, or the raw value when it is not numeric.

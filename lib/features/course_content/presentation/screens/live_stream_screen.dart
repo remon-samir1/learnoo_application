@@ -9,17 +9,16 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../../../auth/domain/student_profile.dart';
 import '../../data/models/live_room.dart';
+import 'live_stream_webview_screen.dart';
 
-/// Live session, hosted on Jitsi.
+/// Entry point for a live session.
 ///
-/// This replaces the PeerJS/WebRTC implementation. The web dashboard moved to
-/// Jitsi (`components/student/live-sessions/LiveSessionRoomClient.tsx`) and its
-/// PeerJS config is now dead code, so an app student on PeerJS could never see
-/// or be seen by a web student. Both clients now derive the room name the same
-/// way — `learnooroom{id}` — which is what puts them in the same conference.
-///
-/// Students join muted with the camera off; the instructor drives the session.
-class LiveStreamScreen extends StatefulWidget {
+/// A host keeps the native Jitsi SDK window. A student is sent to
+/// [LiveStreamWebViewScreen], which embeds the same conference through the
+/// Jitsi external API so the app can lay a view-only shield over the stage
+/// while the host's whiteboard is open — impossible over the native window,
+/// which runs in its own activity/view controller.
+class LiveStreamScreen extends StatelessWidget {
   const LiveStreamScreen({
     super.key,
     required this.liveRoom,
@@ -32,10 +31,41 @@ class LiveStreamScreen extends StatefulWidget {
   final bool isHost;
 
   @override
-  State<LiveStreamScreen> createState() => _LiveStreamScreenState();
+  Widget build(BuildContext context) {
+    if (isHost) {
+      return NativeLiveStreamScreen(liveRoom: liveRoom, isHost: true);
+    }
+    return LiveStreamWebViewScreen(liveRoom: liveRoom);
+  }
 }
 
-class _LiveStreamScreenState extends State<LiveStreamScreen> {
+/// Live session through the native Jitsi SDK window.
+///
+/// The web dashboard runs the same conference
+/// (`components/student/live-sessions/LiveSessionRoomClient.tsx`) and both
+/// clients derive the room name the same way — `learnooroom{id}` — which is
+/// what puts them in the same conference.
+///
+/// Students join muted with the camera off; the instructor drives the session.
+/// This path is used by hosts, and as the fallback offered to a student when
+/// the WebView meeting cannot start at all.
+class NativeLiveStreamScreen extends StatefulWidget {
+  const NativeLiveStreamScreen({
+    super.key,
+    required this.liveRoom,
+    this.isHost = false,
+  });
+
+  final LiveRoom liveRoom;
+
+  /// Reserved for instructor builds; students are always viewers.
+  final bool isHost;
+
+  @override
+  State<NativeLiveStreamScreen> createState() => _NativeLiveStreamScreenState();
+}
+
+class _NativeLiveStreamScreenState extends State<NativeLiveStreamScreen> {
   final _jitsi = JitsiMeet();
   final _authRepository = AuthRepository();
 
@@ -136,7 +166,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
         userInfo: JitsiMeetUserInfo(
           displayName: profile?.fullName.isNotEmpty == true
               ? profile!.fullName
-              : 'Student',
+              : 'common.student'.tr(),
           email: '',
         ),
       );

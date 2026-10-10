@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../../../course_content/domain/course_visibility.dart';
 import '../../../../core/widgets/cover_image.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -43,7 +45,8 @@ class _MyCoursesScreenState extends State<MyCoursesScreen> {
       final result = await _courseRepository.getActivatedCourses();
       if (result['success'] && mounted) {
         setState(() {
-          _courses = result['data'] ?? [];
+          // Draft courses never reach a student on the website.
+          _courses = visibleStudentCourses(result['data'] ?? []);
           _isLoading = false;
         });
       } else if (mounted) {
@@ -288,7 +291,7 @@ class _MyCoursesScreenState extends State<MyCoursesScreen> {
           itemCount: 3,
           itemBuilder: (context, index) {
             return Padding(
-              padding: const EdgeInsets.only(right: 12, top: 12, bottom: 12),
+              padding: const EdgeInsetsDirectional.only(end: 12, top: 12, bottom: 12),
               child: Shimmer.fromColors(
                 baseColor: Colors.grey[300]!,
                 highlightColor: Colors.grey[100]!,
@@ -350,7 +353,7 @@ class _MyCoursesScreenState extends State<MyCoursesScreen> {
   void _navigateToCourse(dynamic course) {
     final courseId = course['id']?.toString() ?? '';
     final attributes = course['attributes'] ?? {};
-    final title = attributes['title']?.toString() ?? 'Course';
+    final title = attributes['title']?.toString() ?? 'common.course'.tr();
     final thumbnail = attributes['thumbnail']?.toString() ?? '';
     final price = attributes['price']?.toString() ?? '0';
     final description = attributes['description']?.toString() ?? '';
@@ -557,7 +560,7 @@ class _MyCoursesScreenState extends State<MyCoursesScreen> {
 
   Widget _buildCourseCard(dynamic course) {
     final attributes = course['attributes'] ?? {};
-    final title = attributes['title']?.toString() ?? 'Untitled Course';
+    final title = attributes['title']?.toString() ?? 'category_tree.untitled_course'.tr();
     final instructor = attributes['instructor']?['data']?['attributes']?['full_name']?.toString() ??
         attributes['instructor_name']?.toString() ??
         'home.unknown_instructor'.tr();
@@ -602,6 +605,7 @@ class _MyCoursesScreenState extends State<MyCoursesScreen> {
                   title: title,
                   height: 160,
                   cacheWidth: 400,
+                  fallback: CoverFallback.logo,
                 ),
               ),
               // Category Badge

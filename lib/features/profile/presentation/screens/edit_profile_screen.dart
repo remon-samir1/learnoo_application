@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:easy_localization/easy_localization.dart';
+import 'package:learnoo/features/academic/data/academic_scope_service.dart';
 import 'package:learnoo/features/academic/presentation/widgets/academic_picker_fields.dart';
 import 'package:learnoo/features/auth/data/auth_repository.dart';
 import 'package:learnoo/features/auth/domain/student_profile.dart';
@@ -11,7 +12,17 @@ class EditProfileScreen extends StatefulWidget {
   final Map<String, dynamic>? userData;
   final Function(Map<String, dynamic>) onUpdate;
 
-  const EditProfileScreen({super.key, this.userData, required this.onUpdate});
+  /// Called after a save that changed university, centre, faculty or
+  /// department, once the stale caches are cleared and the profile re-read.
+  /// The host rebuilds the screens underneath so they load the new scope.
+  final VoidCallback? onAcademicScopeChanged;
+
+  const EditProfileScreen({
+    super.key,
+    this.userData,
+    required this.onUpdate,
+    this.onAcademicScopeChanged,
+  });
 
   @override
   State<EditProfileScreen> createState() => _EditProfileScreenState();
@@ -34,6 +45,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   String? _facultyId;
   String? _departmentId;
 
+  /// The selection as loaded, to tell whether a save changed the scope.
+  AcademicSelection _initialSelection = const AcademicSelection();
+
+  AcademicSelection get _currentSelection => AcademicSelection(
+        universityId: _universityId,
+        centerId: _centerId,
+        facultyId: _facultyId,
+        departmentId: _departmentId,
+      );
+
   @override
   void initState() {
     super.initState();
@@ -51,6 +72,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _centerId = profile.centerId;
     _facultyId = profile.facultyId;
     _departmentId = profile.departmentId;
+    _initialSelection = AcademicSelection.fromProfile(profile);
   }
 
   @override
@@ -80,7 +102,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error picking image: $e'),
+            content: Text('profile.error_picking_image'.tr(args: ['$e'])),
             backgroundColor: Colors.red,
           ),
         );
@@ -202,17 +224,41 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
+  /// The academic fields of the multipart body, matching the web's
+  /// `appendStudentAcademicFormFields`: `center_id` **and** `centers[]`. The
+  /// profile returns centres as a list (`centers`), and the app used to send
+  /// only `center_id`, so a changed centre could stay unchanged on the server.
   Map<String, dynamic> _academicPayload() {
     final map = <String, dynamic>{};
     if (_universityId != null) map['university_id'] = _universityId;
-    if (_centerId != null) map['center_id'] = _centerId;
+    if (_centerId != null) {
+      map['center_id'] = _centerId;
+      map['centers[]'] = _centerId;
+    }
     if (_facultyId != null) map['faculty_id'] = _facultyId;
     if (_departmentId != null) map['department_id'] = _departmentId;
     return map;
   }
 
+  bool _isBlank(String? id) => id == null || id.trim().isEmpty;
+
   Future<void> _handleSave() async {
+    // Same rule as the web profile form: university, centre and faculty are
+    // all required. Changing the university clears the other two, and saving
+    // a half selection would leave the old faculty/centre on the server.
+    if (_isBlank(_universityId) || _isBlank(_centerId) || _isBlank(_facultyId)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('profile.academic_required'.tr()),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
+
+    final scopeChanged = _currentSelection.differsFrom(_initialSelection);
 
     final result = await _authRepository.updateProfileWithImage(
       profileData: {
@@ -224,9 +270,31 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       imageFile: _selectedImage,
     );
 
+    Map<String, dynamic>? refreshedProfile;
+    if (result['success'] == true && scopeChanged) {
+      // Drop everything cached for the old selection and re-read the profile
+      // the server now holds, before anything is rebuilt on top of it.
+      refreshedProfile = await AcademicScopeService().applyScopeChange();
+    }
+
     if (mounted) {
       setState(() => _isLoading = false);
       if (result['success']) {
+        if (scopeChanged) {
+          // When `/me` could not be re-read the caches are still cleared, so
+          // the rebuilt screens load the new scope from the API regardless.
+          if (refreshedProfile != null) widget.onUpdate(refreshedProfile);
+          final messenger = ScaffoldMessenger.of(context);
+          Navigator.pop(context);
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text(result['message'] ?? 'profile.profile_updated'.tr()),
+              backgroundColor: Colors.green,
+            ),
+          );
+          widget.onAcademicScopeChanged?.call();
+          return;
+        }
         widget.onUpdate(result['data'] ?? {
           'first_name': _firstNameController.text,
           'last_name': _lastNameController.text,

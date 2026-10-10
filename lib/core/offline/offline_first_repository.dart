@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../local/hive_service.dart';
 import '../sync/offline_queue_service.dart';
@@ -54,7 +55,7 @@ mixin OfflineFirstRepository {
             (e['statusCode'] == 403 || e['statusCode'] == 401)) {
           return {
             'success': false,
-            'message': e['message'] ?? 'Access denied',
+            'message': e['message'] ?? 'errors.access_denied'.tr(),
             'statusCode': e['statusCode'],
             'authorizationError': true,
             'fromCache': false,
@@ -85,7 +86,7 @@ mixin OfflineFirstRepository {
     if (!online) {
       return {
         'success': false,
-        'message': 'No internet connection and no cached data available',
+        'message': 'errors.offline_no_cache'.tr(),
         'offline': true,
         'fromCache': false,
       };
@@ -94,7 +95,7 @@ mixin OfflineFirstRepository {
     // Online but API failed and no cache
     return {
       'success': false,
-      'message': 'Failed to fetch data',
+      'message': 'errors.failed_fetch_data'.tr(),
       'offline': false,
       'fromCache': false,
     };

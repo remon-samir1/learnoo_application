@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import Combine
+import UserNotifications
 
 /**
  * AppDelegate with Extreme Screen Protection for iOS
@@ -15,7 +16,11 @@ import Combine
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
         GeneratedPluginRegistrant.register(with: self)
-        
+
+        // flutter_local_notifications: show student notifications while the
+        // app is in the foreground and deliver taps to Dart.
+        UNUserNotificationCenter.current().delegate = self as? UNUserNotificationCenterDelegate
+
         screenProtection = ScreenProtectionManager()
         if let controller = window?.rootViewController as? FlutterViewController {
             screenProtection?.setupChannels(with: controller.binaryMessenger)
@@ -197,6 +202,14 @@ class ScreenProtectionManager: NSObject {
 extension ScreenProtectionManager: FlutterStreamHandler {
     func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         self.eventSink = events
+        // Capture that was already running before Dart subscribed (e.g. the
+        // recording was started before launch): tell Dart so it can pause and
+        // mute active video players.
+        if UIScreen.main.isCaptured {
+            DispatchQueue.main.async { [weak self] in
+                self?.sendEvent(name: "recording_started")
+            }
+        }
         return nil
     }
     func onCancel(withArguments arguments: Any?) -> FlutterError? {

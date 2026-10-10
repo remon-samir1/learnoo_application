@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart' hide Category;
 import '../../../../core/network/api_client.dart';
 import '../../../../core/network/api_constants.dart';
@@ -17,7 +18,7 @@ class CategoryTreeRepository {
     try {
       final response = await _apiClient.get(
         ApiConstants.me,
-        fallback: 'Failed to fetch user profile',
+        fallback: 'errors.failed_fetch_user_profile'.tr(),
       );
 
       if (response == null) return null;
@@ -71,7 +72,7 @@ class CategoryTreeRepository {
     try {
       final response = await _apiClient.get(
         ApiConstants.departments,
-        fallback: 'Failed to fetch categories',
+        fallback: 'errors.failed_fetch_categories'.tr(),
       );
 
       if (response == null) return [];
@@ -101,44 +102,45 @@ class CategoryTreeRepository {
     }
   }
 
-  /// Activates a course using the activation code.
-  /// Endpoint: `POST /v1/student/courses/activate`
-  /// Body: `{"code": code, "course_id": courseId}`
+  /// Activates a course with a redemption code, exactly like the website's
+  /// `StudentCourseActivationModal` / `activateCourseCode`:
+  /// `POST /v1/code/activate` with `{code, item_id, item_type: "course"}`.
+  ///
+  /// Any 2xx is a success (the website does not inspect the body for
+  /// courses); a non-2xx surfaces the server's message. [genericError] is
+  /// shown when the server gave no message or the request never reached it.
   Future<Map<String, dynamic>> activateCourse({
     required String courseId,
     required String code,
+    required String genericError,
   }) async {
-    try {
-      final payload = {
-        'code': code.trim(),
-        'course_id': courseId,
-      };
+    final itemId = int.tryParse(courseId.trim());
+    if (itemId == null || itemId < 1) {
+      return {'success': false, 'invalidId': true};
+    }
 
+    try {
       final response = await _apiClient.post(
-        ApiConstants.studentCourseActivate,
-        body: payload,
-        skipAuthRedirect: true, // do not logout if activation code is invalid (401/403/422)
-        fallback: 'Failed to activate course',
+        ApiConstants.codeActivate,
+        body: {
+          'code': code.trim(),
+          'item_id': itemId,
+          'item_type': 'course',
+        },
+        // A wrong code must never sign the student out.
+        skipAuthRedirect: true,
+        fallback: genericError,
       );
 
-      return {
-        'success': true,
-        'data': response,
-        'message': response is Map && response['message'] != null
-            ? response['message'].toString()
-            : 'Course activated successfully',
-      };
+      return {'success': true, 'data': response};
     } on ApiException catch (e) {
       return {
         'success': false,
-        'message': e.message.isNotEmpty ? e.message : 'Invalid activation code',
+        'message': e.isNetwork ? genericError : e.display(genericError),
         'statusCode': e.status,
       };
-    } catch (e) {
-      return {
-        'success': false,
-        'message': 'Connection error: $e',
-      };
+    } catch (_) {
+      return {'success': false, 'message': genericError};
     }
   }
 }

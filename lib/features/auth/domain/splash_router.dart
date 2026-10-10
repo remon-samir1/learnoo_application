@@ -78,14 +78,16 @@ class SplashRouter {
           : SplashDestination.onboarding;
     }
 
-    // The server rejected the token — drop it and start over.
+    // Only a 401 means the server rejected the token — drop it and start over.
+    // A 403 is a permission answer, not an expired session, so it does not
+    // sign the student out.
     final statusCode = result['statusCode'];
-    if (statusCode == 401 || statusCode == 403) {
+    if (statusCode == 401) {
       await clearToken();
       return SplashDestination.login;
     }
 
-    // Any other failure is probably a server hiccup, so the session is kept
+    // Any other failure (403, 5xx, timeout, no connection) keeps the session
     // and the cached app is shown instead of signing the student out.
     return SplashDestination.studentHome;
   }

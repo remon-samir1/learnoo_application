@@ -347,6 +347,14 @@ class _LiveSessionDetailScreenState extends State<LiveSessionDetailScreen> {
                   ),
                 ],
               ),
+              if (room.startedAtValue != null) ...[
+                const SizedBox(height: 12),
+                LiveRoomTimerBanner(
+                  startTime: room.startedAtValue!,
+                  isLive: true,
+                  isEnded: false,
+                ),
+              ],
               const SizedBox(height: 16),
               ElevatedButton.icon(
                 onPressed: () => _join(room),
@@ -394,6 +402,17 @@ class _LiveSessionDetailScreenState extends State<LiveSessionDetailScreen> {
                 Text(started,
                     style: TextStyle(
                         fontSize: 12, color: AppColors.subtext(context))),
+              ],
+              if (room.startedAtValue != null) ...[
+                const SizedBox(height: 20),
+                LiveRoomTimerBanner(
+                  startTime: room.startedAtValue!,
+                  isLive: room.isLive,
+                  isEnded: room.isEnded,
+                  onReached: () {
+                    if (mounted) setState(() {});
+                  },
+                ),
               ],
             ],
           ),

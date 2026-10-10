@@ -94,22 +94,22 @@ class LectureHeader extends StatelessWidget {
             if (isLocked)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                margin: const EdgeInsets.only(right: 8),
+                margin: const EdgeInsetsDirectional.only(end: 8),
                 decoration: BoxDecoration(
                   color: const Color(0xFFFFF0F0),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: const Row(
+                child: Row(
                   children: [
-                    FaIcon(
+                    const FaIcon(
                       FontAwesomeIcons.lock,
                       size: 12,
                       color: Color(0xFFFF4B4B),
                     ),
-                    SizedBox(width: 4),
+                    const SizedBox(width: 4),
                     Text(
-                      'Locked',
-                      style: TextStyle(
+                      'course.locked'.tr(),
+                      style: const TextStyle(
                         color: Color(0xFFFF4B4B),
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
@@ -121,22 +121,22 @@ class LectureHeader extends StatelessWidget {
             if (isActivated)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                margin: const EdgeInsets.only(right: 8),
+                margin: const EdgeInsetsDirectional.only(end: 8),
                 decoration: BoxDecoration(
                   color: const Color(0xFFE8F9F0),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: const Row(
+                child: Row(
                   children: [
-                    FaIcon(
+                    const FaIcon(
                       FontAwesomeIcons.check,
                       size: 12,
                       color: Color(0xFF2DBC77),
                     ),
-                    SizedBox(width: 4),
+                    const SizedBox(width: 4),
                     Text(
-                      'Activated',
-                      style: TextStyle(
+                      'course.activated'.tr(),
+                      style: const TextStyle(
                         color: Color(0xFF2DBC77),
                         fontSize: 11,
                         fontWeight: FontWeight.bold,

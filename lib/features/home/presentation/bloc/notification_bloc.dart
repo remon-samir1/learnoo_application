@@ -1,26 +1,24 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:learnoo/features/auth/data/auth_repository.dart';
 import 'package:learnoo/features/home/data/notification_repository.dart';
 import 'package:learnoo/features/home/data/models/notification.dart';
 import 'package:learnoo/core/services/websocket_service.dart';
-import 'package:learnoo/core/services/notification_service.dart';
+import 'package:learnoo/features/home/data/notification_sync_service.dart';
 import 'notification_event.dart';
 import 'notification_state.dart';
 
 class NotificationBloc extends Bloc<NotificationEvent, NotificationState> {
   final NotificationRepository _notificationRepository;
   final WebSocketService _webSocketService;
-  final NotificationService _notificationService;
   final AuthRepository _authRepository;
 
   NotificationBloc({
     required NotificationRepository notificationRepository,
     required WebSocketService webSocketService,
-    required NotificationService notificationService,
     required AuthRepository authRepository,
   })  : _notificationRepository = notificationRepository,
         _webSocketService = webSocketService,
-        _notificationService = notificationService,
         _authRepository = authRepository,
         super(const NotificationState()) {
     on<LoadNotificationsEvent>(_onLoadNotifications);
@@ -68,7 +66,7 @@ class NotificationBloc extends Bloc<NotificationEvent, NotificationState> {
     } else {
       emit(state.copyWith(
         isLoading: false,
-        errorMessage: result['message'] ?? 'Failed to load notifications',
+        errorMessage: result['message'] ?? 'notifications.load_failed'.tr(),
       ));
     }
   }
@@ -96,7 +94,7 @@ class NotificationBloc extends Bloc<NotificationEvent, NotificationState> {
     } else {
       emit(state.copyWith(
         isLoadingMore: false,
-        errorMessage: result['message'] ?? 'Failed to load more notifications',
+        errorMessage: result['message'] ?? 'notifications.load_more_failed'.tr(),
       ));
     }
   }
@@ -124,7 +122,7 @@ class NotificationBloc extends Bloc<NotificationEvent, NotificationState> {
     } else {
       emit(state.copyWith(
         isRefreshing: false,
-        errorMessage: result['message'] ?? 'Failed to refresh notifications',
+        errorMessage: result['message'] ?? 'notifications.refresh_failed'.tr(),
       ));
     }
   }
@@ -145,12 +143,9 @@ class NotificationBloc extends Bloc<NotificationEvent, NotificationState> {
           unreadCount: state.unreadCount + 1,
         ));
 
-        // Show local notification
-        await _notificationService.showAppNotification(
-          title: notification.data.title,
-          body: notification.data.message,
-          payload: notification.id,
-        );
+        // The system-tray copy goes through the sync service, which checks
+        // the student's own list and never shows the same id twice.
+        NotificationSyncService().syncSoon();
 
         // Update unread count
         add(LoadUnreadCountEvent());

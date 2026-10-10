@@ -155,7 +155,7 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
           });
         } else if (result.status == DownloadStatus.failed) {
           setState(() {
-            _initError = result.errorMessage ?? 'Failed to load PDF';
+            _initError = result.errorMessage ?? 'pdf.failed_load'.tr();
             _isInitializing = false;
           });
         }
@@ -163,7 +163,7 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _initError = 'Error loading PDF: $e';
+          _initError = 'pdf.error_loading'.tr(args: ['$e']);
           _isInitializing = false;
         });
       }
@@ -288,7 +288,7 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
           // Optionally show a subtle indicator that auto-save happened
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Failed to save annotation')),
+            SnackBar(content: Text('pdf.failed_save_annotation'.tr())),
           );
         }
       }
@@ -316,7 +316,7 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
       if (mounted) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Changes discarded')),
+          SnackBar(content: Text('pdf.changes_discarded'.tr())),
         );
       }
     } catch (e) {
@@ -393,13 +393,13 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
     if (_isInitializing) {
       return Scaffold(
         appBar: AppBar(title: Text(widget.title)),
-        body: const Center(
+        body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Loading PDF...'),
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text('pdf.loading'.tr()),
             ],
           ),
         ),
@@ -420,7 +420,7 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
               const SizedBox(height: 16),
               ElevatedButton(
                 onPressed: _initializePdf,
-                child: const Text('Retry'),
+                child: Text('pdf.retry'.tr()),
               ),
             ],
           ),
@@ -441,7 +441,7 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
                 onPressed: _annotationManager.canUndo(_pdfViewerController.pageNumber)
                     ? _undo
                     : null,
-                tooltip: 'Undo',
+                tooltip: 'pdf.undo'.tr(),
               ),
             // Annotation toggle button
             IconButton(
@@ -465,7 +465,7 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
               IconButton(
                 icon: const FaIcon(FontAwesomeIcons.trash, size: 20),
                 onPressed: _discardChanges,
-                tooltip: 'Discard Changes',
+                tooltip: 'pdf.discard_changes_tooltip'.tr(),
               ),
           ],
         ),
@@ -495,19 +495,19 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
                       children: [
                         _buildAnnotationModeButton(
                           FontAwesomeIcons.pen,
-                          'Pen',
+                          'pdf.pen'.tr(),
                           AnnotationMode.pen,
                           Colors.red,
                         ),
                         _buildAnnotationModeButton(
                           FontAwesomeIcons.highlighter,
-                          'Highlighter',
+                          'pdf.highlighter'.tr(),
                           AnnotationMode.highlighter,
                           Colors.yellow,
                         ),
                         _buildAnnotationModeButton(
                           FontAwesomeIcons.eraser,
-                          'Eraser',
+                          'pdf.eraser'.tr(),
                           AnnotationMode.eraser,
                           Colors.grey,
                         ),
@@ -522,18 +522,18 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
                               border: Border.all(color: Colors.red.withOpacity(0.3)),
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: const Column(
+                            child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                FaIcon(FontAwesomeIcons.trash, size: 20, color: Colors.red),
-                                SizedBox(height: 4),
-                                Text('Clear', style: TextStyle(fontSize: 10, color: Colors.red)),
+                                const FaIcon(FontAwesomeIcons.trash, size: 20, color: Colors.red),
+                                const SizedBox(height: 4),
+                                Text('pdf.clear'.tr(), style: const TextStyle(fontSize: 10, color: Colors.red)),
                               ],
                             ),
                           ),
                         ),
                         const VerticalDivider(width: 20),
-                        Text('Width', style: const TextStyle(fontSize: 12)),
+                        Text('pdf.width'.tr(), style: const TextStyle(fontSize: 12)),
                         const SizedBox(width: 8),
                         SizedBox(
                           width: 100,
@@ -556,7 +556,7 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
                       children: _annotationColors.map((color) {
                         final isSelected = _annotationManager.currentColor == color;
                         return Padding(
-                          padding: const EdgeInsets.only(right: 12),
+                          padding: const EdgeInsetsDirectional.only(end: 12),
                           child: GestureDetector(
                             onTap: () => _setAnnotationColor(color),
                             child: Container(
@@ -611,7 +611,7 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
                     onZoomLevelChanged: (details) => setState(() {}),
                   )
                 else
-                  const Center(child: Text('PDF file not available')),
+                  Center(child: Text('pdf.file_not_available'.tr())),
                 // Drawing overlay
                 if (_showAnnotationToolbar && _currentAnnotationMode != AnnotationMode.none)
                   Positioned.fill(
@@ -669,7 +669,7 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
                           const CircularProgressIndicator(color: Colors.white),
                           const SizedBox(height: 16),
                           Text(
-                            'Saving...',
+                            'pdf.saving'.tr(),
                             style: const TextStyle(color: Colors.white),
                           ),
                         ],

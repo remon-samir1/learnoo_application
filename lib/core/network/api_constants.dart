@@ -1,4 +1,5 @@
 class ApiConstants {
+  static const String timetable = '/v1/timetable';
   static const String baseUrl = 'https://api.learnoo.app';
   static const String register = '/v1/auth/register';
   static const String login = '/v1/auth/login';
@@ -19,7 +20,6 @@ class ApiConstants {
   static const String lectures = '/v1/lecture';
   static const String chapters = '/v1/chapter';
   static const String codeActivate = '/v1/code/activate';
-  static const String studentCourseActivate = '/v1/student/courses/activate';
   static const String categories = '/v1/department';
   static const String discussion = '/v1/discussion';
 

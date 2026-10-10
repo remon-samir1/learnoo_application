@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -10,6 +11,7 @@ import 'package:learnoo/core/network/api_client.dart';
 import 'package:learnoo/core/network/api_constants.dart';
 import 'package:learnoo/core/network/api_exception.dart';
 import 'package:learnoo/core/services/device_service.dart';
+import 'package:learnoo/core/services/student_scope.dart';
 import 'package:learnoo/core/session/session_manager.dart';
 
 /// Auth + account repository.
@@ -187,7 +189,7 @@ class AuthRepository {
       final payload = await _api.post(
         ApiConstants.register,
         includeAuth: false,
-        fallback: 'Registration failed',
+        fallback: 'auth.register_failed'.tr(),
         body: {
           'first_name': firstName,
           'last_name': lastName,
@@ -202,11 +204,11 @@ class AuthRepository {
       _capturePendingAuth(payload);
 
       return _ok(
-        message: payload?['message']?.toString() ?? 'Registration succeeded',
+        message: payload?['message']?.toString() ?? 'errors.registration_succeeded'.tr(),
         data: payload,
       );
     } catch (e) {
-      return _fail(e, 'Registration failed');
+      return _fail(e, 'auth.register_failed'.tr());
     }
   }
 
@@ -228,7 +230,7 @@ class AuthRepository {
       final payload = await _api.post(
         ApiConstants.login,
         includeAuth: false,
-        fallback: 'Login failed',
+        fallback: 'auth.login_failed'.tr(),
         body: {
           'phone': normalizePhone(phone),
           'device_name': deviceName,
@@ -239,11 +241,11 @@ class AuthRepository {
       _capturePendingAuth(payload);
 
       return _ok(
-        message: payload?['message']?.toString() ?? 'Login successful',
+        message: payload?['message']?.toString() ?? 'errors.login_successful'.tr(),
         data: payload,
       );
     } catch (e) {
-      return _fail(e, 'Login failed');
+      return _fail(e, 'auth.login_failed'.tr());
     }
   }
 
@@ -303,16 +305,16 @@ class AuthRepository {
     try {
       final payload = await _api.post(
         ApiConstants.phoneVerificationNotification,
-        fallback: 'Failed to send verification code',
+        fallback: 'auth.failed_send_code'.tr(),
       );
 
       return _ok(
-        message: payload?['message']?.toString() ?? 'Verification code sent',
+        message: payload?['message']?.toString() ?? 'errors.verification_code_sent'.tr(),
         data: payload,
         extra: {'otp': _readOtp(payload)},
       );
     } catch (e) {
-      return _fail(e, 'Failed to send verification code');
+      return _fail(e, 'auth.failed_send_code'.tr());
     }
   }
 
@@ -320,16 +322,16 @@ class AuthRepository {
     try {
       final payload = await _api.post(
         ApiConstants.emailVerificationNotification,
-        fallback: 'Failed to send verification email',
+        fallback: 'errors.failed_send_verification_email'.tr(),
       );
 
       return _ok(
-        message: payload?['message']?.toString() ?? 'Verification email sent',
+        message: payload?['message']?.toString() ?? 'errors.verification_email_sent'.tr(),
         data: payload,
         extra: {'otp': _readOtp(payload)},
       );
     } catch (e) {
-      return _fail(e, 'Failed to send verification email');
+      return _fail(e, 'errors.failed_send_verification_email'.tr());
     }
   }
 
@@ -367,24 +369,24 @@ class AuthRepository {
         ApiConstants.verifyPhone,
         body: {'code': code},
         skipAuthRedirect: true,
-        fallback: 'Failed to verify phone',
+        fallback: 'errors.failed_verify_phone'.tr(),
       );
 
       final activated = await _session.activateSession();
       if (!activated) {
         return {
           'success': false,
-          'message': 'Session expired, please sign in again',
+          'message': 'errors.session_expired_sign_in'.tr(),
           'sessionLost': true,
         };
       }
 
       return _ok(
-        message: payload?['message']?.toString() ?? 'Phone verified successfully',
+        message: payload?['message']?.toString() ?? 'errors.phone_verified'.tr(),
         data: payload,
       );
     } catch (e) {
-      return _fail(e, 'Failed to verify phone');
+      return _fail(e, 'errors.failed_verify_phone'.tr());
     }
   }
 
@@ -394,24 +396,24 @@ class AuthRepository {
         ApiConstants.verifyEmail,
         body: {'code': code},
         skipAuthRedirect: true,
-        fallback: 'Failed to verify email',
+        fallback: 'errors.failed_verify_email'.tr(),
       );
 
       final activated = await _session.activateSession();
       if (!activated) {
         return {
           'success': false,
-          'message': 'Session expired, please sign in again',
+          'message': 'errors.session_expired_sign_in'.tr(),
           'sessionLost': true,
         };
       }
 
       return _ok(
-        message: payload?['message']?.toString() ?? 'Email verified successfully',
+        message: payload?['message']?.toString() ?? 'errors.email_verified'.tr(),
         data: payload,
       );
     } catch (e) {
-      return _fail(e, 'Failed to verify email');
+      return _fail(e, 'errors.failed_verify_email'.tr());
     }
   }
 
@@ -420,13 +422,13 @@ class AuthRepository {
   // ---------------------------------------------------------------------
 
   Future<Map<String, dynamic>> getUniversities() =>
-      _list(ApiConstants.universities, 'Failed to fetch universities');
+      _list(ApiConstants.universities, 'errors.failed_fetch_universities'.tr());
 
   Future<Map<String, dynamic>> getCenters() =>
-      _list(ApiConstants.centers, 'Failed to fetch centers');
+      _list(ApiConstants.centers, 'errors.failed_fetch_centers'.tr());
 
   Future<Map<String, dynamic>> getFaculties() =>
-      _list(ApiConstants.faculties, 'Failed to fetch faculties');
+      _list(ApiConstants.faculties, 'errors.failed_fetch_faculties'.tr());
 
   Future<Map<String, dynamic>> _list(String path, String fallback) async {
     try {
@@ -466,15 +468,15 @@ class AuthRepository {
       final payload = await _api.put(
         ApiConstants.updateProfile,
         body: body,
-        fallback: 'Failed to update profile',
+        fallback: 'profile.failed_update_profile'.tr(),
       );
 
       return _ok(
-        message: payload?['message']?.toString() ?? 'Profile updated successfully',
+        message: payload?['message']?.toString() ?? 'errors.profile_updated'.tr(),
         data: payload?['data'],
       );
     } catch (e) {
-      return _fail(e, 'Failed to update profile');
+      return _fail(e, 'profile.failed_update_profile'.tr());
     }
   }
 
@@ -488,15 +490,15 @@ class AuthRepository {
         method: 'PUT',
         fields: profileData,
         files: imageFile == null ? const {} : {'image': imageFile.path},
-        fallback: 'Failed to update profile',
+        fallback: 'profile.failed_update_profile'.tr(),
       );
 
       return _ok(
-        message: payload?['message']?.toString() ?? 'Profile updated successfully',
+        message: payload?['message']?.toString() ?? 'errors.profile_updated'.tr(),
         data: payload?['data'],
       );
     } catch (e) {
-      return _fail(e, 'Failed to update profile');
+      return _fail(e, 'profile.failed_update_profile'.tr());
     }
   }
 
@@ -508,7 +510,7 @@ class AuthRepository {
     try {
       final payload = await _api.get(
         ApiConstants.me,
-        fallback: 'Failed to fetch profile',
+        fallback: 'errors.failed_fetch_profile'.tr(),
       );
 
       final data = payload is Map ? payload['data'] : null;
@@ -516,7 +518,7 @@ class AuthRepository {
 
       return _ok(data: data);
     } catch (e) {
-      return _fail(e, 'Failed to fetch profile');
+      return _fail(e, 'errors.failed_fetch_profile'.tr());
     }
   }
 
@@ -576,15 +578,15 @@ class AuthRepository {
         ApiConstants.passwordForgot,
         includeAuth: false,
         body: {'phone_or_email': phoneOrEmail},
-        fallback: 'Failed to send password reset code',
+        fallback: 'errors.failed_send_reset_code'.tr(),
       );
       return _ok(
         message: payload?['message']?.toString() ??
-            'Password reset code sent successfully',
+            'errors.reset_code_sent'.tr(),
         data: payload,
       );
     } catch (e) {
-      return _fail(e, 'Failed to send password reset code');
+      return _fail(e, 'errors.failed_send_reset_code'.tr());
     }
   }
 
@@ -602,14 +604,14 @@ class AuthRepository {
           'code': code,
           'phone_or_email': phoneOrEmail,
         },
-        fallback: 'Failed to verify code',
+        fallback: 'auth.failed_verify'.tr(),
       );
       return _ok(
-        message: payload?['message']?.toString() ?? 'Code verified successfully',
+        message: payload?['message']?.toString() ?? 'errors.code_verified'.tr(),
         data: payload,
       );
     } catch (e) {
-      return _fail(e, 'Failed to verify code');
+      return _fail(e, 'auth.failed_verify'.tr());
     }
   }
 
@@ -631,14 +633,14 @@ class AuthRepository {
           'password': password,
           'password_confirmation': passwordConfirmation,
         },
-        fallback: 'Failed to reset password',
+        fallback: 'auth.failed_reset'.tr(),
       );
       return _ok(
-        message: payload?['message']?.toString() ?? 'Password reset successfully',
+        message: payload?['message']?.toString() ?? 'errors.password_reset'.tr(),
         data: payload,
       );
     } catch (e) {
-      return _fail(e, 'Failed to reset password');
+      return _fail(e, 'auth.failed_reset'.tr());
     }
   }
 
@@ -651,21 +653,21 @@ class AuthRepository {
   /// 204 and 401 both count as success (the web treats an already-expired
   /// token as a completed logout), and the local session is cleared either way.
   Future<Map<String, dynamic>> logout() async {
-    String message = 'Logged out successfully';
+    String message = 'errors.logged_out'.tr();
     try {
       final payload = await _api.post(
         ApiConstants.logout,
         skipAuthRedirect: true,
-        fallback: 'Logout failed',
+        fallback: 'errors.logout_failed'.tr(),
       );
       final m = payload is Map ? payload['message']?.toString() : null;
       if (m != null && m.isNotEmpty) message = m;
     } on ApiException catch (e) {
       if (!e.isUnauthorized) {
         await _clearLocalSession();
-        return {'success': false, 'message': e.display('Logout failed')};
+        return {'success': false, 'message': e.display('errors.logout_failed'.tr())};
       }
-      message = 'Session expired, logged out';
+      message = 'errors.session_expired_logged_out'.tr();
     } catch (_) {
       // Network failure — still clear locally so the student is not stuck.
     }
@@ -676,6 +678,9 @@ class AuthRepository {
 
   Future<void> _clearLocalSession() async {
     await clearCachedWatermarkData();
+    // The memoised course scope belongs to this student; the next account
+    // signing in on this device must not inherit it.
+    StudentScopeService().invalidate();
     await _session.clear();
   }
 }

@@ -1,7 +1,9 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../core/network/api_constants.dart';
+import '../../../core/network/api_client.dart';
 
 class LibraryRepository {
   final _storage = const FlutterSecureStorage();
@@ -15,35 +17,15 @@ class LibraryRepository {
   /// [courseId] mirrors `getCourseLibrary` on the web, which the course
   /// details page's Library tab calls with `?course_id=`.
   Future<Map<String, dynamic>> getLibraries({int? courseId}) async {
-    final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
-
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.libraries}')
-        .replace(
-      queryParameters:
-          courseId == null ? null : {'course_id': courseId.toString()},
-    );
     try {
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+      final data = await ApiClient().get(
+        ApiConstants.libraries,
+        query: courseId == null ? null : {'course_id': courseId},
+        fallback: 'errors.failed_fetch_libraries'.tr(),
       );
-
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        return {'success': true, 'data': data['data'] ?? []};
-      } else {
-        return {
-          'success': false,
-          'message': data['message'] ?? 'Failed to fetch libraries',
-        };
-      }
+      return {'success': true, 'data': unwrapList(data)};
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
@@ -52,7 +34,7 @@ class LibraryRepository {
   /// flags are current rather than whatever the list happened to cache.
   Future<Map<String, dynamic>> getLibraryById(String id) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.libraries}/$id');
     try {
@@ -75,7 +57,7 @@ class LibraryRepository {
         'statusCode': response.statusCode,
       };
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
@@ -85,7 +67,7 @@ class LibraryRepository {
     required String itemType,
   }) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.codeActivate}');
     try {
@@ -109,11 +91,11 @@ class LibraryRepository {
       } else {
         return {
           'success': false,
-          'message': data['message'] ?? 'Invalid activation code',
+          'message': data['message'] ?? 'library.invalid_activation_code'.tr(),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 }

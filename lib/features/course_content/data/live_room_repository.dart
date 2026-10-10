@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -29,7 +30,7 @@ class LiveRoomRepository {
     int? courseId,
   }) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final queryParams = <String, String>{
       'page': page.toString(),
@@ -76,12 +77,50 @@ class LiveRoomRepository {
         return {
           'success': false,
           'message': (data is Map ? data['message'] : null) ??
-              'Failed to fetch live rooms',
+              'errors.failed_fetch_live_rooms'.tr(),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
+  }
+
+  /// Every live room, across all server pages.
+  ///
+  /// The server pages over *all* rooms, while a student only sees the ones in
+  /// their faculty tree. Filtering one server page at a time left pages — often
+  /// the first — empty, so the list is fetched whole and filtered and paged on
+  /// the device instead. Stops at the last page, an empty page, a page with no
+  /// new rooms (a backend that ignores `page`), or [maxPages].
+  Future<Map<String, dynamic>> getAllLiveRooms({int maxPages = 30}) async {
+    final rooms = <LiveRoom>[];
+    final seen = <String>{};
+
+    for (var page = 1; page <= maxPages; page++) {
+      final result = await getLiveRooms(page: page, perPage: 100);
+      if (result['success'] != true) {
+        // A later page failing still leaves the student what already loaded.
+        return page == 1 ? result : {'success': true, 'data': rooms};
+      }
+
+      final batch = result['data'] as List<LiveRoom>;
+      var added = 0;
+      for (final room in batch) {
+        if (seen.add(room.id)) {
+          rooms.add(room);
+          added++;
+        }
+      }
+
+      final meta = result['meta'] as Map<String, dynamic>?;
+      final lastPage = (meta?['last_page'] as num?)?.toInt();
+      if (batch.isEmpty || added == 0) break;
+      if (lastPage != null ? page >= lastPage : result['hasNextPage'] != true) {
+        break;
+      }
+    }
+
+    return {'success': true, 'data': rooms};
   }
 
   /// Port of `extractLiveRoomsFromResponse`: `data` may be a list, a nested
@@ -108,7 +147,7 @@ class LiveRoomRepository {
 
   Future<Map<String, dynamic>> getLiveRoomById(String roomId) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse(
         '${ApiConstants.baseUrl}${ApiConstants.liveRooms}/${Uri.encodeComponent(roomId)}');
@@ -133,7 +172,7 @@ class LiveRoomRepository {
           roomJson = raw['data'] as Map;
         }
         if (roomJson == null) {
-          return {'success': false, 'message': 'Failed to fetch live room details'};
+          return {'success': false, 'message': 'errors.failed_fetch_live_room_details'.tr()};
         }
         final liveRoom = LiveRoom.fromJson(Map<String, dynamic>.from(roomJson));
         return {'success': true, 'data': liveRoom};
@@ -141,11 +180,11 @@ class LiveRoomRepository {
         return {
           'success': false,
           'message': (data is Map ? data['message'] : null) ??
-              'Failed to fetch live room details',
+              'errors.failed_fetch_live_room_details'.tr(),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
@@ -169,7 +208,7 @@ class LiveRoomRepository {
           'item_type': 'live_room',
         },
         skipAuthRedirect: true,
-        fallback: 'Activation failed',
+        fallback: 'errors.activation_failed'.tr(),
       );
       return {'success': true, 'data': payload is Map ? payload['data'] : null};
     } on ApiException catch (e) {
@@ -260,7 +299,7 @@ class LiveRoomAccessService {
     try {
       final payload = await _api.get(
         ApiConstants.departments,
-        fallback: 'Failed to load departments',
+        fallback: 'errors.failed_load_departments'.tr(),
       );
       return unwrapList(payload);
     } catch (e) {

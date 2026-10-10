@@ -15,6 +15,9 @@ import 'core/sync/sync_processors.dart';
 import 'core/widgets/back_button_handler.dart';
 import 'features/auth/presentation/screens/login_screen.dart';
 import 'features/auth/presentation/screens/splash_screen.dart';
+import 'core/session/session_manager.dart';
+import 'features/home/data/notification_sync_service.dart';
+import 'features/home/presentation/screens/notifications_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -72,6 +75,8 @@ void main() async {
       supportedLocales: const [Locale('en'), Locale('ar')],
       path: 'assets/translations',
       fallbackLocale: const Locale('en'),
+      // Use real CLDR plural rules so Arabic picks zero/one/two/few/many/other.
+      ignorePluralRules: false,
       child: LearnooApp(
         themeService: themeService,
         featureManager: featureManager,
@@ -104,6 +109,10 @@ class _HomeAppState extends State<LearnooApp> with WidgetsBindingObserver {
     widget.themeService.addListener(_onFeaturesChanged);
     WidgetsBinding.instance.addObserver(this);
     ApiClient.onUnauthorized = _onSessionRevoked;
+    // Student notifications in the phone's notification bar while the app
+    // runs (no push service yet): sync now, on resume and periodically.
+    NotificationService().setOpenNotificationsHandler(_openNotificationsScreen);
+    NotificationSyncService().start();
   }
 
   @override
@@ -112,6 +121,8 @@ class _HomeAppState extends State<LearnooApp> with WidgetsBindingObserver {
     widget.featureManager.removeListener(_onFeaturesChanged);
     WidgetsBinding.instance.removeObserver(this);
     ApiClient.onUnauthorized = null;
+    NotificationService().setOpenNotificationsHandler(null);
+    NotificationSyncService().pause();
     _webSocketService.disconnect();
     super.dispose();
   }
@@ -122,6 +133,7 @@ class _HomeAppState extends State<LearnooApp> with WidgetsBindingObserver {
       case AppLifecycleState.resumed:
         _webSocketService.connect();
         _webSocketService.subscribeToNotifications();
+        NotificationSyncService().resume();
         // Pick up dashboard changes (e.g. screenshot blocking) on resume.
         final featureService = FeatureService();
         if (featureService.needsRefresh(maxAge: const Duration(minutes: 5))) {
@@ -129,8 +141,11 @@ class _HomeAppState extends State<LearnooApp> with WidgetsBindingObserver {
         }
         break;
       case AppLifecycleState.paused:
-      case AppLifecycleState.inactive:
       case AppLifecycleState.detached:
+        _webSocketService.unsubscribeFromNotifications();
+        NotificationSyncService().pause();
+        break;
+      case AppLifecycleState.inactive:
         _webSocketService.unsubscribeFromNotifications();
         break;
       case AppLifecycleState.hidden:
@@ -174,6 +189,28 @@ class _HomeAppState extends State<LearnooApp> with WidgetsBindingObserver {
           child: child!,
         );
       },
+    );
+  }
+
+  static const String _notificationsRouteName = '/notifications';
+
+  /// Tap on a student notification in the tray: open the notifications
+  /// screen on top of wherever the student is (once, not stacked).
+  Future<void> _openNotificationsScreen() async {
+    if (!await SessionManager().isSignedIn) return;
+    final navigator = appNavigatorKey.currentState;
+    if (navigator == null) return;
+    var alreadyOpen = false;
+    navigator.popUntil((route) {
+      alreadyOpen = route.settings.name == _notificationsRouteName;
+      return true;
+    });
+    if (alreadyOpen) return;
+    navigator.push(
+      MaterialPageRoute(
+        settings: const RouteSettings(name: _notificationsRouteName),
+        builder: (_) => const NotificationsScreen(),
+      ),
     );
   }
 

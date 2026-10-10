@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -12,7 +13,7 @@ class DepartmentRepository {
 
   Future<Map<String, dynamic>> getDepartments() async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.departments}');
     try {
@@ -31,17 +32,17 @@ class DepartmentRepository {
       } else {
         return {
           'success': false,
-          'message': data['message'] ?? 'Failed to fetch departments',
+          'message': data['message'] ?? 'errors.failed_fetch_departments'.tr(),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   Future<Map<String, dynamic>> getCenters() async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.centers}');
     try {
@@ -60,17 +61,17 @@ class DepartmentRepository {
       } else {
         return {
           'success': false,
-          'message': data['message'] ?? 'Failed to fetch centers',
+          'message': data['message'] ?? 'errors.failed_fetch_centers'.tr(),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   Future<Map<String, dynamic>> getFaculties() async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.faculties}');
     try {
@@ -89,11 +90,11 @@ class DepartmentRepository {
       } else {
         return {
           'success': false,
-          'message': data['message'] ?? 'Failed to fetch faculties',
+          'message': data['message'] ?? 'errors.failed_fetch_faculties'.tr(),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 }

@@ -1,7 +1,8 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:intl/intl.dart';
+import '../../../../core/utils/media_url.dart';
+import '../widgets/note_attachment_preview.dart';
 import 'package:shimmer/shimmer.dart';
 import '../../../../core/services/student_scope.dart';
 import '../../data/notes_repository.dart';
@@ -55,7 +56,7 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
       } else if (mounted) {
         setState(() {
           _hasError = true;
-          _errorMessage = result['message'] ?? 'Failed to load notes';
+          _errorMessage = result['message'] ?? 'notes.load_failed'.tr();
           _isLoading = false;
         });
       }
@@ -63,7 +64,7 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
       if (mounted) {
         setState(() {
           _hasError = true;
-          _errorMessage = 'Connection error: $e';
+          _errorMessage = 'course.connection_error'.tr(args: ['$e']);
           _isLoading = false;
         });
       }
@@ -85,15 +86,15 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
       final difference = now.difference(date);
 
       if (difference.inDays == 0) {
-        return 'Today';
+        return 'notes.today'.tr();
       } else if (difference.inDays == 1) {
-        return 'Yesterday';
+        return 'notes.yesterday'.tr();
       } else if (difference.inDays < 7) {
-        return '${difference.inDays} days ago';
+        return 'time.days_ago'.plural(difference.inDays);
       } else if (difference.inDays < 30) {
-        return '${(difference.inDays / 7).floor()} weeks ago';
+        return 'time.weeks_ago'.plural((difference.inDays / 7).floor());
       } else {
-        return DateFormat('MMM d, yyyy').format(date);
+        return DateFormat.yMMMd(context.locale.toString()).format(date);
       }
     } catch (e) {
       return '';
@@ -104,7 +105,7 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
     switch (type) {
       case 'summary':
         return {
-          'typeLabel': 'Summary',
+          'typeLabel': 'notes.type_summary'.tr(),
           'typeColor': const Color(0xFFF2994A),
           'typeBgColor': const Color(0xFFFFF4E6),
           'icon': FontAwesomeIcons.fileLines,
@@ -114,7 +115,7 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
       case 'highlight':
       case 'key_point':
         return {
-          'typeLabel': 'Highlight',
+          'typeLabel': 'notes.type_highlight'.tr(),
           'typeColor': const Color(0xFF10B981),
           'typeBgColor': const Color(0xFFE6F9F1),
           'icon': FontAwesomeIcons.highlighter,
@@ -123,7 +124,7 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
         };
       case 'important_notice':
         return {
-          'typeLabel': 'Important',
+          'typeLabel': 'notes.type_important'.tr(),
           'typeColor': const Color(0xFFEF4444),
           'typeBgColor': const Color(0xFFFFE6E6),
           'icon': FontAwesomeIcons.circleExclamation,
@@ -132,7 +133,7 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
         };
       case 'video_note':
         return {
-          'typeLabel': 'Video Note',
+          'typeLabel': 'notes.type_video_note'.tr(),
           'typeColor': const Color(0xFF5A75FF),
           'typeBgColor': const Color(0xFFEEF0FF),
           'icon': FontAwesomeIcons.video,
@@ -141,7 +142,7 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
         };
       default:
         return {
-          'typeLabel': 'Note',
+          'typeLabel': 'notes.type_note'.tr(),
           'typeColor': const Color(0xFF6B7280),
           'typeBgColor': const Color(0xFFF3F4F6),
           'icon': FontAwesomeIcons.noteSticky,
@@ -231,11 +232,11 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
                   ),
                 ),
               ),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Summaries',
+                  'notes.list_title'.tr(),
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 18,
                     fontWeight: FontWeight.w600,
@@ -269,7 +270,7 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
           Expanded(
             child: TextField(
               decoration: InputDecoration(
-                hintText: 'Search notes...',
+                hintText: 'notes.search_hint'.tr(),
                 hintStyle: TextStyle(
                   color: const Color(0xFF9CA3AF).withValues(alpha: 0.8),
                   fontSize: 14,
@@ -406,7 +407,7 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
           ElevatedButton.icon(
             onPressed: _loadNotes,
             icon: const Icon(Icons.refresh),
-            label: const Text('Retry'),
+            label: Text('notes.retry'.tr()),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF5A75FF),
               foregroundColor: Colors.white,
@@ -429,18 +430,18 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
             size: 64,
           ),
           const SizedBox(height: 16),
-          const Text(
-            'No summaries available',
-            style: TextStyle(
+          Text(
+            'notes.empty'.tr(),
+            style: const TextStyle(
               color: Color(0xFF6B7280),
               fontSize: 16,
               fontWeight: FontWeight.w500,
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
-            'Pull down to refresh',
-            style: TextStyle(
+          Text(
+            'notes.pull_to_refresh'.tr(),
+            style: const TextStyle(
               color: Color(0xFF9CA3AF),
               fontSize: 12,
             ),
@@ -460,13 +461,14 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
 
   Widget _buildItemCard(dynamic item) {
     final attributes = item['attributes'] ?? {};
-    final title = attributes['title']?.toString() ?? 'Untitled';
+    final title = attributes['title']?.toString() ?? 'notes.untitled'.tr();
     final type = attributes['type']?.toString() ?? 'note';
     final content = attributes['content']?.toString() ?? '';
     final linkedLecture = attributes['linked_lecture']?.toString();
     final createdAt = attributes['created_at']?.toString();
-    final imageUrl = attributes['image']?.toString() ??
-        attributes['thumbnail']?.toString() ?? '';
+    final attached = NoteAttachment.parse(attributes['attachment']);
+    final imageUrl = readMediaUrl(attributes, const ['image', 'thumbnail']) ??
+        (attached?.kind == NoteAttachmentKind.image ? attached!.url : '');
 
     final styles = _getTypeStyles(type);
     final preview = content.length > 100 ? '${content.substring(0, 100)}...' : content;
@@ -495,34 +497,10 @@ class _SummariesListScreenState extends State<SummariesListScreen> {
             if (imageUrl.isNotEmpty)
               ClipRRect(
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                child: CachedNetworkImage(
-                  imageUrl: imageUrl,
-                  width: double.infinity,
-                  height: 140,
-                  fit: BoxFit.cover,
-                  placeholder: (context, url) => Container(
-                    height: 140,
-                    color: styles['iconBgColor'],
-                    child: Center(
-                      child: FaIcon(
-                        styles['icon'],
-                        color: styles['iconColor'],
-                        size: 32,
-                      ),
-                    ),
-                  ),
-                  errorWidget: (context, url, error) => Container(
-                    height: 140,
-                    color: styles['iconBgColor'],
-                    child: Center(
-                      child: FaIcon(
-                        styles['icon'],
-                        color: styles['iconColor'],
-                        size: 32,
-                      ),
-                    ),
-                  ),
-                ),
+                child: NoteAttachmentPreview(attachment: {
+                  'url': imageUrl,
+                  'mime_type': 'image/*',
+                }),
               ),
             Padding(
               padding: const EdgeInsets.all(16),

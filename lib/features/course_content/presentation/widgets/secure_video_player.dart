@@ -1,3 +1,5 @@
+import '../../../../core/services/capture_media_guard.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:better_player_plus/better_player_plus.dart';
@@ -97,6 +99,9 @@ class _SecureVideoPlayerState extends State<SecureVideoPlayer>
     });
 
     try {
+      if (_betterPlayerController != null) {
+        CaptureMediaGuard.detach(_betterPlayerController!);
+      }
       _betterPlayerController?.dispose();
       _betterPlayerController = null;
 
@@ -135,6 +140,8 @@ class _SecureVideoPlayerState extends State<SecureVideoPlayer>
         ),
         betterPlayerDataSource: dataSource,
       );
+
+      CaptureMediaGuard.attachBetterPlayer(_betterPlayerController!);
 
       // Add event listener for play state tracking
       _betterPlayerController!.addEventsListener((event) {
@@ -360,6 +367,9 @@ class _SecureVideoPlayerState extends State<SecureVideoPlayer>
           false) {
         _betterPlayerController?.pause();
       }
+      if (_betterPlayerController != null) {
+        CaptureMediaGuard.detach(_betterPlayerController!);
+      }
       _betterPlayerController?.dispose();
     } catch (e) {
       debugPrint("[SecureVideoPlayer] Error disposing controller: $e");
@@ -412,9 +422,9 @@ class _SecureVideoPlayerState extends State<SecureVideoPlayer>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text(
-              "Failed to load secure video.\nPlease check your connection or DRM license.",
-              style: TextStyle(color: Colors.white),
+            Text(
+              'security.secure_video_failed'.tr(),
+              style: const TextStyle(color: Colors.white),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
@@ -423,7 +433,7 @@ class _SecureVideoPlayerState extends State<SecureVideoPlayer>
                 _retryCount = 0;
                 _initializePlayer();
               },
-              child: const Text("Retry"),
+              child: Text('common.retry'.tr()),
             ),
           ],
         ),

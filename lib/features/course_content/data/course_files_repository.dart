@@ -1,9 +1,12 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../core/network/api_constants.dart';
 import '../../../core/offline/offline_first_repository.dart';
 import '../../../core/local/hive_boxes.dart';
+import '../../../core/utils/coerce.dart';
+import '../domain/chapter_access.dart';
 
 /// Model class for course file/attachment
 class CourseFile {
@@ -28,6 +31,10 @@ class CourseFile {
   final int maxViews;
   final String? courseId;
 
+  /// The owning course's `is_locked` (the web's `courseIsLocked`). Defaults
+  /// to locked, the safe direction, when the caller does not know it.
+  final bool courseLocked;
+
   CourseFile({
     required this.id,
     required this.title,
@@ -47,8 +54,9 @@ class CourseFile {
     this.chapterIsActivated = false,
     this.chapterIsFreePreview = false,
     this.currentViews = 0,
-    this.maxViews = 5,
+    this.maxViews = 0,
     this.courseId,
+    this.courseLocked = true,
   });
 
   factory CourseFile.fromJson(
@@ -62,15 +70,16 @@ class CourseFile {
     bool chapterIsActivated = false,
     bool chapterIsFreePreview = false,
     int currentViews = 0,
-    int maxViews = 5,
+    int maxViews = 0,
     String? courseId,
+    bool courseLocked = true,
   }) {
     final attributes = json['attributes'] ?? {};
     return CourseFile(
       id: int.tryParse(json['id']?.toString() ?? '0') ?? 0,
       title: attributes['title']?.toString() ??
           attributes['name']?.toString() ??
-          'Unnamed File',
+          'errors.unnamed_file'.tr(),
       filePath: attributes['path']?.toString() ??
           attributes['file_path']?.toString() ??
           attributes['url']?.toString() ??
@@ -78,8 +87,8 @@ class CourseFile {
       extension: attributes['extension']?.toString().toLowerCase() ??
           attributes['file_type']?.toString().toLowerCase() ??
           'pdf',
-      isLocked: attributes['is_locked'] == true,
-      downloadable: attributes['downloadable'] == true,
+      isLocked: coerceFlag(attributes['is_locked']),
+      downloadable: coerceFlag(attributes['downloadable']),
       size: int.tryParse(attributes['size']?.toString() ?? '0'),
       mimeType: attributes['mime_type']?.toString(),
       createdAt: attributes['created_at'] != null
@@ -96,8 +105,24 @@ class CourseFile {
       currentViews: currentViews,
       maxViews: maxViews,
       courseId: courseId,
+      courseLocked: courseLocked,
     );
   }
+
+  /// Whether the student may open this chapter file — the website rule
+  /// ([canOpenChapterPdfFlags]): fully unlocked chapter or
+  /// `is_free_preview_attachment`, unless the view allowance is spent.
+  bool get canOpen => canOpenChapterPdfFlags(
+        courseLocked: courseLocked,
+        chapterIsActivated: chapterIsActivated,
+        chapterIsFreePreviewAttachment: chapterIsFreePreviewAttachment,
+        currentViews: currentViews,
+        maxViews: maxViews,
+      );
+
+  /// Open only because the chapter's PDF is a free preview.
+  bool get isFreePreviewOpen =>
+      canOpen && courseLocked && !chapterIsActivated;
 
   /// Get file type category (pdf, image, video, audio, document, other)
   String get fileType {
@@ -167,7 +192,7 @@ class CourseFilesRepository with OfflineFirstRepository {
   /// Returns cached data if offline or API fails
   Future<Map<String, dynamic>> getFilesByCategory(int categoryId) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     return offlineFirstFetch(
       apiFetcher: () async {
@@ -195,7 +220,7 @@ class CourseFilesRepository with OfflineFirstRepository {
         } else {
           return {
             'success': false,
-            'message': data['message'] ?? 'Failed to fetch files',
+            'message': data['message'] ?? 'errors.failed_fetch_files'.tr(),
           };
         }
       },
@@ -208,7 +233,7 @@ class CourseFilesRepository with OfflineFirstRepository {
   /// Get files by course IDs with offline-first support
   Future<Map<String, dynamic>> getFilesByCourseIds(List<int> courseIds) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     if (courseIds.isEmpty) {
       return {'success': true, 'data': <CourseFile>[]};
@@ -244,7 +269,7 @@ class CourseFilesRepository with OfflineFirstRepository {
         } else {
           return {
             'success': false,
-            'message': data['message'] ?? 'Failed to fetch files',
+            'message': data['message'] ?? 'errors.failed_fetch_files'.tr(),
           };
         }
       },
@@ -257,7 +282,7 @@ class CourseFilesRepository with OfflineFirstRepository {
   /// Get files by library with offline-first support
   Future<Map<String, dynamic>> getLibraryFiles() async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     return offlineFirstFetch(
       apiFetcher: () async {
@@ -279,7 +304,7 @@ class CourseFilesRepository with OfflineFirstRepository {
         } else {
           return {
             'success': false,
-            'message': data['message'] ?? 'Failed to fetch library files',
+            'message': data['message'] ?? 'errors.failed_fetch_library_files'.tr(),
           };
         }
       },
@@ -300,9 +325,14 @@ class CourseFilesRepository with OfflineFirstRepository {
       // Get chapter_attachments from course level
       final chapterAttachments = courseAttributes['chapter_attachments'] as List<dynamic>? ?? [];
 
+      final courseLocked = courseIsLocked(course);
       for (final attachment in chapterAttachments) {
         try {
-          final file = CourseFile.fromJson(attachment);
+          final file = CourseFile.fromJson(
+            attachment,
+            courseLocked: courseLocked,
+            courseId: course['id']?.toString(),
+          );
           if (file.filePath.isNotEmpty) {
             files.add(file);
           }
@@ -320,14 +350,24 @@ class CourseFilesRepository with OfflineFirstRepository {
         for (final chapter in chapters) {
           final chapterAttrs = chapter['attributes'] ?? {};
           final chapterId = int.tryParse(chapter['id']?.toString() ?? '');
-          final chapterIsLocked = chapterAttrs['is_locked'] == true;
           final attachments = chapterAttrs['attachments'] as List<dynamic>? ?? [];
           for (final attachment in attachments) {
             try {
               final file = CourseFile.fromJson(
                 attachment,
                 chapterId: chapterId,
-                chapterIsLocked: chapterIsLocked,
+                chapterIsLocked: coerceFlag(chapterAttrs['is_locked']),
+                chapterIsActivated:
+                    coerceFlagOrNull(chapterAttrs['is_activated']) == true,
+                chapterIsFreePreview:
+                    coercePreviewFlag(chapterAttrs['is_free_preview']),
+                chapterIsFreePreviewAttachment: coercePreviewFlag(
+                  chapterAttrs['is_free_preview_attachment'],
+                ),
+                currentViews: chapterCurrentViews(chapter),
+                maxViews: chapterMaxViews(chapter) ?? 0,
+                courseId: course['id']?.toString(),
+                courseLocked: courseLocked,
               );
               if (file.filePath.isNotEmpty) {
                 files.add(file);

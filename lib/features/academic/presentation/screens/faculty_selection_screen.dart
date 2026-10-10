@@ -4,20 +4,13 @@ import 'package:easy_localization/easy_localization.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/primary_button.dart';
 import '../../../auth/data/auth_repository.dart';
+import '../../data/academic_scope_service.dart';
 import '../../../home/presentation/screens/main_screen.dart';
 import '../../domain/academic_tree.dart';
-import 'department_selection_screen.dart';
 import 'onboarding_step_header.dart';
 
-/// Third onboarding step.
-///
-/// Faculties are matched to the chosen centre through [facultyBelongsToCenter],
-/// which compares ids as strings and accepts both `parent_id` and
-/// `parent.data.id` — the old `parentId == widget.centerId` check missed every
-/// payload where one side was a string.
-///
-/// When the faculty carries departments (`attributes.childrens`) the flow
-/// continues to the department step; otherwise the profile is saved here.
+/// Third and last onboarding step: select a faculty under the chosen center.
+/// The faculty ID is saved as faculty_id; the center ID as center_id and centers.
 class FacultySelectionScreen extends StatefulWidget {
   final dynamic universityId;
   final String universityName;
@@ -42,16 +35,18 @@ class _FacultySelectionScreenState extends State<FacultySelectionScreen> {
   final _searchController = TextEditingController();
   final _authRepository = AuthRepository();
 
-  List<dynamic> _centerFaculties = const [];
-  List<dynamic> _filteredFaculties = const [];
-  dynamic _selectedFaculty;
+  List<AcademicOption> _centerFaculties = const [];
+  List<AcademicOption> _filteredFaculties = const [];
+  AcademicOption? _selectedFaculty;
   bool _isUpdating = false;
 
   @override
   void initState() {
     super.initState();
-    _centerFaculties =
-        facultiesForCenter(widget.allFaculties, widget.centerId);
+    _centerFaculties = facultyOptionsForCenter(
+      widget.allFaculties,
+      widget.centerId,
+    );
     _filteredFaculties = _centerFaculties;
     _searchController.addListener(_onSearchChanged);
   }
@@ -68,8 +63,8 @@ class _FacultySelectionScreenState extends State<FacultySelectionScreen> {
       _filteredFaculties = query.isEmpty
           ? _centerFaculties
           : _centerFaculties
-              .where((f) => entityName(f).toLowerCase().contains(query))
-              .toList();
+                .where((f) => f.label.toLowerCase().contains(query))
+                .toList();
     });
   }
 
@@ -77,34 +72,19 @@ class _FacultySelectionScreenState extends State<FacultySelectionScreen> {
     final faculty = _selectedFaculty;
     if (faculty == null) return;
 
-    final departments = facultyDepartments(faculty);
-
-    if (departments.isNotEmpty) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => DepartmentSelectionScreen(
-            universityId: widget.universityId,
-            universityName: widget.universityName,
-            centerId: widget.centerId,
-            centerName: widget.centerName,
-            facultyId: entityId(faculty),
-            facultyName: entityName(faculty),
-            departments: departments,
-          ),
-        ),
-      );
-      return;
-    }
-
-    // No departments on this faculty — save the three ids we have.
     setState(() => _isUpdating = true);
 
     final result = await _authRepository.updateAcademicProfile(
       universityId: widget.universityId,
       centerId: widget.centerId,
-      facultyId: entityId(faculty),
+      facultyId: faculty.id,
     );
+
+    // The home shell opened next must not render content cached for an
+    // earlier selection (or an earlier account on this device).
+    if (result['success'] == true) {
+      await AcademicScopeService().invalidateCaches();
+    }
 
     if (!mounted) return;
     setState(() => _isUpdating = false);
@@ -115,7 +95,7 @@ class _FacultySelectionScreenState extends State<FacultySelectionScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            result['message']?.toString() ?? 'Failed to update profile',
+            result['message']?.toString() ?? 'academic.save_error'.tr(),
           ),
           backgroundColor: Colors.red,
         ),
@@ -148,17 +128,19 @@ class _FacultySelectionScreenState extends State<FacultySelectionScreen> {
               ),
               const SizedBox(height: 24),
               Text(
-                'academic_profile_set'.tr(),
+                'academic.profile_saved_title'.tr(),
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF111827),
+                  color: isDark
+                      ? const Color(0xFFF8FAFC)
+                      : const Color(0xFF111827),
                 ),
               ),
               const SizedBox(height: 12),
               Text(
-                'courses_filtered'.tr(),
+                'academic.profile_saved_body'.tr(),
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: isDark ? const Color(0xFF94A3B8) : AppColors.textGray,
@@ -167,7 +149,7 @@ class _FacultySelectionScreenState extends State<FacultySelectionScreen> {
               ),
               const SizedBox(height: 32),
               PrimaryButton(
-                text: 'go_to_home_caps'.tr(),
+                text: 'academic.go_to_home'.tr(),
                 onPressed: () {
                   Navigator.pushAndRemoveUntil(
                     context,
@@ -186,19 +168,15 @@ class _FacultySelectionScreenState extends State<FacultySelectionScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final selectedId = entityId(_selectedFaculty);
-    final hasDepartments =
-        _selectedFaculty != null && facultyDepartments(_selectedFaculty).isNotEmpty;
+    final selectedId = _selectedFaculty?.id;
 
     return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF13151B) : AppColors.backgroundWhite,
+      backgroundColor: isDark
+          ? const Color(0xFF13151B)
+          : AppColors.backgroundWhite,
       body: Column(
         children: [
-          OnboardingStepHeader(
-            step: 3,
-            totalSteps: 4,
-            title: 'select_faculty'.tr(),
-          ),
+          OnboardingStepHeader(step: 3, title: 'academic.select_faculty'.tr()),
           const SizedBox(height: 16),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -206,9 +184,11 @@ class _FacultySelectionScreenState extends State<FacultySelectionScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'selected_centers'.tr(),
+                  'academic.selected_center'.tr(),
                   style: TextStyle(
-                    color: isDark ? const Color(0xFFCBD5E1) : AppColors.textGray,
+                    color: isDark
+                        ? const Color(0xFFCBD5E1)
+                        : AppColors.textGray,
                     fontSize: 14,
                   ),
                 ),
@@ -218,12 +198,18 @@ class _FacultySelectionScreenState extends State<FacultySelectionScreen> {
                     widget.centerName,
                     style: TextStyle(
                       fontSize: 12,
-                      color: isDark ? const Color(0xFFF8FAFC) : AppColors.textDark,
+                      color: isDark
+                          ? const Color(0xFFF8FAFC)
+                          : AppColors.textDark,
                     ),
                   ),
-                  backgroundColor: isDark ? const Color(0xFF1E212B) : AppColors.inputFill,
+                  backgroundColor: isDark
+                      ? const Color(0xFF1E212B)
+                      : AppColors.inputFill,
                   side: BorderSide(
-                    color: isDark ? const Color(0xFF383E52) : Colors.transparent,
+                    color: isDark
+                        ? const Color(0xFF383E52)
+                        : Colors.transparent,
                   ),
                   padding: EdgeInsets.zero,
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -236,28 +222,42 @@ class _FacultySelectionScreenState extends State<FacultySelectionScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: TextField(
               controller: _searchController,
-              style: TextStyle(color: isDark ? const Color(0xFFF8FAFC) : AppColors.textDark),
+              style: TextStyle(
+                color: isDark ? const Color(0xFFF8FAFC) : AppColors.textDark,
+              ),
               decoration: InputDecoration(
-                hintText: 'search_faculties'.tr(),
-                hintStyle: TextStyle(color: isDark ? const Color(0xFF64748B) : AppColors.textGray),
-                prefixIcon: Icon(Icons.search, color: isDark ? const Color(0xFF64748B) : AppColors.textGray),
+                hintText: 'academic.search_faculties'.tr(),
+                hintStyle: TextStyle(
+                  color: isDark ? const Color(0xFF64748B) : AppColors.textGray,
+                ),
+                prefixIcon: Icon(
+                  Icons.search,
+                  color: isDark ? const Color(0xFF64748B) : AppColors.textGray,
+                ),
                 filled: true,
                 fillColor: isDark ? const Color(0xFF1E212B) : Colors.white,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide(
-                    color: isDark ? const Color(0xFF383E52) : AppColors.inputBorder,
+                    color: isDark
+                        ? const Color(0xFF383E52)
+                        : AppColors.inputBorder,
                   ),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide(
-                    color: isDark ? const Color(0xFF383E52) : AppColors.inputBorder,
+                    color: isDark
+                        ? const Color(0xFF383E52)
+                        : AppColors.inputBorder,
                   ),
                 ),
                 focusedBorder: const OutlineInputBorder(
                   borderRadius: BorderRadius.all(Radius.circular(12)),
-                  borderSide: BorderSide(color: AppColors.primaryBlue, width: 2),
+                  borderSide: BorderSide(
+                    color: AppColors.primaryBlue,
+                    width: 2,
+                  ),
                 ),
               ),
             ),
@@ -266,11 +266,17 @@ class _FacultySelectionScreenState extends State<FacultySelectionScreen> {
           Expanded(
             child: _filteredFaculties.isEmpty
                 ? Center(
-                    child: Text(
-                      'no_options_available'.tr(),
-                      style: TextStyle(
-                        color: isDark ? const Color(0xFF94A3B8) : Colors.grey,
-                        fontSize: 16,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Text(
+                        _centerFaculties.isEmpty
+                            ? 'academic.empty_faculties'.tr()
+                            : 'no_options_available'.tr(),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: isDark ? const Color(0xFF94A3B8) : Colors.grey,
+                          fontSize: 16,
+                        ),
                       ),
                     ),
                   )
@@ -281,22 +287,23 @@ class _FacultySelectionScreenState extends State<FacultySelectionScreen> {
                         const SizedBox(height: 12),
                     itemBuilder: (context, index) {
                       final faculty = _filteredFaculties[index];
-                      final id = entityId(faculty);
-                      final name = entityName(faculty);
-                      final isSelected = idsMatch(selectedId, id);
-                      final departmentCount = facultyDepartments(faculty).length;
+                      final isSelected = idsMatch(selectedId, faculty.id);
 
                       return GestureDetector(
                         onTap: () => setState(() => _selectedFaculty = faculty),
                         child: Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
-                            color: isDark ? const Color(0xFF1E212B) : Colors.white,
+                            color: isDark
+                                ? const Color(0xFF1E212B)
+                                : Colors.white,
                             borderRadius: BorderRadius.circular(16),
                             border: Border.all(
                               color: isSelected
                                   ? AppColors.primaryBlue
-                                  : (isDark ? const Color(0xFF383E52) : AppColors.inputBorder),
+                                  : (isDark
+                                        ? const Color(0xFF383E52)
+                                        : AppColors.inputBorder),
                               width: isSelected ? 2 : 1,
                             ),
                           ),
@@ -306,38 +313,28 @@ class _FacultySelectionScreenState extends State<FacultySelectionScreen> {
                                 Icons.school_outlined,
                                 color: isSelected
                                     ? AppColors.primaryBlue
-                                    : (isDark ? const Color(0xFF94A3B8) : AppColors.textGray),
+                                    : (isDark
+                                          ? const Color(0xFF94A3B8)
+                                          : AppColors.textGray),
                               ),
                               const SizedBox(width: 16),
                               Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      name.isEmpty ? 'profile.faculty'.tr() : name,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16,
-                                        color: isDark ? const Color(0xFFF8FAFC) : AppColors.textDark,
-                                      ),
-                                    ),
-                                    if (departmentCount > 0)
-                                      Padding(
-                                        padding: const EdgeInsets.only(top: 2),
-                                        child: Text(
-                                          '$departmentCount ${'profile.department'.tr()}',
-                                          style: TextStyle(
-                                            color: isDark ? const Color(0xFF94A3B8) : AppColors.textGray,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ),
-                                  ],
+                                child: Text(
+                                  faculty.label,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                    color: isDark
+                                        ? const Color(0xFFF8FAFC)
+                                        : AppColors.textDark,
+                                  ),
                                 ),
                               ),
                               if (isSelected)
-                                const Icon(Icons.check_circle,
-                                    color: AppColors.primaryBlue),
+                                const Icon(
+                                  Icons.check_circle,
+                                  color: AppColors.primaryBlue,
+                                ),
                             ],
                           ),
                         ),
@@ -348,9 +345,7 @@ class _FacultySelectionScreenState extends State<FacultySelectionScreen> {
           Padding(
             padding: const EdgeInsets.all(24),
             child: PrimaryButton(
-              text: hasDepartments
-                  ? 'auth.continue_btn'.tr()
-                  : 'academic.finish'.tr(),
+              text: 'academic.save_continue'.tr(),
               isLoading: _isUpdating,
               onPressed: (_selectedFaculty == null || _isUpdating)
                   ? null

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:crypto/crypto.dart';
@@ -456,7 +457,7 @@ class EncryptedVideoService {
     }
 
     if (segments.isEmpty) {
-      throw Exception('No video segments found in HLS playlist');
+      throw Exception('downloads.no_segments'.tr());
     }
 
     // 4. Pre-fetch and cache all required encryption keys
@@ -540,7 +541,7 @@ class EncryptedVideoService {
           lastNotificationTime = now;
           await _notificationService.showDownloadProgress(
             url: url,
-            title: 'Downloading Video',
+            title: 'downloads.notif_downloading_video'.tr(),
             body: lectureTitle,
             progress: progress,
             receivedBytes: s + 1,
@@ -635,7 +636,7 @@ class EncryptedVideoService {
                 lastNotificationTime = now;
                 await _notificationService.showDownloadProgress(
                   url: url,
-                  title: 'Downloading Video',
+                  title: 'downloads.notif_downloading_video'.tr(),
                   body: lectureTitle,
                   progress: progress * 0.8,
                   receivedBytes: downloadedBytes,
@@ -714,7 +715,7 @@ class EncryptedVideoService {
       // Show download started notification
       await _notificationService.showDownloadStarted(
         url: url,
-        title: 'Downloading Video',
+        title: 'downloads.notif_downloading_video'.tr(),
         body: '$lectureTitle - $chapterTitle',
       );
 
@@ -757,7 +758,7 @@ class EncryptedVideoService {
       // Show encrypting notification
       await _notificationService.showDownloadProgress(
         url: url,
-        title: 'Encrypting Video',
+        title: 'downloads.notif_encrypting_video'.tr(),
         body: lectureTitle,
         progress: 0.9,
         receivedBytes: totalFileSize,
@@ -823,8 +824,8 @@ class EncryptedVideoService {
       // Show completed notification
       await _notificationService.showDownloadCompleted(
         url: url,
-        title: 'Download Complete',
-        body: '$lectureTitle - Ready to watch offline',
+        title: 'downloads.notif_complete'.tr(),
+        body: 'downloads.notif_ready_offline'.tr(args: [lectureTitle]),
       );
 
       return completedProgress;
@@ -832,24 +833,24 @@ class EncryptedVideoService {
       if (CancelToken.isCancel(e)) {
         await _notificationService.showDownloadCancelled(
           url: url,
-          title: 'Download Cancelled',
+          title: 'downloads.notif_cancelled'.tr(),
           body: lectureTitle,
         );
         return _handleCancellation(url, fileName);
       }
       await _notificationService.showDownloadFailed(
         url: url,
-        title: 'Download Failed',
+        title: 'downloads.notif_failed'.tr(),
         body: '$lectureTitle - ${e.message}',
       );
-      return _handleError(url, fileName, 'Download failed: ${e.message}');
+      return _handleError(url, fileName, 'downloads.failed_detail'.tr(args: ['${e.message}']));
     } catch (e) {
       await _notificationService.showDownloadFailed(
         url: url,
-        title: 'Download Failed',
+        title: 'downloads.notif_failed'.tr(),
         body: '$lectureTitle - ${e.toString()}',
       );
-      return _handleError(url, fileName, 'Download failed: $e');
+      return _handleError(url, fileName, 'downloads.failed_detail'.tr(args: ['$e']));
     } finally {
       _cancelTokens.remove(url);
     }
@@ -906,7 +907,7 @@ class EncryptedVideoService {
   void cancelDownload(String url) {
     final cancelToken = _cancelTokens[url];
     if (cancelToken != null && !cancelToken.isCancelled) {
-      cancelToken.cancel('Download cancelled by user');
+      cancelToken.cancel('downloads.cancelled_by_user'.tr());
     }
   }
 

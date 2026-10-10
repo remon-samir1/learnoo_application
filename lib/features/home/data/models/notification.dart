@@ -17,12 +17,12 @@ class NotificationData {
 
   factory NotificationData.fromJson(Map<String, dynamic> json) {
     return NotificationData(
-      title: json['title'] ?? '',
-      message: json['message'] ?? '',
-      type: json['type'] ?? '',
-      device: json['device'] ?? '',
-      ipAddress: json['ip_address'] ?? '',
-      createdAt: json['created_at'] ?? '',
+      title: json['title']?.toString() ?? '',
+      message: json['message']?.toString() ?? '',
+      type: json['type']?.toString() ?? '',
+      device: json['device']?.toString() ?? '',
+      ipAddress: json['ip_address']?.toString() ?? '',
+      createdAt: json['created_at']?.toString() ?? '',
     );
   }
 }
@@ -50,14 +50,16 @@ class Notification {
 
   factory Notification.fromJson(Map<String, dynamic> json) {
     return Notification(
-      id: json['id'] ?? '',
-      type: json['type'] ?? '',
-      notifiableType: json['notifiable_type'] ?? '',
-      notifiableId: json['notifiable_id'] ?? '',
-      data: NotificationData.fromJson(json['data'] ?? {}),
-      readAt: json['read_at'],
-      createdAt: json['created_at'] ?? '',
-      updatedAt: json['updated_at'] ?? '',
+      id: json['id']?.toString() ?? '',
+      type: json['type']?.toString() ?? '',
+      notifiableType: json['notifiable_type']?.toString() ?? '',
+      notifiableId: json['notifiable_id']?.toString() ?? '',
+      data: NotificationData.fromJson(
+        json['data'] is Map ? Map<String, dynamic>.from(json['data'] as Map) : const {},
+      ),
+      readAt: json['read_at']?.toString(),
+      createdAt: json['created_at']?.toString() ?? '',
+      updatedAt: json['updated_at']?.toString() ?? '',
     );
   }
 
@@ -100,9 +102,20 @@ class NotificationResponse {
   });
 
   factory NotificationResponse.fromJson(Map<String, dynamic> json) {
-    final List<dynamic> dataList = json['data'] ?? [];
-    final data = dataList.map((e) => Notification.fromJson(e)).toList();
-    final meta = NotificationMeta.fromJson(json['meta'] ?? {});
+    // `{data: [...], meta}` or a paginator nested under `data` (the web reads
+    // both shapes in app/[locale]/student/layout.tsx).
+    final raw = json['data'];
+    final List<dynamic> dataList = raw is List
+        ? raw
+        : (raw is Map && raw['data'] is List ? raw['data'] as List : const []);
+    final data = dataList
+        .whereType<Map>()
+        .map((e) => Notification.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+    final rawMeta = json['meta'] ?? (raw is Map ? raw : null);
+    final meta = NotificationMeta.fromJson(
+      rawMeta is Map ? Map<String, dynamic>.from(rawMeta) : const {},
+    );
     return NotificationResponse(data: data, meta: meta);
   }
 }

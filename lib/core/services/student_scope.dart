@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
 
 import '../network/api_client.dart';
@@ -96,6 +97,11 @@ class StudentScopeService {
   DateTime? _loadedAt;
   Future<StudentScope>? _inFlight;
 
+  /// Bumped by [invalidate]. A fetch that started under an older generation
+  /// (e.g. before the student changed university / faculty / centre) must not
+  /// write its now-stale result back into the cache.
+  int _generation = 0;
+
   /// Returns the cached scope when fresh, otherwise fetches it.
   ///
   /// Concurrent callers share one request.
@@ -110,15 +116,23 @@ class StudentScopeService {
 
     final future = _fetch();
     _inFlight = future;
-    return future.whenComplete(() => _inFlight = null);
+    return future.whenComplete(() {
+      if (identical(_inFlight, future)) _inFlight = null;
+    });
   }
 
   /// The last loaded scope without touching the network.
   StudentScope get current => _cached ?? const StudentScope.empty();
 
+  /// Drops the memoised scope so the next [load] hits the API.
+  ///
+  /// Called when the student's academic selection changes and on logout. Any
+  /// request already in flight is detached so its result is not reused.
   void invalidate() {
+    _generation++;
     _cached = null;
     _loadedAt = null;
+    _inFlight = null;
   }
 
   /// The activated course ids, from the same call the web's student home makes:
@@ -131,7 +145,7 @@ class StudentScopeService {
       final payload = await _api.get(
         ApiConstants.courses,
         query: {'activated': 1},
-        fallback: 'Failed to load activated courses',
+        fallback: 'errors.failed_load_activated_courses'.tr(),
       );
 
       final ids = <String>{};
@@ -166,13 +180,14 @@ class StudentScopeService {
   }
 
   Future<StudentScope> _fetch() async {
+    final generation = _generation;
     try {
       // The full catalogue the student can see. Enrolment is a narrower set and
       // comes from its own call below.
       final payload = await _api.get(
         ApiConstants.courses,
         query: {'per_page': 500},
-        fallback: 'Failed to load courses',
+        fallback: 'errors.failed_load_courses'.tr(),
       );
 
       final courses = unwrapList(payload);
@@ -190,8 +205,10 @@ class StudentScopeService {
         courses: courses,
       );
 
-      _cached = scope;
-      _loadedAt = DateTime.now();
+      if (generation == _generation) {
+        _cached = scope;
+        _loadedAt = DateTime.now();
+      }
       return scope;
     } catch (e) {
       debugPrint('[StudentScope] load failed: $e');

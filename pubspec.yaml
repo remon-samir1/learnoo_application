@@ -159,6 +159,12 @@ dependencies:
   web_socket_channel: ^3.0.3
   pull_to_refresh: ^2.0.0
   jitsi_meet_flutter_sdk: ^13.1.1
+
+  # Students join the live session through the Jitsi external API in a WebView
+  # so the app can overlay a view-only shield while the host's whiteboard is up.
+  webview_flutter: ^4.13.1
+  webview_flutter_android: ^4.11.0
+  webview_flutter_wkwebview: ^3.24.3
   cryptography: ^2.9.0
 
 
@@ -213,14 +219,10 @@ flutter:
   assets:
 
     - assets/translations/
-
     - assets/images/student_background.png
-
     - assets/images/Logo.jpeg
-
-    - assets/images/Logo.jpeg
-
     - assets/images/Logo.png
+    - assets/images/app_icon.png
 
 
 
@@ -276,17 +278,28 @@ flutter:
 
 
 
-flutter_icons:
-
+flutter_launcher_icons:
   android: true
-
   ios: true
-
-  image_path: "assets/images/Logo.jpeg"
-
-  adaptive_icon_background: "#FFFFFF"
-
-  adaptive_icon_foreground: "assets/images/Logo.jpeg"
+  # Launcher icon only; the in-app logo/splash still use Logo.jpeg / Logo.png.
+  image_path: "assets/images/app_icon.png"
+  adaptive_icon_background: "#0021AE"
+  adaptive_icon_foreground: "assets/images/app_icon_foreground.png"
+  # The foreground PNG is already padded to the adaptive safe zone.
+  adaptive_icon_foreground_inset: 0
+  remove_alpha_ios: true
+  web:
+    generate: true
+    image_path: "assets/images/app_icon.png"
+    background_color: "#0021AE"
+    theme_color: "#0021AE"
+  windows:
+    generate: true
+    image_path: "assets/images/app_icon.png"
+    icon_size: 48
+  macos:
+    generate: true
+    image_path: "assets/images/app_icon.png"
 
 
 

@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import '../../../../core/network/api_constants.dart';
 import 'social_link_model.dart';
 
@@ -74,6 +75,26 @@ class PostAttributes {
   final DateTime createdAt;
   final DateTime updatedAt;
 
+  /// Explicit moderation flag (`is_approved` / `approved` /
+  /// `approval_status`) when the API sends one; `null` when it does not.
+  final bool? isApproved;
+
+  /// Whether the post is live in the feed.
+  ///
+  /// The web lists only posts whose `status` is `published`
+  /// (`isTopLevelPublishedPost` in StudentCommunityFeed.tsx); a student's new
+  /// post stays `draft` until an admin publishes it from Community
+  /// Moderation. An explicit `is_approved: false` also keeps it out.
+  bool get isPublished {
+    if (isApproved == false) return false;
+    final value = status.trim().toLowerCase();
+    // A payload without a status is shown: hiding it would empty feeds whose
+    // rows omit the field. Only an explicit non-live status hides a post.
+    if (value.isEmpty) return true;
+    const live = {'published', 'approved', 'active', '1', 'true'};
+    return live.contains(value);
+  }
+
   PostAttributes({
     this.user,
     this.course,
@@ -91,7 +112,24 @@ class PostAttributes {
     this.images = const [],
     required this.createdAt,
     required this.updatedAt,
+    this.isApproved,
   });
+
+  static bool? _parseApproval(Map<String, dynamic> json) {
+    for (final key in const ['is_approved', 'approved']) {
+      final v = json[key];
+      if (v is bool) return v;
+      if (v is num) return v != 0;
+      if (v is String) {
+        final t = v.trim().toLowerCase();
+        if (t == 'true' || t == '1') return true;
+        if (t == 'false' || t == '0') return false;
+      }
+    }
+    final status = json['approval_status']?.toString().trim().toLowerCase();
+    if (status == null || status.isEmpty) return null;
+    return status == 'approved' || status == 'published';
+  }
 
   factory PostAttributes.fromJson(Map<String, dynamic> json) {
     final rawUser = json['user'];
@@ -145,7 +183,7 @@ class PostAttributes {
     return PostAttributes(
       user: userData != null ? PostUser.fromJson(userData) : null,
       course: postCourse,
-      status: json['status']?.toString() ?? 'draft',
+      status: json['status']?.toString() ?? '',
       postType: json['type']?.toString() ?? 'post',
       title: json['title']?.toString() ?? '',
       content: json['content']?.toString() ?? '',
@@ -168,6 +206,7 @@ class PostAttributes {
       images: imagesList,
       createdAt: DateTime.tryParse(json['created_at']?.toString() ?? '') ?? DateTime.now(),
       updatedAt: DateTime.tryParse(json['updated_at']?.toString() ?? '') ?? DateTime.now(),
+      isApproved: _parseApproval(json),
     );
   }
 
@@ -188,6 +227,7 @@ class PostAttributes {
     List<String>? images,
     DateTime? createdAt,
     DateTime? updatedAt,
+    bool? isApproved,
   }) {
     return PostAttributes(
       user: user ?? this.user,
@@ -206,6 +246,7 @@ class PostAttributes {
       images: images ?? this.images,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      isApproved: isApproved ?? this.isApproved,
     );
   }
 
@@ -375,7 +416,7 @@ class UserAttributes {
 
   String get fullName {
     final combined = '$firstName $lastName'.trim();
-    return combined.isNotEmpty ? combined : 'User';
+    return combined.isNotEmpty ? combined : 'common.user'.tr();
   }
 }
 

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
@@ -10,6 +11,7 @@ class DiscussionPanel extends StatefulWidget {
   final List<dynamic> discussions;
   final String currentTab;
   final bool isRecording;
+  final Duration recordDuration;
   final String? recordedPath;
   final ValueNotifier<Duration> recordedPosition;
   final ValueNotifier<Duration> recordedTotalDuration;
@@ -19,6 +21,7 @@ class DiscussionPanel extends StatefulWidget {
   final VoidCallback onClose;
   final Function(String tab) onTabChanged;
   final TextEditingController commentController;
+  final FocusNode? commentFocusNode;
   final VoidCallback onPost;
   final VoidCallback onStartRecording;
   final VoidCallback onStopRecording;
@@ -49,6 +52,7 @@ class DiscussionPanel extends StatefulWidget {
     required this.discussions,
     required this.currentTab,
     required this.isRecording,
+    this.recordDuration = Duration.zero,
     this.recordedPath,
     required this.recordedPosition,
     required this.recordedTotalDuration,
@@ -58,6 +62,7 @@ class DiscussionPanel extends StatefulWidget {
     required this.onClose,
     required this.onTabChanged,
     required this.commentController,
+    this.commentFocusNode,
     required this.onPost,
     required this.onStartRecording,
     required this.onStopRecording,
@@ -97,16 +102,40 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
   TextEditingController _getReplyController(String id) =>
       _replyControllers.putIfAbsent(id, () => TextEditingController());
 
-  List<dynamic> _getRootDiscussions() => widget.discussions.where((d) {
-        final parentId = (d['attributes'] ?? d)['parent_id'];
-        return parentId == null;
-      }).toList();
+  static String? _parentIdOf(dynamic d) {
+    if (d is! Map) return null;
+    final parentId = (d['attributes'] ?? d)['parent_id'];
+    final s = parentId?.toString().trim();
+    return (s == null || s.isEmpty) ? null : s;
+  }
 
+  /// Roots, built like the website's `ChapterWatchView`: an item with no
+  /// `parent_id` is a root, and so is a reply whose parent is not in the list
+  /// (filtered or deleted) so it is not silently dropped.
+  List<dynamic> _getRootDiscussions() {
+    final ids = widget.discussions
+        .map((d) => d is Map ? d['id']?.toString() : null)
+        .whereType<String>()
+        .toSet();
+    return widget.discussions.where((d) {
+      final parentId = _parentIdOf(d);
+      return parentId == null || !ids.contains(parentId);
+    }).toList();
+  }
+
+  /// Replies of [discussionId] from the flat list (`parent_id` match), which
+  /// is how the website counts them (`discussionReplies(d).length`).
   List<dynamic> _getReplies(String discussionId) =>
-      widget.discussions.where((d) {
-        final parentId = (d['attributes'] ?? d)['parent_id'];
-        return parentId != null && parentId.toString() == discussionId;
-      }).toList();
+      widget.discussions.where((d) => _parentIdOf(d) == discussionId).toList();
+
+  /// Replies nested on the item itself, as a list or a JSON:API `{data: []}`.
+  static List<dynamic> _nestedReplies(dynamic attrs) {
+    if (attrs is! Map) return const [];
+    final raw = attrs['replies'];
+    if (raw is List) return raw;
+    if (raw is Map && raw['data'] is List) return raw['data'] as List;
+    return const [];
+  }
 
   String _resolveUrl(String? url) {
     if (url == null || url.trim().isEmpty) return '';
@@ -121,93 +150,99 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: Colors.black.withValues(alpha: 0.5),
-      child: Column(
-        children: [
-          GestureDetector(
-            onTap: widget.onClose,
-            child: Container(
-              height: MediaQuery.of(context).size.height * 0.15,
-              color: Colors.transparent,
-            ),
-          ),
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: _p.sheet,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+    return GestureDetector(
+      onTap: () {
+        // Dismiss keyboard when tapping outside the text field
+        FocusScope.of(context).unfocus();
+      },
+      child: Container(
+        color: Colors.black.withValues(alpha: 0.5),
+        child: Column(
+          children: [
+            GestureDetector(
+              onTap: widget.onClose,
+              child: Container(
+                height: MediaQuery.of(context).size.height * 0.15,
+                color: Colors.transparent,
               ),
-              child: Column(
-                children: [
-                  const SizedBox(height: 12),
-                  Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: _p.border,
-                      borderRadius: BorderRadius.circular(2),
+            ),
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: _p.sheet,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+                ),
+                child: Column(
+                  children: [
+                    const SizedBox(height: 12),
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: _p.border,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 8, 8, 0),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'course.ask_about_moment_title'.tr(),
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: _p.title,
-                                ),
-                              ),
-                              if (widget.currentPositionSeconds > 0) ...[
-                                const SizedBox(height: 4),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: _p.chip,
-                                    borderRadius: BorderRadius.circular(6),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 8, 8, 0),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'course.ask_about_moment_title'.tr(),
+                                  style: TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                    color: _p.title,
                                   ),
-                                  child: Text(
-                                    _formatMoment(widget.currentPositionSeconds),
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: _p.accent,
-                                      fontWeight: FontWeight.w700,
+                                ),
+                                if (widget.currentPositionSeconds > 0) ...[
+                                  const SizedBox(height: 4),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: _p.chip,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      _formatMoment(widget.currentPositionSeconds),
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: _p.accent,
+                                        fontWeight: FontWeight.w700,
+                                      ),
                                     ),
                                   ),
-                                ),
+                                ],
                               ],
-                            ],
+                            ),
                           ),
-                        ),
-                        IconButton(
-                          onPressed: widget.onClose,
-                          icon: Icon(Icons.close, color: _p.faint),
-                        ),
-                      ],
+                          IconButton(
+                            onPressed: widget.onClose,
+                            icon: Icon(Icons.close, color: _p.faint),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  _buildDiscussionTabs(),
-                  if (widget.currentTab != 'all') _buildDiscussionInput(),
-                  Expanded(
-                    child: widget.isLoading
-                        ? _buildDiscussionSkeleton()
-                        : _getRootDiscussions().isEmpty
-                            ? _buildEmptyDiscussions()
-                            : _buildDiscussionsList(),
-                  ),
-                ],
+                    _buildDiscussionTabs(),
+                    if (widget.currentTab != 'all') _buildDiscussionInput(),
+                    Expanded(
+                      child: widget.isLoading
+                          ? _buildDiscussionSkeleton()
+                          : _getRootDiscussions().isEmpty
+                              ? _buildEmptyDiscussions()
+                              : _buildDiscussionsList(),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -266,6 +301,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
   }
 
   Widget _buildDiscussionInput() {
+    final isComment = widget.currentTab == 'comment' || widget.currentTab == 'text';
     return Container(
       margin: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       padding: const EdgeInsets.all(20),
@@ -302,7 +338,7 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
-                  widget.currentTab == 'comment'
+                  isComment
                       ? 'course.comment'.tr()
                       : 'course.voice'.tr(),
                   style: TextStyle(
@@ -321,56 +357,41 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
           ),
           const SizedBox(height: 16),
           _buildMomentFramePreview(),
-          if (widget.currentTab == 'comment')
-            TextField(
-              controller: widget.commentController,
-              maxLines: 4,
-              style: TextStyle(color: _p.title, fontSize: 14, height: 1.4),
-              cursorColor: _p.accent,
-              decoration: InputDecoration(
-                hintText: 'course.write_comment_moment'.tr(),
-                hintStyle: TextStyle(color: _p.faint, fontSize: 14),
-                filled: true,
-                fillColor: _p.field,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
+          if (isComment)
+            _buildCommentInputWithSend()
+          else ...
+            [_buildVoiceRecorderUI(),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: widget.onPost,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF3451E5),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
                 ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: _p.border),
+                child: Text(
+                  'course.post_voice_note'.tr(),
+                  style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: _p.accent, width: 1.5),
-                ),
-                contentPadding: const EdgeInsets.all(16),
               ),
-            )
-          else
-            _buildVoiceRecorderUI(),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: widget.onPost,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF3451E5),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                elevation: 0,
-              ),
-              child: Text(
-                widget.currentTab == 'comment'
-                    ? 'course.post_comment'.tr()
-                    : 'course.post_voice_note'.tr(),
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-            ),
-          ),
+            )],
         ],
       ),
+    );
+  }
+
+  /// Chat-style text input with inline send button that appears when
+  /// there is text. The keyboard is dismissed when tapping outside.
+  Widget _buildCommentInputWithSend() {
+    return _CommentInputWithSend(
+      controller: widget.commentController,
+      focusNode: widget.commentFocusNode,
+      onPost: widget.onPost,
+      palette: _p,
     );
   }
 
@@ -486,14 +507,27 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
             color: widget.isRecording ? _p.accent : _p.faint,
           ),
           const SizedBox(height: 12),
-          Text(
-            widget.isRecording ? 'course.recording'.tr() : 'course.tap_to_record'.tr(),
-            style: TextStyle(
-              color: widget.isRecording ? _p.accent : _p.muted,
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
+          if (widget.isRecording) ...[
+            // Live recording timer
+            _RecordingTimer(duration: widget.recordDuration, palette: _p),
+            const SizedBox(height: 4),
+            Text(
+              'course.recording'.tr(),
+              style: TextStyle(
+                color: _p.accent,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
             ),
-          ),
+          ] else
+            Text(
+              'course.tap_to_record'.tr(),
+              style: TextStyle(
+                color: _p.muted,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           const SizedBox(height: 24),
           Center(
             child: Material(
@@ -511,11 +545,16 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                   height: 64,
                   width: 64,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF3451E5),
+                    color: widget.isRecording
+                        ? const Color(0xFFEF4444)
+                        : const Color(0xFF3451E5),
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: const Color(0xFF3451E5).withValues(alpha: 0.3),
+                        color: (widget.isRecording
+                                ? const Color(0xFFEF4444)
+                                : const Color(0xFF3451E5))
+                            .withValues(alpha: 0.3),
                         blurRadius: 12,
                         offset: const Offset(0, 4),
                       ),
@@ -549,52 +588,104 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
             children: [
               GestureDetector(
                 onTap: widget.onPlayRecorded,
-                child: Icon(
-                  widget.currentlyPlayingUrl == 'recorded'
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded,
-                  color: _p.accent,
-                  size: 32,
+                child: Container(
+                  height: 40,
+                  width: 40,
+                  decoration: BoxDecoration(
+                    color: _p.accent,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    widget.currentlyPlayingUrl == 'recorded'
+                        ? Icons.pause_rounded
+                        : Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 22,
+                  ),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
               Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ValueListenableBuilder<Duration>(
+                      valueListenable: widget.recordedTotalDuration,
+                      builder: (context, totalDuration, child) {
+                        return ValueListenableBuilder<Duration>(
+                          valueListenable: widget.recordedPosition,
+                          builder: (context, position, child) {
+                            return ClipRRect(
+                              borderRadius: BorderRadius.circular(4),
+                              child: LinearProgressIndicator(
+                                value: totalDuration.inMilliseconds > 0
+                                    ? position.inMilliseconds / totalDuration.inMilliseconds
+                                    : 0.0,
+                                backgroundColor: _p.border,
+                                valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF3451E5)),
+                                minHeight: 6,
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 4),
+                    // Show position / total duration below the progress bar
+                    ValueListenableBuilder<Duration>(
+                      valueListenable: widget.recordedTotalDuration,
+                      builder: (context, totalDuration, child) {
+                        return ValueListenableBuilder<Duration>(
+                          valueListenable: widget.recordedPosition,
+                          builder: (context, position, child) {
+                            return Text(
+                              '${_formatDuration(position)} / ${_formatDuration(totalDuration)}',
+                              style: TextStyle(
+                                color: _p.muted,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              // Duration badge
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _p.chip,
+                  borderRadius: BorderRadius.circular(8),
+                ),
                 child: ValueListenableBuilder<Duration>(
                   valueListenable: widget.recordedTotalDuration,
                   builder: (context, totalDuration, child) {
-                    return ValueListenableBuilder<Duration>(
-                      valueListenable: widget.recordedPosition,
-                      builder: (context, position, child) {
-                        return LinearProgressIndicator(
-                          value: totalDuration.inMilliseconds > 0
-                              ? position.inMilliseconds / totalDuration.inMilliseconds
-                              : 0.0,
-                          backgroundColor: _p.border,
-                          valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF3451E5)),
-                          borderRadius: BorderRadius.circular(4),
-                        );
-                      },
+                    final seconds = totalDuration.inSeconds;
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.mic, size: 12, color: _p.accent),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${seconds}s',
+                          style: TextStyle(
+                            color: _p.accent,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
                     );
                   },
                 ),
               ),
-              const SizedBox(width: 12),
-              ValueListenableBuilder<Duration>(
-                valueListenable: widget.recordedTotalDuration,
-                builder: (context, totalDuration, child) {
-                  return Text(
-                    _formatDuration(totalDuration),
-                    style: TextStyle(
-                      color: _p.muted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  );
-                },
-              ),
             ],
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
@@ -714,11 +805,12 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
     final imageUrl = _resolveUrl(attrs['image']?.toString());
 
     final fromList = _getReplies(id);
-    final fromAttrs = (attrs['replies'] as List? ?? []);
+    final fromAttrs = _nestedReplies(attrs);
     final allReplies = [
       ...fromList,
       ...fromAttrs.where((r) {
-        final rId = r['id']?.toString() ?? '';
+        final rId = r is Map ? r['id']?.toString() : null;
+        if (rId == null) return true;
         return !fromList.any((lr) => lr['id']?.toString() == rId);
       }),
     ];
@@ -763,7 +855,8 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
                     icon: isExpanded ? Icons.expand_less : Icons.expand_more,
                     label: isExpanded
                         ? 'course.hide_replies'.tr()
-                        : 'course.show_replies'.tr(args: [replyCount.toString()]),
+                        : 'course_discussion.show_replies'
+                            .tr(args: [replyCount.toString()]),
                     onTap: () => setState(() {
                       if (isExpanded) {
                         _expandedReplies.remove(id);
@@ -1217,6 +1310,205 @@ class _DiscussionPanelState extends State<DiscussionPanel> {
     } catch (_) {
       return dateStr;
     }
+  }
+}
+
+/// Live recording timer widget — ticks every second while recording.
+class _RecordingTimer extends StatefulWidget {
+  final Duration duration;
+  final _DiscussionPalette palette;
+
+  const _RecordingTimer({
+    required this.duration,
+    required this.palette,
+  });
+
+  @override
+  State<_RecordingTimer> createState() => _RecordingTimerState();
+}
+
+class _RecordingTimerState extends State<_RecordingTimer> {
+  late Timer _timer;
+  late int _seconds;
+  late DateTime _startedAt;
+
+  @override
+  void initState() {
+    super.initState();
+    _seconds = widget.duration.inSeconds;
+    _startedAt = DateTime.now().subtract(widget.duration);
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {
+        _seconds = DateTime.now().difference(_startedAt).inSeconds;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  String _fmt(int n) => n.toString().padLeft(2, '0');
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _fmt(_seconds ~/ 60);
+    final s = _fmt(_seconds % 60);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Pulsing red dot
+        TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0.4, end: 1.0),
+          duration: const Duration(milliseconds: 800),
+          builder: (context, value, child) {
+            return Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: const Color(0xFFEF4444).withValues(alpha: value),
+                shape: BoxShape.circle,
+              ),
+            );
+          },
+          onEnd: () {
+            // Restart the animation by rebuilding
+            if (mounted) setState(() {});
+          },
+        ),
+        const SizedBox(width: 8),
+        Text(
+          '$m:$s',
+          style: TextStyle(
+            color: widget.palette.accent,
+            fontSize: 28,
+            fontWeight: FontWeight.w700,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Chat-style comment input with an inline send button that appears
+/// when the user types text. Tapping outside dismisses the keyboard.
+class _CommentInputWithSend extends StatefulWidget {
+  final TextEditingController controller;
+  final FocusNode? focusNode;
+  final VoidCallback onPost;
+  final _DiscussionPalette palette;
+
+  const _CommentInputWithSend({
+    required this.controller,
+    this.focusNode,
+    required this.onPost,
+    required this.palette,
+  });
+
+  @override
+  State<_CommentInputWithSend> createState() => _CommentInputWithSendState();
+}
+
+class _CommentInputWithSendState extends State<_CommentInputWithSend> {
+  bool _hasText = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _hasText = widget.controller.text.trim().isNotEmpty;
+    widget.controller.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    final hasText = widget.controller.text.trim().isNotEmpty;
+    if (hasText != _hasText) setState(() => _hasText = hasText);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.palette;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Expanded(
+          child: TextField(
+            controller: widget.controller,
+            focusNode: widget.focusNode,
+            maxLines: 4,
+            minLines: 1,
+            style: TextStyle(color: p.title, fontSize: 14, height: 1.4),
+            cursorColor: p.accent,
+            textInputAction: TextInputAction.newline,
+            decoration: InputDecoration(
+              hintText: 'course.write_comment_moment'.tr(),
+              hintStyle: TextStyle(color: p.faint, fontSize: 14),
+              filled: true,
+              fillColor: p.field,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: p.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: p.accent, width: 1.5),
+              ),
+              contentPadding: const EdgeInsets.all(16),
+            ),
+          ),
+        ),
+        // Animated send button — slides in when text is non-empty
+        AnimatedSize(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+          child: _hasText
+              ? Padding(
+                  padding: const EdgeInsetsDirectional.only(start: 8),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: widget.onPost,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        height: 48,
+                        width: 48,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF3451E5),
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF3451E5).withValues(alpha: 0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 3),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.send_rounded,
+                          color: Colors.white,
+                          size: 22,
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+              : const SizedBox.shrink(),
+        ),
+      ],
+    );
   }
 }
 

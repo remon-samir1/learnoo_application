@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -56,7 +57,7 @@ class CommunityRepository {
   // Get all posts
   Future<Map<String, dynamic>> getPosts({int? courseId}) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     var urlString = '${ApiConstants.baseUrl}${ApiConstants.posts}';
     if (courseId != null) {
@@ -82,7 +83,9 @@ class CommunityRepository {
         for (final p in postData) {
           try {
             if (p is Map) {
-              posts.add(Post.fromJson(Map<String, dynamic>.from(p)));
+              final post = Post.fromJson(Map<String, dynamic>.from(p));
+              // Student feed: published posts only, as on the web.
+              if (post.attributes.isPublished) posts.add(post);
             }
           } catch (_) {
             // Keep remaining posts rather than crashing whole list
@@ -92,11 +95,11 @@ class CommunityRepository {
       } else {
         return {
           'success': false,
-          'message': _handleError(data, 'Failed to fetch posts'),
+          'message': _handleError(data, 'errors.failed_fetch_posts'.tr()),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
@@ -109,7 +112,7 @@ class CommunityRepository {
   /// app students could see a thread but never read or add a reply.
   Future<Map<String, dynamic>> getComments(String postId) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse(
       '${ApiConstants.baseUrl}${ApiConstants.posts}?parent_id=$postId',
@@ -134,10 +137,10 @@ class CommunityRepository {
       }
       return {
         'success': false,
-        'message': _handleError(data, 'Failed to fetch comments'),
+        'message': _handleError(data, 'errors.failed_fetch_comments'.tr()),
       };
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
@@ -150,11 +153,11 @@ class CommunityRepository {
     required String content,
   }) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final body = content.trim();
     if (body.isEmpty) {
-      return {'success': false, 'message': 'Comment cannot be empty'};
+      return {'success': false, 'message': 'errors.comment_empty'.tr()};
     }
 
     final title = body.length > 200 ? body.substring(0, 200) : body;
@@ -184,10 +187,10 @@ class CommunityRepository {
       }
       return {
         'success': false,
-        'message': _handleError(data, 'Failed to post comment'),
+        'message': _handleError(data, 'errors.failed_post_comment'.tr()),
       };
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
@@ -198,7 +201,7 @@ class CommunityRepository {
   // Get post by ID
   Future<Map<String, dynamic>> getPostById(String postId) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.posts}/$postId');
     try {
@@ -218,18 +221,18 @@ class CommunityRepository {
       } else {
         return {
           'success': false,
-          'message': _handleError(data, 'Failed to fetch post'),
+          'message': _handleError(data, 'errors.failed_fetch_post'.tr()),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   // Create a new post
   Future<Map<String, dynamic>> createPost(CreatePostRequest request) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.posts}');
     try {
@@ -249,23 +252,23 @@ class CommunityRepository {
         return {
           'success': true,
           'data': post,
-          'message': data['message'] ?? 'Post created successfully',
+          'message': data['message'] ?? 'errors.post_created'.tr(),
         };
       } else {
         return {
           'success': false,
-          'message': _handleError(data, 'Failed to create post'),
+          'message': _handleError(data, 'community.failed_create_post'.tr()),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   // Update a post
   Future<Map<String, dynamic>> updatePost(String postId, CreatePostRequest request) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.posts}/$postId');
     try {
@@ -285,23 +288,23 @@ class CommunityRepository {
         return {
           'success': true,
           'data': post,
-          'message': data['message'] ?? 'Post updated successfully',
+          'message': data['message'] ?? 'errors.post_updated'.tr(),
         };
       } else {
         return {
           'success': false,
-          'message': _handleError(data, 'Failed to update post'),
+          'message': _handleError(data, 'errors.failed_update_post'.tr()),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   // Delete a post
   Future<Map<String, dynamic>> deletePost(String postId) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.posts}/$postId');
     try {
@@ -318,23 +321,23 @@ class CommunityRepository {
       if (response.statusCode == 200 || response.statusCode == 204) {
         return {
           'success': true,
-          'message': data['message'] ?? 'Post deleted successfully',
+          'message': data['message'] ?? 'errors.post_deleted'.tr(),
         };
       } else {
         return {
           'success': false,
-          'message': _handleError(data, 'Failed to delete post'),
+          'message': _handleError(data, 'errors.failed_delete_post'.tr()),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   // React to a post
   Future<Map<String, dynamic>> reactToPost(String postId, String reactionType) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.posts}/$postId/react');
     try {
@@ -352,24 +355,24 @@ class CommunityRepository {
       if (response.statusCode == 201 || response.statusCode == 200) {
         return {
           'success': true,
-          'message': data['message'] ?? 'Reaction added successfully',
+          'message': data['message'] ?? 'errors.reaction_added'.tr(),
           'data': data['data'],
         };
       } else {
         return {
           'success': false,
-          'message': _handleError(data, 'Failed to react to post'),
+          'message': _handleError(data, 'errors.failed_react'.tr()),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   // Remove reaction from a post
   Future<Map<String, dynamic>> removeReaction(String postId) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.posts}/$postId/react');
     try {
@@ -386,23 +389,23 @@ class CommunityRepository {
       if (response.statusCode == 200 || response.statusCode == 204) {
         return {
           'success': true,
-          'message': data['message'] ?? 'Reaction removed successfully',
+          'message': data['message'] ?? 'errors.reaction_removed'.tr(),
         };
       } else {
         return {
           'success': false,
-          'message': _handleError(data, 'Failed to remove reaction'),
+          'message': _handleError(data, 'errors.failed_remove_reaction'.tr()),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   // Get all social links
   Future<Map<String, dynamic>> getSocialLinks({int? courseId}) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     var urlString = '${ApiConstants.baseUrl}${ApiConstants.socialLinks}';
     if (courseId != null) {
@@ -436,18 +439,18 @@ class CommunityRepository {
       } else {
         return {
           'success': false,
-          'message': _handleError(data, 'Failed to fetch social links'),
+          'message': _handleError(data, 'errors.failed_fetch_social_links'.tr()),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   // Get courses (defaults to activated=true to get student's enrolled courses with their social-links)
   Future<Map<String, dynamic>> getCourses({bool activated = true}) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     var url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.courses}');
     if (activated) {
@@ -472,7 +475,7 @@ class CommunityRepository {
       } else {
         return {
           'success': false,
-          'message': _handleError(data, 'Failed to fetch courses'),
+          'message': _handleError(data, 'errors.failed_fetch_courses'.tr()),
         };
       }
     } catch (e) {
@@ -484,7 +487,7 @@ class CommunityRepository {
           return activatedCached;
         }
       } catch (_) {}
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
@@ -517,7 +520,9 @@ class CommunityRepository {
         if (res['success'] == true && res['data'] != null) {
           final courseObj = PostCourse.fromJson(res['data']);
           final posts = courseObj.attributes.posts
-              .where((p) => p.attributes.parentId == null || p.attributes.parentId!.isEmpty)
+              .where((p) =>
+                  (p.attributes.parentId == null || p.attributes.parentId!.isEmpty) &&
+                  p.attributes.isPublished)
               .toList();
           posts.sort((a, b) => b.attributes.createdAt.compareTo(a.attributes.createdAt));
           return {
@@ -529,7 +534,7 @@ class CommunityRepository {
         } else {
           return {
             'success': false,
-            'message': res['message'] ?? 'Failed to load course details',
+            'message': res['message'] ?? 'errors.failed_load_course_details'.tr(),
             'data': <Post>[],
           };
         }
@@ -559,7 +564,10 @@ class CommunityRepository {
       final Map<String, Post> uniquePosts = {};
       for (final course in enrichedCourses) {
         for (final post in course.attributes.posts) {
-          if (post.attributes.parentId == null || post.attributes.parentId!.isEmpty) {
+          // Like the web feed: top-level, published posts only. A student's own
+          // post awaiting admin approval is not shown as if it were live.
+          if ((post.attributes.parentId == null || post.attributes.parentId!.isEmpty) &&
+              post.attributes.isPublished) {
             uniquePosts[post.id] = post;
           }
         }

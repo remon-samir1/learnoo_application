@@ -12,7 +12,8 @@ import 'live_session_detail_screen.dart';
 /// Student live sessions list — the website's
 /// `app/[locale]/student/live-sessions/page.tsx`.
 ///
-/// `GET /v1/live-room?page=N`, narrowed to the student's faculty course tree,
+/// Every `GET /v1/live-room` page, narrowed to the student's faculty course tree
+/// and then paged on the device (see [LiveRoomRepository.getAllLiveRooms]),
 /// with each card's call to action decided by the room's access state:
 /// activate a private room with a code, activate the course first for an
 /// "included" room, or open the session (join / watch recording / view).
@@ -31,15 +32,22 @@ class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
   List<lr.LiveRoom> _rooms = [];
   LiveRoomAccessContext _access = const LiveRoomAccessContext.empty();
   bool _isLoading = true;
+
+  /// The student's courses decide which sessions are theirs. Until they are
+  /// loaded every session would pass the filter, so the list waits for both
+  /// rather than showing everything and then dropping rows.
+  bool _isAccessLoading = true;
   String? _errorMessage;
   int _currentPage = 1;
-  int _lastPage = 1;
+
+  /// Sessions per page once filtered to the student's courses.
+  static const int _pageSize = 15;
 
   @override
   void initState() {
     super.initState();
     _loadAccess();
-    _loadRooms(page: 1);
+    _loadRooms();
   }
 
   @override
@@ -49,26 +57,33 @@ class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
   }
 
   Future<void> _loadAccess({bool forceRefresh = false}) async {
-    final access = await _accessService.load(forceRefresh: forceRefresh);
-    if (!mounted) return;
-    setState(() => _access = access);
+    if (!_isAccessLoading) setState(() => _isAccessLoading = true);
+    try {
+      final access = await _accessService.load(forceRefresh: forceRefresh);
+      if (!mounted) return;
+      setState(() {
+        _access = access;
+        _isAccessLoading = false;
+      });
+    } catch (_) {
+      // Without the student's courses the website shows every session it got;
+      // the empty context does the same, so the list still appears.
+      if (mounted) setState(() => _isAccessLoading = false);
+    }
   }
 
-  Future<void> _loadRooms({required int page}) async {
+  Future<void> _loadRooms() async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
 
-    final result = await _repository.getLiveRooms(page: page, perPage: null);
+    final result = await _repository.getAllLiveRooms();
     if (!mounted) return;
 
     if (result['success'] == true) {
-      final meta = result['meta'] as Map<String, dynamic>?;
       setState(() {
         _rooms = result['data'] as List<lr.LiveRoom>;
-        _currentPage = (meta?['current_page'] as num?)?.toInt() ?? page;
-        _lastPage = (meta?['last_page'] as num?)?.toInt() ?? 1;
         _isLoading = false;
       });
       if (_scrollController.hasClients) _scrollController.jumpTo(0);
@@ -86,7 +101,7 @@ class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
   Future<void> _refresh() async {
     await Future.wait([
       _loadAccess(forceRefresh: true),
-      _loadRooms(page: _currentPage),
+      _loadRooms(),
     ]);
   }
 
@@ -105,7 +120,7 @@ class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
       roomId: room.id,
       title: room.title.trim().isEmpty ? '—' : room.title.trim(),
     );
-    if (activated && mounted) _loadRooms(page: _currentPage);
+    if (activated && mounted) _loadRooms();
   }
 
   void _openCourse(lr.LiveRoom room) {
@@ -125,7 +140,15 @@ class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final visible = _access.filterVisible(_rooms);
+    // The list is only ready once the sessions AND the courses that filter
+    // them have loaded; otherwise rows would appear and then disappear.
+    final isLoading = _isLoading || _isAccessLoading;
+    final allVisible = _access.filterVisible(_rooms);
+    final lastPage =
+        allVisible.isEmpty ? 1 : ((allVisible.length - 1) ~/ _pageSize) + 1;
+    final page = _currentPage.clamp(1, lastPage);
+    final visible =
+        allVisible.skip((page - 1) * _pageSize).take(_pageSize).toList();
 
     return Scaffold(
       backgroundColor: AppColors.surface(context),
@@ -136,7 +159,7 @@ class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
             child: RefreshIndicator(
               onRefresh: _refresh,
               color: AppColors.primaryBlue,
-              child: _isLoading
+              child: isLoading
                   ? _buildMessage(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -165,12 +188,15 @@ class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
                             ),
             ),
           ),
-          if (!_isLoading && _lastPage > 1)
+          if (!isLoading && lastPage > 1)
             PaginationBar(
-              currentPage: _currentPage,
-              lastPage: _lastPage,
-              isLoading: _isLoading,
-              onPageChanged: (page) => _loadRooms(page: page),
+              currentPage: page,
+              lastPage: lastPage,
+              isLoading: isLoading,
+              onPageChanged: (next) {
+                setState(() => _currentPage = next);
+                if (_scrollController.hasClients) _scrollController.jumpTo(0);
+              },
               primaryColor: AppColors.primaryBlue,
             ),
         ],
@@ -266,7 +292,7 @@ class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
             ),
             const SizedBox(height: 12),
             TextButton(
-              onPressed: () => _loadRooms(page: _currentPage),
+              onPressed: () => _loadRooms(),
               child: Text('live.retry'.tr()),
             ),
           ],
@@ -378,6 +404,17 @@ class _LiveSessionsScreenState extends State<LiveSessionsScreen> {
               ),
             ],
           ),
+          if (room.startedAtValue != null && !room.isEnded) ...[
+            const SizedBox(height: 12),
+            LiveRoomTimerBanner(
+              startTime: room.startedAtValue!,
+              isLive: room.isLive,
+              isEnded: room.isEnded,
+              onReached: () {
+                if (mounted) setState(() {});
+              },
+            ),
+          ],
           const SizedBox(height: 14),
           _buildAction(room, access),
         ],

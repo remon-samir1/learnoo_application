@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/material.dart';
 
@@ -50,14 +51,104 @@ class NotificationService {
     _isInitialized = true;
     debugPrint('NotificationService initialized');
 
-    // A tap on a "download complete" notification that launched the app.
+    // A tap on a notification that launched the app.
     try {
       final launch = await _notificationsPlugin.getNotificationAppLaunchDetails();
       final payload = launch?.notificationResponse?.payload;
       if ((launch?.didNotificationLaunchApp ?? false) && payload != null) {
-        _openDownloadFromPayload(payload);
+        if (payload.startsWith(openNotificationsPayload)) {
+          // The navigator is not ready yet; the student's home screen picks
+          // this up once it is shown (see [openPendingNotificationsScreen]).
+          _openNotificationsPending = true;
+        } else {
+          _openDownloadFromPayload(payload);
+        }
       }
     } catch (_) {}
+  }
+
+  // ---------------------------------------------------------------------------
+  // Student notifications ("general" channel)
+  // ---------------------------------------------------------------------------
+
+  /// Payload prefix of a student notification: tapping opens the
+  /// notifications screen.
+  static const String openNotificationsPayload = 'open_notifications';
+
+  static const String _generalChannelId = 'general_channel';
+
+  /// Monochrome status-bar icon (android/app/src/main/res/drawable-*/).
+  static const String _statusBarIcon = 'ic_stat_learnoo';
+
+  VoidCallback? _openNotificationsHandler;
+  bool _openNotificationsPending = false;
+
+  /// Registered by the app root: opens the notifications screen through the
+  /// app's navigator key.
+  void setOpenNotificationsHandler(VoidCallback? handler) {
+    _openNotificationsHandler = handler;
+  }
+
+  /// Opens the notifications screen if the app was launched by tapping a
+  /// student notification before the navigator was ready. Called once the
+  /// student's home screen is shown.
+  void openPendingNotificationsScreen() {
+    final handler = _openNotificationsHandler;
+    if (!_openNotificationsPending || handler == null) return;
+    _openNotificationsPending = false;
+    handler();
+  }
+
+  /// Stable Android/iOS notification id for a backend notification id, kept
+  /// clear of the download ids (1000+) range.
+  static int _idForKey(String key) {
+    var hash = 0x811C9DC5;
+    for (final unit in key.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 0x01000193) & 0x7FFFFFFF;
+    }
+    return 100000 + (hash % 1000000000);
+  }
+
+  /// Shows a student notification from the backend in the system tray on the
+  /// dedicated "general" channel. [key] (the backend id) keeps a re-show of
+  /// the same notification replacing the old one instead of stacking.
+  Future<void> showGeneralNotification({
+    required String key,
+    required String title,
+    required String body,
+  }) async {
+    if (!_isInitialized) await initialize();
+
+    final androidDetails = AndroidNotificationDetails(
+      _generalChannelId,
+      'notifications_push.channel_name'.tr(),
+      channelDescription: 'notifications_push.channel_description'.tr(),
+      importance: Importance.high,
+      priority: Priority.high,
+      showWhen: true,
+      autoCancel: true,
+      icon: _statusBarIcon,
+      color: const Color(0xFF1E5BFF),
+      styleInformation: BigTextStyleInformation(body),
+      category: AndroidNotificationCategory.message,
+    );
+
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBanner: true,
+      presentList: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+
+    await _notificationsPlugin.show(
+      _idForKey(key),
+      title,
+      body,
+      NotificationDetails(android: androidDetails, iOS: iosDetails),
+      payload: '$openNotificationsPayload|$key',
+    );
   }
 
   static const String _openDownloadPrefix = 'open_download|';
@@ -80,7 +171,17 @@ class NotificationService {
   /// Handle notification tap
   void _onNotificationResponse(NotificationResponse response) {
     final payload = response.payload;
-    if (payload != null) _openDownloadFromPayload(payload);
+    if (payload == null) return;
+    if (payload.startsWith(openNotificationsPayload)) {
+      final handler = _openNotificationsHandler;
+      if (handler != null) {
+        handler();
+      } else {
+        _openNotificationsPending = true;
+      }
+      return;
+    }
+    _openDownloadFromPayload(payload);
   }
 
   /// Request notification permissions (mainly for iOS)
@@ -138,8 +239,8 @@ class NotificationService {
 
     final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'download_channel',
-      'Downloads',
-      channelDescription: 'Shows download progress notifications',
+      'downloads.channel_name'.tr(),
+      channelDescription: 'downloads.channel_description'.tr(),
       importance: Importance.low,
       priority: Priority.low,
       showWhen: true,
@@ -187,8 +288,8 @@ class NotificationService {
 
     final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'download_channel',
-      'Downloads',
-      channelDescription: 'Shows download progress notifications',
+      'downloads.channel_name'.tr(),
+      channelDescription: 'downloads.channel_description'.tr(),
       importance: Importance.low,
       priority: Priority.low,
       showWhen: true,
@@ -235,8 +336,8 @@ class NotificationService {
 
     final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'download_channel',
-      'Downloads',
-      channelDescription: 'Shows download progress notifications',
+      'downloads.channel_name'.tr(),
+      channelDescription: 'downloads.channel_description'.tr(),
       importance: Importance.defaultImportance,
       priority: Priority.defaultPriority,
       showWhen: true,
@@ -284,8 +385,8 @@ class NotificationService {
 
     final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'download_channel',
-      'Downloads',
-      channelDescription: 'Shows download progress notifications',
+      'downloads.channel_name'.tr(),
+      channelDescription: 'downloads.channel_description'.tr(),
       importance: Importance.high,
       priority: Priority.high,
       showWhen: true,
@@ -333,8 +434,8 @@ class NotificationService {
 
     final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'download_channel',
-      'Downloads',
-      channelDescription: 'Shows download progress notifications',
+      'downloads.channel_name'.tr(),
+      channelDescription: 'downloads.channel_description'.tr(),
       importance: Importance.low,
       priority: Priority.low,
       showWhen: true,
@@ -408,8 +509,8 @@ class NotificationService {
 
     final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'app_notifications_channel',
-      'App Notifications',
-      channelDescription: 'Shows app notifications',
+      'notifications_push.app_channel_name'.tr(),
+      channelDescription: 'notifications_push.app_channel_description'.tr(),
       importance: Importance.high,
       priority: Priority.high,
       showWhen: true,

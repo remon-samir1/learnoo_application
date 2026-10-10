@@ -1,5 +1,7 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:learnoo/core/network/api_client.dart';
 import 'package:learnoo/core/network/api_constants.dart';
 import 'package:learnoo/features/auth/data/auth_repository.dart';
 import 'package:learnoo/features/home/data/models/notification.dart';
@@ -43,7 +45,7 @@ class NotificationRepository {
 
   Future<Map<String, dynamic>> getNotifications({int page = 1}) async {
     final token = await _getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.notifications}').replace(
       queryParameters: {'page': page.toString()},
@@ -56,8 +58,10 @@ class NotificationRepository {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
           'Authorization': 'Bearer $token',
+          // Localized titles/messages, like every ApiClient request.
+          'lang': ApiClient.locale,
         },
-      );
+      ).timeout(const Duration(seconds: 30));
 
       final data = jsonDecode(response.body);
       if (response.statusCode == 200) {
@@ -68,7 +72,7 @@ class NotificationRepository {
           'meta': notificationResponse.meta,
         };
       } else {
-        final errorData = _handleError(data, 'Failed to fetch notifications');
+        final errorData = _handleError(data, 'errors.failed_fetch_notifications'.tr());
         return {
           'success': false,
           'message': errorData['message'],
@@ -76,13 +80,13 @@ class NotificationRepository {
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   Future<Map<String, dynamic>> getUnreadNotifications({int page = 1}) async {
     final token = await _getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.notificationsUnread}').replace(
       queryParameters: {'page': page.toString()},
@@ -107,7 +111,7 @@ class NotificationRepository {
           'meta': notificationResponse.meta,
         };
       } else {
-        final errorData = _handleError(data, 'Failed to fetch unread notifications');
+        final errorData = _handleError(data, 'errors.failed_fetch_unread_notifications'.tr());
         return {
           'success': false,
           'message': errorData['message'],
@@ -115,13 +119,13 @@ class NotificationRepository {
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   Future<Map<String, dynamic>> markAsRead(String notificationId) async {
     final token = await _getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final endpoint = ApiConstants.notificationsRead.replaceAll('{id}', notificationId);
     final url = Uri.parse('${ApiConstants.baseUrl}$endpoint');
@@ -140,10 +144,10 @@ class NotificationRepository {
       if (response.statusCode == 200) {
         return {
           'success': true,
-          'message': data?['message'] ?? 'Notification marked as read',
+          'message': data?['message'] ?? 'errors.notification_marked_read'.tr(),
         };
       } else {
-        final errorData = _handleError(data, 'Failed to mark notification as read');
+        final errorData = _handleError(data, 'errors.failed_mark_read'.tr());
         return {
           'success': false,
           'message': errorData['message'],
@@ -151,13 +155,13 @@ class NotificationRepository {
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   Future<Map<String, dynamic>> markAllAsRead() async {
     final token = await _getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.notificationsReadAll}');
 
@@ -175,10 +179,10 @@ class NotificationRepository {
       if (response.statusCode == 200) {
         return {
           'success': true,
-          'message': data?['message'] ?? 'All notifications marked as read',
+          'message': data?['message'] ?? 'errors.all_marked_read'.tr(),
         };
       } else {
-        final errorData = _handleError(data, 'Failed to mark all notifications as read');
+        final errorData = _handleError(data, 'errors.failed_mark_all_read'.tr());
         return {
           'success': false,
           'message': errorData['message'],
@@ -186,13 +190,13 @@ class NotificationRepository {
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   Future<Map<String, dynamic>> deleteNotification(String notificationId) async {
     final token = await _getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final endpoint = ApiConstants.notificationsDelete.replaceAll('{id}', notificationId);
     final url = Uri.parse('${ApiConstants.baseUrl}$endpoint');
@@ -211,10 +215,10 @@ class NotificationRepository {
       if (response.statusCode == 200 || response.statusCode == 204) {
         return {
           'success': true,
-          'message': data?['message'] ?? 'Notification deleted',
+          'message': data?['message'] ?? 'errors.notification_deleted'.tr(),
         };
       } else {
-        final errorData = _handleError(data, 'Failed to delete notification');
+        final errorData = _handleError(data, 'errors.failed_delete_notification'.tr());
         return {
           'success': false,
           'message': errorData['message'],
@@ -222,13 +226,13 @@ class NotificationRepository {
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
   Future<Map<String, dynamic>> getUnreadCount() async {
     final token = await _getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.notificationsCount}');
 
@@ -249,7 +253,7 @@ class NotificationRepository {
           'count': data['count'] ?? 0,
         };
       } else {
-        final errorData = _handleError(data, 'Failed to fetch unread count');
+        final errorData = _handleError(data, 'errors.failed_fetch_unread_count'.tr());
         return {
           'success': false,
           'message': errorData['message'],
@@ -257,7 +261,7 @@ class NotificationRepository {
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 }

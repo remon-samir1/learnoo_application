@@ -14,6 +14,7 @@ import '../../data/exam_filter_service.dart';
 import '../../domain/quiz_activation_lock.dart';
 import '../../domain/usecases/exam_access_usecase.dart';
 import '../../models/quiz_models.dart';
+import '../widgets/exam_countdown.dart';
 
 class ExamsListScreen extends StatefulWidget {
   const ExamsListScreen({super.key});
@@ -29,6 +30,8 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
   final ChapterRepository _chapterRepository = ChapterRepository();
   final ExamAccessUseCase _examAccessUseCase = ExamAccessUseCase();
 
+  /// Every exam this student may see (course-filtered and search-filtered),
+  /// in server order. Pages are sliced from this list locally.
   List<Quiz> _quizzes = [];
   final Map<int, int> _remainingAttempts = {};
   final Map<int, List<QuizAttempt>> _attemptsMap = {};
@@ -40,11 +43,13 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
   final ScrollController _scrollController = ScrollController();
   Timer? _debounceTimer;
   int _currentPage = 1;
-  int _lastPage = 1;
   static const int _perPage = 15;
-  bool _hasNextPage = false;
   bool _isSearching = false;
   String _searchQuery = '';
+
+  /// Bumped on every load so a slow response for an older search cannot
+  /// overwrite the list for the current one.
+  int _loadGeneration = 0;
 
   List<dynamic> _cachedAllowedCourses = [];
   List<dynamic> _cachedAllChapters = [];
@@ -53,29 +58,61 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
   @override
   void initState() {
     super.initState();
-    _loadQuizzes(page: 1);
-    // Start a periodic timer to update countdown timers every second
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
+    // Countdowns tick inside each card's own `ExamCountdown`; the screen is
+    // no longer rebuilt every second.
+    _loadQuizzes();
   }
-
-  Timer? _countdownTimer;
 
   @override
   void dispose() {
     _scrollController.dispose();
     _searchController.dispose();
     _debounceTimer?.cancel();
-    _countdownTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _loadQuizzes({int page = 1}) async {
+  int get _lastPage {
+    if (_filteredQuizzes.isEmpty) return 1;
+    return (_filteredQuizzes.length + _perPage - 1) ~/ _perPage;
+  }
+
+  bool get _hasNextPage => _currentPage < _lastPage;
+
+  /// The exams on the current page, sliced locally from the filtered list.
+  List<Quiz> get _pageQuizzes {
+    final all = _filteredQuizzes;
+    final start = (_currentPage - 1) * _perPage;
+    if (start >= all.length) return const [];
+    final end = start + _perPage;
+    return all.sublist(start, end > all.length ? all.length : end);
+  }
+
+  void _goToPage(int page) {
+    final target = page.clamp(1, _lastPage);
+    if (target == _currentPage) return;
+    setState(() => _currentPage = target);
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  /// Loads every exam, filters it down to the student's own, then shows
+  /// page one.
+  ///
+  /// The server paginates the whole catalogue, not the student's exams, so
+  /// filtering each server page on its own left pages 1 and 2 empty whenever
+  /// they held only other courses' exams. Filtering happens first now, and
+  /// the pagination bar pages through the filtered list.
+  Future<void> _loadQuizzes() async {
+    final generation = ++_loadGeneration;
     setState(() {
       _isLoading = true;
       _errorMessage = null;
-      _currentPage = page;
+      _currentPage = 1;
     });
 
     try {
@@ -88,7 +125,7 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
           _chapterRepository.getChapters(),
         ]);
 
-        if (!mounted) return;
+        if (!mounted || generation != _loadGeneration) return;
 
         final meResult = results[0] as Map<String, dynamic>;
         final coursesResult = results[1] as Map<String, dynamic>;
@@ -118,13 +155,12 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
         }
       }
 
-      final quizResult = await _examRepository.getQuizzes(
-        page: page,
-        perPage: _perPage,
+      // Every page first, then the course filter, then local pagination.
+      final quizResult = await _examRepository.getAllQuizzes(
         title: _searchQuery.isNotEmpty ? _searchQuery : null,
       );
 
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
 
       if (quizResult['success']) {
         final allQuizzes = quizResult['data'] as List<Quiz>;
@@ -134,16 +170,15 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
           allChapters: _cachedAllChapters,
         );
 
-        final meta = quizResult['meta'] as Map<String, dynamic>?;
-        final lastPage = (meta?['last_page'] as num?)?.toInt() ?? 1;
-        final curPage = (meta?['current_page'] as num?)?.toInt() ?? page;
-        final hasNext = quizResult['hasNextPage'] as bool? ?? (curPage < lastPage);
+        if (!mounted || generation != _loadGeneration) return;
+
+        // `filterExams` collects into a set; put the server's order back.
+        final keep = filteredQuizzes.toSet();
+        final ordered = allQuizzes.where(keep.contains).toList();
 
         setState(() {
-          _quizzes = filteredQuizzes;
-          _currentPage = curPage;
-          _lastPage = lastPage;
-          _hasNextPage = hasNext;
+          _quizzes = ordered;
+          _currentPage = 1;
           _isLoading = false;
           _isSearching = false;
         });
@@ -167,7 +202,7 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
         });
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && generation == _loadGeneration) {
         setState(() {
           _errorMessage = 'exams.network_error'.tr();
           _isLoading = false;
@@ -182,11 +217,12 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
     setState(() {
       _isSearching = true;
       _searchQuery = query.trim();
+      _currentPage = 1;
     });
 
     _debounceTimer = Timer(const Duration(milliseconds: 400), () {
       if (!mounted) return;
-      _loadQuizzes(page: 1);
+      _loadQuizzes();
     });
   }
 
@@ -197,7 +233,7 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
       _searchQuery = '';
       _isSearching = false;
     });
-    _loadQuizzes(page: 1);
+    _loadQuizzes();
   }
 
   List<Quiz> get _filteredQuizzes {
@@ -353,8 +389,8 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
                       : _errorMessage != null
                           ? _buildErrorView()
                           : RefreshIndicator(
-                              onRefresh: () => _loadQuizzes(page: 1),
-                              child: _filteredQuizzes.isEmpty
+                              onRefresh: _loadQuizzes,
+                              child: _pageQuizzes.isEmpty
                                   ? LayoutBuilder(
                                       builder: (context, constraints) {
                                         return SingleChildScrollView(
@@ -375,9 +411,9 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
                                           16, 8, 16, 16),
                                       physics:
                                           const AlwaysScrollableScrollPhysics(),
-                                      itemCount: _filteredQuizzes.length,
+                                      itemCount: _pageQuizzes.length,
                                       itemBuilder: (context, index) {
-                                        final quiz = _filteredQuizzes[index];
+                                        final quiz = _pageQuizzes[index];
                                         final remaining =
                                             _remainingAttempts[quiz.quizId] ??
                                                 quiz.maxAttempts;
@@ -395,7 +431,7 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
                   lastPage: _lastPage,
                   hasNextPage: _hasNextPage,
                   isLoading: _isLoading,
-                  onPageChanged: (newPage) => _loadQuizzes(page: newPage),
+                  onPageChanged: _goToPage,
                   primaryColor: const Color(0xFF5A6AF0),
                 ),
               ],
@@ -483,11 +519,6 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
                   Expanded(child: Text('exams.chapter_prefix'.tr(args: [quiz.chapter!.title]), style: const TextStyle(fontSize: 12, color: AppColors.textGray), overflow: TextOverflow.ellipsis)),
                 ],
               ),
-            ],
-            // Countdown timer for upcoming exams
-            if (!quiz.isAvailable && !quiz.isExpired) ...[
-              const SizedBox(height: 10),
-              _buildCountdownTimer(quiz.startTime),
             ],
             const SizedBox(height: 12),
             Container(
@@ -588,29 +619,50 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
     final remainingAttempts = _remainingAttempts[quiz.quizId] ?? quiz.maxAttempts;
     final status = quiz.getStatus(remainingAttempts);
 
-    if (status == QuizStatus.available) {
-      return SizedBox(
-        width: double.infinity,
-        child: ElevatedButton(
-          onPressed: () async {
-            // Use ExamAccessUseCase to handle access control
-            await _examAccessUseCase.handleExamAccess(
-              context: context,
-              quiz: quiz,
-              enrolledCourseIds: _scope.enrolledCourseIds,
-            );
-            // Refresh attempts when returning
-            if (mounted) {
-              _loadAttemptsForQuiz(quiz.quizId, quiz.maxAttempts);
-            }
-          },
-          style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryBlue, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
-          child: Text(quiz.getButtonTextKey(status).tr(), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-        ),
+    // Not open yet: a live countdown takes the button's place, exactly like
+    // the website's `NewestExams`, and turns into Start at zero. Only the
+    // countdown ticks; `onReached` rebuilds the screen once so the status
+    // badge flips to "available" too.
+    if (status == QuizStatus.upcoming) {
+      return ExamCountdown(
+        startTime: quiz.startTime,
+        onReached: () {
+          if (mounted) setState(() {});
+        },
+        countdownBuilder: (context, formatted) =>
+            ExamCountdownPill(formatted: formatted, height: 48),
+        readyBuilder: (context) =>
+            _buildStartButton(context, quiz, QuizStatus.available),
       );
+    }
+
+    if (status == QuizStatus.available) {
+      return _buildStartButton(context, quiz, status);
     } else {
       return _buildDisabledButton(quiz.getButtonTextKey(status).tr());
     }
+  }
+
+  Widget _buildStartButton(BuildContext context, Quiz quiz, QuizStatus status) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        onPressed: () async {
+          // Use ExamAccessUseCase to handle access control
+          await _examAccessUseCase.handleExamAccess(
+            context: context,
+            quiz: quiz,
+            enrolledCourseIds: _scope.enrolledCourseIds,
+          );
+          // Refresh attempts when returning
+          if (mounted) {
+            _loadAttemptsForQuiz(quiz.quizId, quiz.maxAttempts);
+          }
+        },
+        style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryBlue, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
+        child: Text(quiz.getButtonTextKey(status).tr(), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+      ),
+    );
   }
 
   Widget _buildDisabledButton(String text) {
@@ -620,62 +672,6 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
         padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(color: const Color(0xFFE5E7EB), borderRadius: BorderRadius.circular(12)),
         child: Center(child: Text(text, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textGray))),
-      ),
-    );
-  }
-
-  Widget _buildCountdownTimer(DateTime startTime) {
-    final now = DateTime.now().toUtc();
-    final remaining = startTime.difference(now);
-
-    if (remaining.isNegative) return const SizedBox.shrink();
-
-    final days = remaining.inDays;
-    final hours = remaining.inHours % 24;
-    final minutes = remaining.inMinutes % 60;
-    final seconds = remaining.inSeconds % 60;
-
-    String countdownText;
-    if (days > 0) {
-      countdownText = 'exams.countdown_days_hours_minutes'.tr(args: [
-        '$days',
-        hours.toString().padLeft(2, '0'),
-        minutes.toString().padLeft(2, '0'),
-      ]);
-    } else {
-      countdownText =
-          '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFFFF4E6), Color(0xFFFFEDD5)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFFDBA74).withValues(alpha: 0.4)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(
-            Icons.timer_outlined,
-            size: 15,
-            color: Color(0xFFF97316),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            'exams.starts_in'.tr(args: [countdownText]),
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFFC2410C),
-            ),
-          ),
-        ],
       ),
     );
   }

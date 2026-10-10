@@ -1,10 +1,15 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:shimmer/shimmer.dart';
 import '../services/video_thumbnail_service.dart';
 
-/// A reusable widget for displaying video thumbnails from network URLs
-/// Automatically generates and caches thumbnails using the VideoThumbnailService
+/// Preview frame for a video, used only when the API has no picture for it.
+///
+/// Renders a light placeholder immediately. A disk-cached frame replaces it
+/// straight away; otherwise extraction is requested **lazily** — only once the
+/// widget has been on screen for a moment (rows scrolled past quickly never
+/// queue work) — through [VideoThumbnailService], which runs at most two
+/// extractions at a time. The list itself never waits on any of this.
 class VideoThumbnailWidget extends StatefulWidget {
   final String videoUrl;
   final double width;
@@ -29,114 +34,110 @@ class VideoThumbnailWidget extends StatefulWidget {
   State<VideoThumbnailWidget> createState() => _VideoThumbnailWidgetState();
 }
 
-class _VideoThumbnailWidgetState extends State<VideoThumbnailWidget>
-    with AutomaticKeepAliveClientMixin {
-  String? _thumbnailPath;
-  bool _isLoading = true;
-  bool _hasError = false;
-  bool _generationStarted = false;
+class _VideoThumbnailWidgetState extends State<VideoThumbnailWidget> {
+  /// How long a row must stay visible before extraction is requested.
+  static const Duration _settleDelay = Duration(milliseconds: 350);
 
-  @override
-  bool get wantKeepAlive => true;
+  String? _thumbnailPath;
+  bool _requested = false;
+  Timer? _settleTimer;
+  ScrollPosition? _scrollPosition;
 
   @override
   void initState() {
     super.initState();
-    _loadThumbnail();
+    _loadCachedThenMaybeExtract();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final position = Scrollable.maybeOf(context)?.position;
+    if (!identical(position, _scrollPosition)) {
+      _scrollPosition?.removeListener(_onScroll);
+      _scrollPosition = position;
+      _scrollPosition?.addListener(_onScroll);
+    }
   }
 
   @override
   void didUpdateWidget(VideoThumbnailWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.videoUrl != widget.videoUrl) {
+      _settleTimer?.cancel();
       _thumbnailPath = null;
-      _isLoading = true;
-      _hasError = false;
-      _generationStarted = false;
-      _loadThumbnail();
+      _requested = false;
+      _loadCachedThenMaybeExtract();
     }
   }
 
-  Future<void> _loadThumbnail() async {
-    if (widget.videoUrl.isEmpty) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _hasError = true;
-        });
-      }
+  @override
+  void dispose() {
+    _settleTimer?.cancel();
+    _scrollPosition?.removeListener(_onScroll);
+    super.dispose();
+  }
+
+  Future<void> _loadCachedThenMaybeExtract() async {
+    final url = widget.videoUrl;
+    if (!VideoThumbnailService.isExtractable(url)) return;
+    final cached = await VideoThumbnailService.instance.cachedThumbnail(url);
+    if (!mounted || url != widget.videoUrl) return;
+    if (cached != null) {
+      setState(() => _thumbnailPath = cached);
       return;
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleIfVisible());
+  }
 
-    if (_generationStarted) return;
-    _generationStarted = true;
+  void _onScroll() {
+    if (_thumbnailPath == null && !_requested) _scheduleIfVisible();
+  }
 
-    try {
-      final service = VideoThumbnailService.instance;
+  bool _isVisible() {
+    if (!mounted || !TickerMode.valuesOf(context).enabled) return false;
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.attached || !box.hasSize) return false;
+    final topLeft = box.localToGlobal(Offset.zero);
+    final screen = MediaQuery.sizeOf(context);
+    return topLeft.dy < screen.height &&
+        topLeft.dy + box.size.height > 0 &&
+        topLeft.dx < screen.width &&
+        topLeft.dx + box.size.width > 0;
+  }
 
-      // Check if already cached
-      if (await service.hasThumbnail(widget.videoUrl)) {
-        final path = await service.generateThumbnail(widget.videoUrl);
-        if (mounted && path != null) {
-          setState(() {
-            _thumbnailPath = path;
-            _isLoading = false;
-          });
-          return;
-        }
-      }
+  void _scheduleIfVisible() {
+    if (_requested || _thumbnailPath != null || !_isVisible()) return;
+    _settleTimer?.cancel();
+    _settleTimer = Timer(_settleDelay, _requestExtraction);
+  }
 
-      // Generate thumbnail
-      final path = await service.generateThumbnail(widget.videoUrl);
-
-      if (mounted) {
-        setState(() {
-          if (path != null && File(path).existsSync()) {
-            _thumbnailPath = path;
-            _hasError = false;
-          } else {
-            _hasError = true;
-          }
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _hasError = true;
-          _isLoading = false;
-        });
-      }
+  Future<void> _requestExtraction() async {
+    if (_requested || !_isVisible()) return;
+    _requested = true;
+    final url = widget.videoUrl;
+    final path = await VideoThumbnailService.instance.generateThumbnail(
+      url,
+      stillNeeded: () => mounted && url == widget.videoUrl,
+    );
+    if (!mounted || url != widget.videoUrl) return;
+    if (path != null && File(path).existsSync()) {
+      setState(() => _thumbnailPath = path);
     }
   }
 
-  Widget _buildLoadingWidget() {
-    return Shimmer.fromColors(
-      baseColor: Colors.grey[300]!,
-      highlightColor: Colors.grey[100]!,
-      child: Container(
-        width: widget.width,
-        height: widget.height,
-        decoration: BoxDecoration(
-          color: Colors.grey[300],
-          borderRadius: BorderRadius.circular(widget.borderRadius),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFallbackWidget() {
+  Widget _buildPlaceholder() {
     return Container(
       width: widget.width,
       height: widget.height,
       decoration: BoxDecoration(
-        color: Colors.grey[300],
+        color: const Color(0xFFE5E7EB),
         borderRadius: BorderRadius.circular(widget.borderRadius),
       ),
       child: Icon(
         widget.isLocked ? Icons.lock : Icons.play_arrow,
         color: Colors.white,
-        size: widget.width > 60 ? 32 : 24,
+        size: widget.width > 60 ? 28 : 22,
       ),
     );
   }
@@ -148,7 +149,10 @@ class _VideoThumbnailWidgetState extends State<VideoThumbnailWidget>
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(widget.borderRadius),
         image: DecorationImage(
-          image: FileImage(File(_thumbnailPath!)),
+          image: ResizeImage(
+            FileImage(File(_thumbnailPath!)),
+            width: (widget.width * 2).round(),
+          ),
           fit: BoxFit.cover,
         ),
       ),
@@ -179,16 +183,9 @@ class _VideoThumbnailWidgetState extends State<VideoThumbnailWidget>
 
   @override
   Widget build(BuildContext context) {
-    super.build(context);
-
-    Widget content;
-    if (_isLoading) {
-      content = _buildLoadingWidget();
-    } else if (_hasError || _thumbnailPath == null) {
-      content = _buildFallbackWidget();
-    } else {
-      content = _buildThumbnailWidget();
-    }
+    final content = _thumbnailPath == null
+        ? _buildPlaceholder()
+        : _buildThumbnailWidget();
 
     if (widget.onTap != null) {
       return InkWell(

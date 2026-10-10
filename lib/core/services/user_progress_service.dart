@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -44,7 +45,7 @@ class UserProgressService {
     // Validate inputs
     if (lectureId.isEmpty) {
       debugPrint('[UserProgressService] Error: lectureId is empty');
-      return {'success': false, 'message': 'Lecture ID is required'};
+      return {'success': false, 'message': 'errors.lecture_id_required'.tr()};
     }
 
     // Skip if progress hasn't changed significantly (unless immediate)
@@ -106,7 +107,7 @@ class UserProgressService {
       final token = await _getToken();
       if (token == null) {
         debugPrint('[UserProgressService] Error: No auth token');
-        return {'success': false, 'message': 'Authentication required'};
+        return {'success': false, 'message': 'errors.authentication_required'.tr()};
       }
 
       final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.userProgress}');
@@ -136,22 +137,22 @@ class UserProgressService {
         return {
           'success': true,
           'data': data['data'],
-          'message': data['message'] ?? 'Progress saved',
+          'message': data['message'] ?? 'errors.progress_saved'.tr(),
         };
       } else {
         final data = jsonDecode(response.body);
         debugPrint('[UserProgressService] API Error: ${response.statusCode} - ${data['message']}');
         return {
           'success': false,
-          'message': data['message'] ?? 'Failed to save progress (${response.statusCode})',
+          'message': data['message'] ?? 'errors.failed_save_progress_status'.tr(args: ['${response.statusCode}']),
         };
       }
     } on TimeoutException {
       debugPrint('[UserProgressService] Error: Request timeout');
-      return {'success': false, 'message': 'Request timeout'};
+      return {'success': false, 'message': 'errors.request_timeout'.tr()};
     } catch (e) {
       debugPrint('[UserProgressService] Error: $e');
-      return {'success': false, 'message': 'Network error: $e'};
+      return {'success': false, 'message': 'errors.network_error'.tr(args: ['$e'])};
     } finally {
       _isSending = false;
       
@@ -192,7 +193,7 @@ class UserProgressService {
       );
     }
     
-    return {'success': true, 'message': 'No pending updates'};
+    return {'success': true, 'message': 'errors.no_pending_updates'.tr()};
   }
 
   /// Cancel any pending debounced calls

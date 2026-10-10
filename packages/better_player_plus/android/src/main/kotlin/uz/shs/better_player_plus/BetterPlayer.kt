@@ -523,6 +523,9 @@ internal class BetterPlayer(
         exoPlayer?.setAudioAttributes(
             AudioAttributes.Builder()
                 .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                // Screen recorders must not capture lecture audio
+                // (AudioPlaybackCapture, Android 10+; ignored below).
+                .setAllowedCapturePolicy(C.ALLOW_CAPTURE_BY_NONE)
                 .build(),
             !mixWithOthers
         )
@@ -554,15 +557,26 @@ internal class BetterPlayer(
 
     fun setTrackParameters(width: Int, height: Int, bitrate: Int) {
         val parametersBuilder = trackSelector.buildUponParameters()
-        if (width != 0 && height != 0) {
-            parametersBuilder.setMaxVideoSize(width, height)
-        }
-        if (bitrate != 0) {
-            parametersBuilder.setMaxVideoBitrate(bitrate)
-        }
         if (width == 0 && height == 0 && bitrate == 0) {
+            // Auto: drop every constraint a previous manual choice left behind.
             parametersBuilder.clearVideoSizeConstraints()
+            parametersBuilder.setMinVideoSize(0, 0)
             parametersBuilder.setMaxVideoBitrate(Int.MAX_VALUE)
+            parametersBuilder.setMinVideoBitrate(0)
+        } else {
+            // A manual rendition: pin the size (min == max) so the adaptive
+            // selector cannot drift to another rendition, and replace — not
+            // accumulate — the previous choice's limits. Position is kept:
+            // only the track selection changes.
+            if (width != 0 && height != 0) {
+                parametersBuilder.setMaxVideoSize(width, height)
+                parametersBuilder.setMinVideoSize(width, height)
+            } else {
+                parametersBuilder.clearVideoSizeConstraints()
+                parametersBuilder.setMinVideoSize(0, 0)
+            }
+            parametersBuilder.setMaxVideoBitrate(if (bitrate != 0) bitrate else Int.MAX_VALUE)
+            parametersBuilder.setMinVideoBitrate(0)
         }
         trackSelector.setParameters(parametersBuilder)
     }

@@ -16,6 +16,7 @@ import '../models/pdf_annotation.dart';
 import '../managers/pdf_annotation_manager.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../../../../core/utils/coerce.dart';
+import '../../../../core/services/student_scope.dart';
 import '../../../../core/network/api_constants.dart';
 import '../../../../core/utils/watermark_text.dart';
 import '../../../../core/services/feature_manager.dart';
@@ -24,6 +25,7 @@ import '../../../../core/services/download_service.dart';
 import '../../../../core/services/offline_view_service.dart';
 import '../../../../core/services/chapter_audio_watermark_service.dart';
 import '../../../../core/services/video_watch_tracker.dart';
+import '../../../../core/services/capture_media_guard.dart';
 import '../../services/video_frame_capture_service.dart';
 import '../../../../core/services/encrypted_video_service.dart';
 import '../../../../core/services/user_progress_service.dart';
@@ -148,6 +150,7 @@ class VideoControllerHandler {
     final ctrl = _controller;
     _controller = null;
     if (ctrl != null) {
+      CaptureMediaGuard.detach(ctrl);
       try {
         await ctrl.pause();
         ctrl.dispose();
@@ -213,6 +216,7 @@ class VideoControllerHandler {
     );
 
     _controller = BetterPlayerController(_buildConfiguration());
+    CaptureMediaGuard.attachBetterPlayer(_controller!);
 
     final completer = Completer<BetterPlayerController?>();
 
@@ -349,6 +353,7 @@ class VideoControllerHandler {
     _controller = BetterPlayerController(
       _buildConfiguration(autoPlay: autoPlay),
     );
+    CaptureMediaGuard.attachBetterPlayer(_controller!);
 
     final completer = Completer<BetterPlayerController?>();
 
@@ -438,6 +443,11 @@ class LectureDetailScreen extends StatefulWidget {
   final int initialPosition;
   final int? maxViews;
 
+  /// Course lock state as the caller knows it (the web's `courseIsLocked`).
+  /// `null` means unknown: the screen then reads enrolment from
+  /// [StudentScopeService], treating an unavailable scope as locked.
+  final bool? courseLocked;
+
   const LectureDetailScreen({
     super.key,
     required this.lectureId,
@@ -448,6 +458,7 @@ class LectureDetailScreen extends StatefulWidget {
     this.offlineVideoPath,
     this.initialPosition = 0,
     this.maxViews,
+    this.courseLocked,
   });
 
   @override
@@ -508,8 +519,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   bool _isLocked = true;
   bool _canWatch = false;
   bool _isActivated = false;
-  bool _isFreePreview = false;
-  bool _isFreePreviewAttachment = false;
+
+  /// Whether the owning course is locked for this student; drives the web's
+  /// chapter access helpers (PDF visibility, PDF-only detection).
+  bool _courseLocked = true;
   late int _maxViews;
   int _currentViews = 0;
   int _viewByMinute = 0;
@@ -563,6 +576,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   bool _isRecording = false;
   String? _recordedPath;
   Duration _recordDuration = Duration.zero;
+  Timer? _recordingTimer;
 
   final _recordedPosition = ValueNotifier<Duration>(Duration.zero);
   final _recordedTotalDuration = ValueNotifier<Duration>(Duration.zero);
@@ -942,6 +956,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     _videoHandler.dispose();
     _commentController.dispose();
     _commentFocusNode.dispose();
+    _recordingTimer?.cancel();
     _bufferingTimer?.cancel();
     _hideControlsTimer?.cancel();
     _recordSub?.cancel();
@@ -1130,7 +1145,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         setState(() => _isDownloading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Download error: $e'),
+            content: Text('course.download_error'.tr(args: ['$e'])),
             backgroundColor: const Color(0xFFFF4B4B),
           ),
         );
@@ -1179,9 +1194,17 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         final path =
             '${directory.path}/recording_${DateTime.now().millisecondsSinceEpoch}.m4a';
         await _audioRecorder.start(const RecordConfig(), path: path);
+        _recordingTimer?.cancel();
         setState(() {
           _isRecording = true;
           _recordedPath = null;
+          _recordDuration = Duration.zero;
+        });
+        _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+          if (!mounted) return;
+          setState(() {
+            _recordDuration += const Duration(seconds: 1);
+          });
         });
       } else {
         if (mounted) {
@@ -1201,10 +1224,13 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
   Future<void> _stopRecording() async {
     try {
+      _recordingTimer?.cancel();
+      _recordingTimer = null;
       final path = await _audioRecorder.stop();
       setState(() {
         _isRecording = false;
         _recordedPath = path;
+        // _recordDuration keeps its final value so it can be displayed
       });
     } catch (e) {
       debugPrint('Error stopping recording: $e');
@@ -1217,11 +1243,11 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   /// tapped, not at post time — otherwise the video keeps playing while the
   /// student types and the attached frame no longer shows what they asked
   /// about.
-  Future<void> _captureMoment() async {
+  Future<void> _captureMoment([int? specificMoment]) async {
     if (_isCapturingMoment) return;
     if (widget.chapterId.isEmpty) return;
 
-    final moment = _videoHandler.currentPosition.inSeconds;
+    final moment = specificMoment ?? _videoHandler.currentPosition.inSeconds;
     setState(() {
       _isCapturingMoment = true;
       _momentSeconds = moment;
@@ -1259,11 +1285,15 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     setState(() {
       _momentFrame = frame;
       _isCapturingMoment = false;
-      _discussionTab = 'text';
+      _discussionTab = 'comment';
     });
 
     // Give the composer focus so the student can type straight away.
-    FocusScope.of(context).requestFocus(_commentFocusNode);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        FocusScope.of(context).requestFocus(_commentFocusNode);
+      }
+    });
   }
 
   void _dismissMomentFrame() {
@@ -1512,6 +1542,29 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     return candidates;
   }
 
+  Future<bool> _resolveCourseLocked() async {
+    final known = widget.courseLocked;
+    if (known != null) return known;
+    try {
+      final scope = await StudentScopeService().load();
+      return !scope.isEnrolled(widget.courseId);
+    } catch (_) {
+      // Unknown enrolment: locked is the safe direction.
+      return true;
+    }
+  }
+
+  /// Whether the chapter PDF may be opened — the website rule, plus the
+  /// offline views this device has spent since the last sync.
+  bool get _canOpenChapterPdf {
+    if (_maxViews > 0 &&
+        chapterMaxViews(_chapterData) != null &&
+        _currentViews >= _maxViews) {
+      return false;
+    }
+    return canOpenChapterPdf(_chapterData, courseLocked: _courseLocked);
+  }
+
   Future<void> _loadChapterDetails() async {
     if (widget.chapterId.isEmpty) {
       setState(() {
@@ -1522,6 +1575,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     }
 
     setState(() => _isLoadingChapter = true);
+    _courseLocked = await _resolveCourseLocked();
     try {
       final result = await _chapterRepository.getChapterById(widget.chapterId);
       if (result['success'] && mounted) {
@@ -1548,10 +1602,6 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
           _isLocked = coerceFlagOrNull(attributes['is_locked']) ?? true;
           _canWatch = coerceCanWatchExplicitTrue(attributes['can_watch']);
           _isActivated = coerceFlagOrNull(attributes['is_activated']) == true;
-          _isFreePreview = coerceFlag(attributes['is_free_preview']);
-          _isFreePreviewAttachment = coerceFlag(
-            attributes['is_free_preview_attachment'],
-          );
           _maxViews = apiMaxViews;
           _currentViews = totalViews;
           _viewByMinute =
@@ -1582,9 +1632,12 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
           return;
         }
 
-        // If chapter is PDF-only (no video and has PDF attachment), redirect to PdfReviewerScreen
+        // PDF-only chapter (no video, not even one withheld behind the lock)
+        // whose PDF the student may open: go straight to the reviewer. A
+        // locked PDF stays on this screen, which shows the activation prompt.
         if ((_videoCandidates.isEmpty || _videoUrl.isEmpty) &&
-            (chapterIsPdfOnly(_chapterData) || _attachments.isNotEmpty)) {
+            chapterIsPdfOnly(_chapterData, courseLocked: _courseLocked) &&
+            _canOpenChapterPdf) {
           final pdfList = chapterPdfAttachments(_chapterData);
           dynamic chosenPdf = pdfList.isNotEmpty ? pdfList.first : null;
           if (chosenPdf == null && _attachments.isNotEmpty) {
@@ -1820,7 +1873,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         backgroundColor: const Color(0xFFFF4B4B),
         duration: const Duration(seconds: 5),
         action: SnackBarAction(
-          label: 'Retry',
+          label: 'common.retry'.tr(),
           textColor: Colors.white,
           onPressed: _retryVideo,
         ),
@@ -1866,7 +1919,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
             backgroundColor: const Color(0xFFFF4B4B),
             duration: const Duration(seconds: 5),
             action: SnackBarAction(
-              label: 'Try Again',
+              label: 'common.try_again'.tr(),
               textColor: Colors.white,
               onPressed: () {
                 _retryCount = 0;
@@ -1989,7 +2042,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     try {
       final encryptedFile = File(widget.offlineVideoPath!);
       if (!await encryptedFile.exists()) {
-        throw Exception('Downloaded video file not found');
+        throw Exception('course.offline_video_not_found'.tr());
       }
 
       // Decryption belongs to EncryptedVideoService, which picks the right
@@ -2002,7 +2055,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         videoId,
       );
       if (decryptedPath == null) {
-        throw Exception('Downloaded video could not be decrypted');
+        throw Exception('course.offline_video_decrypt_failed'.tr());
       }
       final tempFile = File(decryptedPath);
 
@@ -2286,7 +2339,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     showGeneralDialog(
       context: context,
       barrierDismissible: false,
-      barrierLabel: 'Dismiss',
+      barrierLabel: 'common.dismiss'.tr(),
       barrierColor: Colors.black.withValues(alpha: 0.6),
       transitionDuration: const Duration(milliseconds: 320),
       transitionBuilder: (context, animation, secondaryAnimation, child) {
@@ -2704,6 +2757,8 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   _buildAskButton(),
+                                  const SizedBox(height: 10),
+                                  _buildDiscussionsButton(),
                                   const SizedBox(height: 20),
                                   LectureHeader(
                                     lectureTitle: widget.lectureTitle,
@@ -2718,11 +2773,11 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                                   AttachmentsList(
                                     attachments: _attachments,
                                     onOpenPdf: _openPdf,
-                                    chapterIsLocked: _isLocked,
-                                    chapterIsActivated: _isActivated,
-                                    chapterIsFreePreview: _isFreePreview,
-                                    chapterIsFreePreviewAttachment:
-                                        _isFreePreviewAttachment,
+                                    canOpen: _canOpenChapterPdf,
+                                    isFreePreview: !isChapterFullyUnlocked(
+                                      _chapterData,
+                                      courseLocked: _courseLocked,
+                                    ),
                                   ),
                                   const SizedBox(height: 24),
                                   QuizzesList(
@@ -2745,6 +2800,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                 discussions: _discussions,
                 currentTab: _discussionTab,
                 isRecording: _isRecording,
+                recordDuration: _recordDuration,
                 recordedPath: _recordedPath,
                 recordedPosition: _recordedPosition,
                 recordedTotalDuration: _recordedTotalDuration,
@@ -2754,6 +2810,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                 onClose: _closeDiscussionPanel,
                 onTabChanged: (tab) => setState(() => _discussionTab = tab),
                 commentController: _commentController,
+                commentFocusNode: _commentFocusNode,
                 onPost: _postDiscussion,
                 onStartRecording: _startRecording,
                 onStopRecording: _stopRecording,
@@ -3047,12 +3104,13 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
   Future<void> _enterFullScreen() async {
     if (_betterPlayerController == null ||
-        !(_betterPlayerController!.isVideoInitialized() ?? false))
+        !(_betterPlayerController!.isVideoInitialized() ?? false)) {
       return;
+    }
 
     setState(() => _isInFullScreen = true);
 
-    await Navigator.of(context).push(
+    final momentSeconds = await Navigator.of(context).push<int>(
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (context) => _FullScreenVideoPlayer(
@@ -3069,7 +3127,14 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
       ),
     );
 
-    if (mounted) setState(() => _isInFullScreen = false);
+    if (mounted) {
+      setState(() => _isInFullScreen = false);
+      if (momentSeconds != null) {
+        _revealControls();
+        _openAskMoment();
+        _captureMoment(momentSeconds);
+      }
+    }
   }
 
   Widget _buildVideoPlayer() {
@@ -3136,19 +3201,19 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                             color: Colors.orange.withValues(alpha: 0.9),
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: const Row(
+                          child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(
+                              const Icon(
                                 Icons.warning_amber_rounded,
                                 color: Colors.white,
                                 size: 16,
                               ),
-                              SizedBox(width: 8),
+                              const SizedBox(width: 8),
                               Flexible(
                                 child: Text(
-                                  'DRM video may not display on emulator. Use physical device.',
-                                  style: TextStyle(
+                                  'course.drm_emulator_warning'.tr(),
+                                  style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 12,
                                   ),
@@ -3599,6 +3664,52 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     );
   }
 
+  /// Opens the discussion panel on its own, without snapshotting the video.
+  ///
+  /// "Ask about this moment" captures the frame and jumps to the composer, so
+  /// a student who only wants to read what others asked had no way in. The web
+  /// player has the same pair of buttons, with the count on this one.
+  Widget _buildDiscussionsButton() {
+    final count = _discussions.length;
+
+    return GestureDetector(
+      onTap: () {
+        setState(() => _discussionTab = 'all');
+        _openAskMoment();
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFD7DCF5)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const FaIcon(
+              FontAwesomeIcons.comments,
+              color: Color(0xFF3451E5),
+              size: 16,
+            ),
+            const SizedBox(width: 10),
+            Text(
+              count > 0
+                  ? 'course.discussions_with_count'.tr(args: ['$count'])
+                  : 'course.discussions'.tr(),
+              style: const TextStyle(
+                color: Color(0xFF3451E5),
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildAskButton() {
     return GestureDetector(
       onTap: () {
@@ -3648,23 +3759,14 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   // التعديل الأساسي: فتح الـ PDF مع إيقاف الفيديو مؤقتًا
   void _openPdf(String path, String name) async {
     // Check permission before opening
-    final canOpen = _permissionService.canOpenAttachment(
-      fileIsLocked:
-          false, // Attachments don't have file-level lock in lecture detail
-      chapterIsLocked: _isLocked,
-      chapterIsActivated: _isActivated,
-      chapterIsFreePreview: _isFreePreview,
-      chapterIsFreePreviewAttachment: _isFreePreviewAttachment,
-      currentViews: _currentViews,
-      maxViews: _maxViews,
-    );
+    final canOpen = _canOpenChapterPdf;
 
     if (!canOpen) {
       // Show locked attachment dialog
       _permissionService.showLockedAttachmentDialog(
         context: context,
         chapterId: int.tryParse(widget.chapterId) ?? 0,
-        courseId: null, // Course ID not available in lecture detail
+        courseId: widget.courseId.isEmpty ? null : widget.courseId,
         onRefresh: () {
           _loadChapterDetails();
         },
@@ -3752,7 +3854,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
       if (mounted) {
         setState(() {
           _isPdfLoading = false;
-          _errorMessage = 'Error loading PDF: $e';
+          _errorMessage = 'pdf.error_loading'.tr(args: ['$e']);
         });
       }
     }
@@ -4563,6 +4665,7 @@ class _FullScreenVideoPlayer extends StatefulWidget {
 class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
   bool _exitCalled = false;
   bool _showControls = true;
+  bool _isProcessingAskMoment = false;
   Timer? _hideControlsTimer;
 
   @override
@@ -4616,7 +4719,7 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
-  Future<void> _exitFullScreenMode() async {
+  Future<void> _exitFullScreenMode({bool resumePlay = true}) async {
     if (_exitCalled) return;
     _exitCalled = true;
 
@@ -4628,18 +4731,94 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
 
     widget.onExit?.call();
 
-    try {
-      final isInit = widget.sourceController.isVideoInitialized() ?? false;
-      if (isInit) {
-        await widget.sourceController.play();
+    if (resumePlay) {
+      try {
+        final isInit = widget.sourceController.isVideoInitialized() ?? false;
+        if (isInit) {
+          await widget.sourceController.play();
+        }
+      } catch (e) {
+        debugPrint('[Fullscreen] Error resuming source: $e');
       }
-    } catch (e) {
-      debugPrint('[Fullscreen] Error resuming source: $e');
     }
   }
 
   void _pop() {
     Navigator.of(context).pop();
+  }
+
+  Future<void> _onAskMomentPressed() async {
+    if (_isProcessingAskMoment) return;
+    setState(() => _isProcessingAskMoment = true);
+
+    try {
+      await widget.sourceController.pause();
+    } catch (_) {}
+
+    final momentSeconds =
+        widget.sourceController.videoPlayerController?.value.position.inSeconds ??
+        0;
+
+    await _exitFullScreenMode(resumePlay: false);
+
+    if (mounted) {
+      Navigator.of(context).pop(momentSeconds);
+    }
+  }
+
+  Widget _buildAskMomentAction() {
+    return Semantics(
+      button: true,
+      label: 'course.ask_this_moment'.tr(),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _isProcessingAskMoment ? null : _onAskMomentPressed,
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 36),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            margin: const EdgeInsets.symmetric(horizontal: 4),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.25),
+                width: 1,
+              ),
+            ),
+            child: _isProcessingAskMoment
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.add_comment_outlined,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'course.ask_this_moment'.tr(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -4672,6 +4851,7 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
                 onInteraction: _revealControls,
                 isFullScreen: true,
                 onToggleFullScreen: _pop,
+                leadingAction: _buildAskMomentAction(),
               ),
             ),
           ],

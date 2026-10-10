@@ -1,4 +1,12 @@
 {
+  "schedules": {
+  "search": "Search by course or file name",
+  "no_date": "No scheduled date",
+  "load_error": "Could not load schedules",
+  "empty": "No matching schedules",
+  "retry": "Retry",
+  "title": "Course schedules"
+},
   "settings": {
     "title": "Settings",
     "section_preferences": "PREFERENCES",
@@ -35,7 +43,13 @@
     "a4": "Check your internet connection, ensure the app is updated to the latest version, or try downloading the video for offline viewing."
   },
   "terms_privacy": {
-    "title": "Terms & Privacy Policy"
+    "title": "Terms & Privacy Policy",
+    "intro": "How student data is collected, used, and protected inside the platform.",
+    "p1": "01 Learnoo may collect student information such as name, mobile number, email, university, faculty, selected centers, course activity, and support history to provide educational services effectively.",
+    "p2": "02 The platform may also use progress data, watch history, notes, exam records, and community interactions to personalize the learning experience.",
+    "p3": "03 Student data is used to manage access, deliver notifications, support communication, improve course recommendations, and maintain account security.",
+    "p4": "04 Sensitive account and activity data should be handled according to platform security standards, with access limited to authorized administrative roles when operationally necessary.",
+    "p5": "05 Learnoo does not display personal data publicly beyond the features required for learning interactions such as community, Q&A, or instructor communication, depending on the app settings."
   },
   "auth": {
     "checking_account": "Checking account...",
@@ -222,7 +236,11 @@
     "untitled_exam": "Untitled exam",
     "retry": "Retry",
     "view_details_caps": "VIEW DETAILS",
-    "continue_course_caps": "CONTINUE"
+    "continue_course_caps": "CONTINUE",
+    "no_subjects_available": "No subjects available",
+    "no_summaries_available": "No summaries available",
+    "no_library_materials": "No library materials available",
+    "profile_not_complete": "Profile not complete"
   },
   "course": {
     "course": "Course",
@@ -394,6 +412,9 @@
     "live_join_failed": "Could not join the session",
     "live_in_progress": "The session is running in the meeting window",
     "rejoin_live": "Return to the session",
+    "whiteboard_view_only": "Whiteboard is view-only",
+    "live_webview_failed": "The live session could not be loaded. Check your connection and try again.",
+    "join_with_native_meeting": "Join with the meeting app instead",
     "ask_this_moment": "Ask about this moment",
     "capturing_moment": "Capturing this moment…",
     "frame_attached": "Video frame attached",
@@ -435,7 +456,20 @@
     "reply_offline_queued": "Reply queued for when you are back online",
     "reply_posted": "Reply posted successfully",
     "error_posting_reply": "Failed to post reply",
-    "lecture_no_parts": "No video parts in this lecture yet."
+    "lecture_no_parts": "No video parts in this lecture yet.",
+    "hero_lecture_count": "{} Lectures",
+    "sheet_video": "Video",
+    "chapter_content_locked": "This lesson's video and files are locked",
+    "some_content_locked": "Part of this lesson is locked",
+    "activate_chapter_to_access": "Activate the chapter to access its locked content",
+    "reactivate": "Re-activate",
+    "no_exams_subject": "No exams available for this subject",
+    "download_error": "Download error: {}",
+    "drm_emulator_warning": "DRM video may not display on emulator. Use physical device.",
+    "offline_video_not_found": "Downloaded video file not found",
+    "offline_video_decrypt_failed": "Downloaded video could not be decrypted",
+    "discussions": "Discussions",
+    "discussions_with_count": "Discussions ({})"
   },
   "exams": {
     "title": "Quizzes & Exams",
@@ -628,7 +662,20 @@
     "all_deleted": "All videos deleted successfully",
     "no_downloads": "No Downloads Yet",
     "no_downloads_desc": "Download videos to watch them offline anytime",
-    "storage_used": "Storage Used"
+    "storage_used": "Storage Used",
+    "used": "Used: {}",
+    "free": "Free: {}",
+    "notif_downloading_video": "Downloading Video",
+    "notif_encrypting_video": "Encrypting Video",
+    "notif_complete": "Download Complete",
+    "notif_ready_offline": "{} - Ready to watch offline",
+    "notif_cancelled": "Download Cancelled",
+    "notif_failed": "Download Failed",
+    "failed_detail": "Download failed: {}",
+    "no_segments": "No video segments found in HLS playlist",
+    "cancelled_by_user": "Download cancelled by user",
+    "channel_name": "Downloads",
+    "channel_description": "Shows download progress notifications"
   },
   "profile": {
     "title": "My Profile",
@@ -673,7 +720,9 @@
     "change_photo": "Change Profile Photo",
     "camera": "Camera",
     "gallery": "Gallery",
-    "remove_photo": "Remove Photo"
+    "remove_photo": "Remove Photo",
+    "academic_required": "Please select your university, center and faculty",
+    "error_picking_image": "Error picking image: {}"
   },
   "press_back_again_to_exit": "Press back again to exit",
   "update_available": "Update Available",
@@ -791,7 +840,26 @@
     "reaction_haha": "Haha",
     "reaction_wow": "Wow",
     "reaction_sad": "Sad",
-    "reaction_angry": "Angry"
+    "reaction_angry": "Angry",
+    "new_post": "New Post",
+    "ok": "OK",
+    "post_pending_title": "Post sent",
+    "post_pending_message": "Your post has been sent and will be published after admin approval.",
+    "post_published_title": "Post published",
+    "post_published_message": "Your post was published.",
+    "posts_count": {
+      "one": "{} post",
+      "other": "{} posts"
+    },
+    "course_community": "Course Community",
+    "department_community": "Department Community",
+    "info_card_desc": "Stay connected with course updates, links, and class discussions for {}.",
+    "quick_links": "Quick Links",
+    "no_posts_course": "No posts yet in this course",
+    "no_posts_department": "No posts yet in this department",
+    "be_first_discussion": "Be the first to start a discussion!",
+    "recent_posts": "Recent Posts",
+    "load_posts_failed": "Failed to load community posts"
   },
   "exam": {
     "warning_title": "Warning!",
@@ -823,7 +891,28 @@
     "search_department": "Search departments…",
     "no_departments": "No departments available for this faculty",
     "skip_department": "Skip this step",
-    "finish": "Finish"
+    "finish": "Finish",
+    "step_x_of_y": "Step {} of {}",
+    "select_university": "Select university",
+    "search_universities": "Search universities...",
+    "select_faculty": "Select faculty",
+    "search_faculties": "Search faculties...",
+    "select_center": "Select center",
+    "search_centers": "Search centers...",
+    "selected_university": "Selected university:",
+    "selected_faculty": "Selected faculty:",
+    "selected_center": "Selected center:",
+    "empty_faculties": "No faculties available",
+    "empty_centers": "No centers available",
+    "next": "Next",
+    "save_continue": "Save and continue",
+    "save_error": "Failed to save profile",
+    "profile_saved_title": "Profile completed",
+    "profile_saved_body": "Your university, center and faculty details have been saved successfully",
+    "go_to_home": "Go to home",
+    "department_saved_title": "Your academic profile has been set successfully.",
+    "department_saved_body": "Courses will be filtered based on your specialization.",
+    "go_to_home_caps": "GO TO HOME"
   },
   "support": {
     "title": "Support",
@@ -864,7 +953,31 @@
     "no_alerts": "No alerts at the moment"
   },
   "notes": {
-    "download_attachment": "Download attachment"
+    "download_attachment": "Download attachment",
+    "attachment": "Attachment",
+    "open_attachment": "Open attachment",
+    "open_attachment_failed": "Could not open the attachment",
+    "type_summary": "Summary",
+    "type_note": "Notes",
+    "type_highlight": "Highlights",
+    "type_key_point": "Key Point",
+    "type_important": "Important Notice",
+    "type_video_note": "Video Note",
+    "course": "Course",
+    "lecture": "Lecture",
+    "content": "Content",
+    "no_content": "No content available.",
+    "untitled": "Untitled Note",
+    "list_title": "Notes & Summaries",
+    "search_hint": "Search notes...",
+    "empty": "No notes found",
+    "pull_to_refresh": "Pull down to refresh",
+    "retry": "Retry",
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "days_ago": "{} days ago",
+    "weeks_ago": "{} weeks ago",
+    "load_failed": "Failed to load notes"
   },
   "pdf": {
     "zoom_in": "Zoom in",
@@ -886,11 +999,41 @@
     "retry": "Retry",
     "file_not_available": "PDF file not available",
     "failed_save_annotation": "Failed to save annotation",
-    "changes_discarded": "Changes discarded"
+    "changes_discarded": "Changes discarded",
+    "error_loading": "Error loading PDF: {}",
+    "failed_load": "Failed to load PDF",
+    "undo": "Undo",
+    "discard_changes_tooltip": "Discard Changes",
+    "saving": "Saving...",
+    "pen": "Pen",
+    "highlighter": "Highlighter",
+    "eraser": "Eraser"
   },
   "academic_journey": "Your academic journey starts here",
   "common": {
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "retry": "Retry",
+    "try_again": "Try Again",
+    "dismiss": "Dismiss",
+    "price_egp": "EGP {}",
+    "loading": "Loading...",
+    "user": "User",
+    "course": "Course",
+    "chapter": "Chapter",
+    "lecture": "Lecture",
+    "subject": "Subject",
+    "untitled": "Untitled",
+    "unknown": "Unknown",
+    "unknown_instructor": "Unknown Instructor",
+    "completed": "Completed",
+    "continue": "Continue",
+    "unlock": "Unlock",
+    "open": "Open",
+    "recently": "Recently",
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "pdf_document": "PDF Document",
+    "student": "Student"
   },
   "feature": {
     "community": "Community",
@@ -979,7 +1122,24 @@
     "open_file": "Open",
     "no_app_to_open": "No app on this device can open this file.",
     "storage_permission_denied": "Storage permission is required to save the file.",
-    "download_save_failed": "The file could not be saved to the device."
+    "download_save_failed": "The file could not be saved to the device.",
+    "material_fallback": "Material",
+    "pdf_url_unavailable": "PDF URL not available",
+    "material_unlocked_title": "Material Unlocked!",
+    "material_unlocked_desc": "You can now access this material an anytime from your Electronic Library.",
+    "unlocked_on": "Unlocked on",
+    "back_to_library_btn": "Back to Library",
+    "enter_code_error": "Please enter an activation code",
+    "invalid_library_id": "Invalid library ID",
+    "invalid_activation_code": "Invalid activation code",
+    "connection_error_retry": "Connection error. Please try again.",
+    "unlock_material_title": "Unlock Material",
+    "enter_activation_code": "Enter Activation Code",
+    "enter_code_desc": "Enter the code you received to unlock this PDF material.",
+    "activation_code_label": "Activation Code",
+    "no_code_help": "Didn't receive a code? Please contact support. Codes are provided after payment.",
+    "verifying": "Verifying...",
+    "verify_code": "Verify Code"
   },
   "live": {
     "title": "Live Sessions",
@@ -1026,6 +1186,248 @@
     "home_fallback_title": "Live Session",
     "home_live_join": "Live Now (Join)",
     "time_not_available": "Time Not Available",
-    "day_short": "d"
-  }
+    "day_short": "d",
+    "starts_in": "Starts in",
+    "live_now": "Live Now",
+    "elapsed": "Live for"
+  },
+  "course_activation": {
+    "title": "Unlock Course",
+    "description": "Enter your activation code below to unlock full access to this course.",
+    "code_hint": "e.g. ABCD-1234",
+    "enter_code": "Please enter an activation code.",
+    "invalid_course": "This course cannot be activated (invalid id).",
+    "error_generic": "Activation failed. Please try again.",
+    "success": "Course activated successfully!",
+    "cancel": "Cancel",
+    "submit": "Unlock Course",
+    "unlock_button": "Unlock"
+  },
+  "category_tree": {
+    "course_details": "Course Details",
+    "educational_programs": "Educational Programs",
+    "explore": "Explore courses & departments",
+    "categories_available": {
+      "one": "{} category available",
+      "other": "{} categories available"
+    },
+    "courses_available": {
+      "one": "{} course available",
+      "other": "{} courses available"
+    },
+    "mode_courses": "Courses",
+    "mode_levels": "Levels",
+    "root": "Root",
+    "courses_count": {
+      "one": "{} Course",
+      "other": "{} Courses"
+    },
+    "sub_levels_count": {
+      "one": "{} Sub-level",
+      "other": "{} Sub-levels"
+    },
+    "notes_count": {
+      "one": "{} Note",
+      "other": "{} Notes"
+    },
+    "lectures_count": {
+      "one": "{} Lecture",
+      "other": "{} Lectures"
+    },
+    "students_count": {
+      "one": "{} Student",
+      "other": "{} Students"
+    },
+    "empty_title": "No subjects or courses found",
+    "empty_message": "There are currently no items available in this category level.",
+    "go_back": "Go Back",
+    "load_failed": "Failed to load categories",
+    "check_connection": "Please check your internet connection and try again.",
+    "try_again": "Try Again",
+    "untitled_course": "Untitled Course",
+    "untitled_category": "Untitled Category"
+  },
+  "course_discussion": {
+    "show_replies": "Show replies ({})"
+  },
+  "notifications_push": {
+    "channel_name": "General",
+    "channel_description": "Announcements and updates from your courses",
+    "fallback_title": "New notification",
+    "fallback_message": "You have a new notification on Learnoo",
+    "summary_title": "More notifications",
+    "summary_body": "+{} more new notifications. Tap to view them all.",
+    "app_channel_name": "App Notifications",
+    "app_channel_description": "Shows app notifications"
+  },
+  "time": {
+    "just_now": "Just now",
+    "minutes_ago": {
+      "one": "{} minute ago",
+      "other": "{} minutes ago"
+    },
+    "hours_ago": {
+      "one": "{} hour ago",
+      "other": "{} hours ago"
+    },
+    "days_ago": {
+      "one": "{} day ago",
+      "other": "{} days ago"
+    },
+    "weeks_ago": {
+      "one": "{} week ago",
+      "other": "{} weeks ago"
+    },
+    "months_ago": {
+      "one": "{} month ago",
+      "other": "{} months ago"
+    },
+    "years_ago": {
+      "one": "{} year ago",
+      "other": "{} years ago"
+    }
+  },
+  "errors": {
+    "failed_fetch_posts": "Failed to fetch posts",
+    "request_failed": "Request failed",
+    "upload_failed": "Upload failed",
+    "no_internet": "No internet connection",
+    "bad_response": "Bad response from server",
+    "no_token": "No token found",
+    "access_denied": "Access denied",
+    "session_expired_sign_in": "Session expired, please sign in again",
+    "session_expired_logged_out": "Session expired, logged out",
+    "registration_succeeded": "Registration succeeded",
+    "login_successful": "Login successful",
+    "logout_failed": "Logout failed",
+    "logged_out": "Logged out successfully",
+    "verification_code_sent": "Verification code sent",
+    "failed_send_verification_email": "Failed to send verification email",
+    "verification_email_sent": "Verification email sent",
+    "failed_verify_phone": "Failed to verify phone",
+    "phone_verified": "Phone verified successfully",
+    "failed_verify_email": "Failed to verify email",
+    "email_verified": "Email verified successfully",
+    "failed_fetch_universities": "Failed to fetch universities",
+    "failed_fetch_centers": "Failed to fetch centers",
+    "failed_fetch_faculties": "Failed to fetch faculties",
+    "profile_updated": "Profile updated successfully",
+    "failed_fetch_profile": "Failed to fetch profile",
+    "failed_send_reset_code": "Failed to send password reset code",
+    "reset_code_sent": "Password reset code sent successfully",
+    "code_verified": "Code verified successfully",
+    "password_reset": "Password reset successfully",
+    "failed_fetch_user_profile": "Failed to fetch user profile",
+    "failed_fetch_categories": "Failed to fetch categories",
+    "failed_fetch_comments": "Failed to fetch comments",
+    "comment_empty": "Comment cannot be empty",
+    "failed_post_comment": "Failed to post comment",
+    "failed_fetch_post": "Failed to fetch post",
+    "post_created": "Post created successfully",
+    "post_updated": "Post updated successfully",
+    "failed_update_post": "Failed to update post",
+    "post_deleted": "Post deleted successfully",
+    "failed_delete_post": "Failed to delete post",
+    "reaction_added": "Reaction added successfully",
+    "failed_react": "Failed to react to post",
+    "reaction_removed": "Reaction removed successfully",
+    "failed_remove_reaction": "Failed to remove reaction",
+    "failed_fetch_social_links": "Failed to fetch social links",
+    "failed_fetch_courses": "Failed to fetch courses",
+    "failed_load_course_details": "Failed to load course details",
+    "failed_fetch_chapters": "Failed to fetch chapters",
+    "failed_fetch_chapter_details": "Failed to fetch chapter details",
+    "failed_fetch_user_progress": "Failed to fetch user progress",
+    "progress_saved_offline": "Progress saved locally, will sync when online",
+    "failed_record_view": "Failed to record view",
+    "unnamed_file": "Unnamed File",
+    "failed_fetch_files": "Failed to fetch files",
+    "failed_fetch_library_files": "Failed to fetch library files",
+    "failed_fetch_activated_courses": "Failed to fetch activated courses",
+    "failed_fetch_course_details": "Failed to fetch course details",
+    "failed_fetch_discussions": "Failed to fetch discussions",
+    "comment_queued": "Comment queued and will be posted when online",
+    "comment_saved_offline": "Comment saved locally, will sync when online",
+    "voice_requires_internet": "Voice comments require internet connection",
+    "failed_post_voice": "Failed to post voice discussion",
+    "failed_fetch_lectures": "Failed to fetch lectures",
+    "failed_fetch_lecture_details": "Failed to fetch lecture details",
+    "failed_fetch_libraries": "Failed to fetch libraries",
+    "failed_fetch_live_rooms": "Failed to fetch live rooms",
+    "failed_fetch_live_room_details": "Failed to fetch live room details",
+    "activation_failed": "Activation failed",
+    "failed_load_departments": "Failed to load departments",
+    "failed_fetch_quiz_questions": "Failed to fetch quiz questions",
+    "failed_fetch_quiz_answers": "Failed to fetch quiz answers",
+    "failed_fetch_quiz_attempts": "Failed to fetch quiz attempts",
+    "failed_fetch_attempts": "Failed to fetch attempts",
+    "empty_answer": "Empty answer",
+    "failed_update_answer": "Failed to update answer",
+    "failed_save_answer": "Failed to save answer",
+    "failed_resolve_chapter": "Failed to resolve chapter",
+    "course_id_not_found": "Course ID not found for this chapter",
+    "failed_fetch_departments": "Failed to fetch departments",
+    "failed_fetch_notifications": "Failed to fetch notifications",
+    "failed_fetch_unread_notifications": "Failed to fetch unread notifications",
+    "notification_marked_read": "Notification marked as read",
+    "failed_mark_read": "Failed to mark notification as read",
+    "all_marked_read": "All notifications marked as read",
+    "failed_mark_all_read": "Failed to mark all notifications as read",
+    "notification_deleted": "Notification deleted",
+    "failed_delete_notification": "Failed to delete notification",
+    "failed_fetch_unread_count": "Failed to fetch unread count",
+    "failed_fetch_notes": "Failed to fetch notes",
+    "failed_fetch_note_details": "Failed to fetch note details",
+    "failed_link_student": "Failed to link the student",
+    "student_linked": "Student linked successfully",
+    "failed_link_students": "Failed to link the students",
+    "students_linked": "Students linked successfully",
+    "failed_load_linked_students": "Failed to load linked students",
+    "failed_load_dashboard": "Failed to load the dashboard",
+    "failed_load_progress": "Failed to load progress",
+    "failed_load_weekly_stats": "Failed to load weekly stats",
+    "failed_load_alerts": "Failed to load alerts",
+    "failed_load_feedback": "Failed to load feedback",
+    "failed_load_activity": "Failed to load activity",
+    "not_authenticated": "Not authenticated",
+    "unauthorized": "Unauthorized",
+    "search_failed": "Search failed",
+    "failed_submit_report": "Failed to submit your report",
+    "failed_load_reports": "Failed to load your reports",
+    "offline_no_cache": "No internet connection and no cached data available",
+    "failed_fetch_data": "Failed to fetch data",
+    "failed_load_activated_courses": "Failed to load activated courses",
+    "failed_load_courses": "Failed to load courses",
+    "lecture_id_required": "Lecture ID is required",
+    "authentication_required": "Authentication required",
+    "progress_saved": "Progress saved",
+    "request_timeout": "Request timeout",
+    "no_pending_updates": "No pending updates",
+    "network_error": "Network error: {}",
+    "failed_save_progress_status": "Failed to save progress ({})"
+  },
+  "notifications": {
+    "load_failed": "Failed to load notifications",
+    "load_more_failed": "Failed to load more notifications",
+    "refresh_failed": "Failed to refresh notifications"
+  },
+  "links": {
+    "could_not_open": "Could not open link: {}",
+    "invalid_url": "Invalid URL: {}",
+    "external_link": "External Link"
+  },
+  "security": {
+    "initializing": "Initializing security...",
+    "scanning": "Scanning for threats...",
+    "screen_recording": "Screen recording detected",
+    "rooted_device": "Rooted/Jailbroken device detected",
+    "split_screen": "Split-screen mode not allowed",
+    "suspicious_apps": "Suspicious apps (Zoom/Meet/Recorders) detected",
+    "retry_scan": "Retry Security Scan",
+    "watermark_opacity": "Watermark Opacity",
+    "secure_video_failed": "Failed to load secure video.\nPlease check your connection or DRM license.",
+    "secure_page_failed": "Failed to load page secure image."
+  },
+  "update_play_store_failed": "Could not open the Play Store. Please update the app manually.",
+  "update_play_store_error": "Could not open the Play Store: {}"
 }

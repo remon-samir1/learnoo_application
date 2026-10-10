@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../../../core/services/device_downloads.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../data/library_repository.dart';
+import '../../data/course_repository.dart';
 import '../../domain/library_material.dart';
 import '../../services/library_download_service.dart';
 import 'pdf_reviewer_screen.dart';
@@ -41,6 +42,9 @@ class _LibraryMaterialDetailScreenState
   final _repository = LibraryRepository();
   final _downloads = LibraryDownloadService();
 
+  final _courses = CourseRepository();
+  final Map<String, String> _courseNames = {};
+
   dynamic _material;
   bool _isLoading = true;
   bool _loadFailed = false;
@@ -53,6 +57,13 @@ class _LibraryMaterialDetailScreenState
     super.initState();
     _material = widget.initialMaterial;
     _load();
+  }
+
+  @override
+  void reassemble() {
+    super.reassemble();
+    // Hot reload preserves State and does not run initState again.
+    _loadCourseNames();
   }
 
   Future<void> _load() async {
@@ -72,6 +83,24 @@ class _LibraryMaterialDetailScreenState
         _loadFailed = true;
       }
     });
+    await _loadCourseNames();
+  }
+
+  Future<void> _loadCourseNames() async {
+    final ids = libraryCourseIds(_material);
+    await Future.wait(ids.map((id) async {
+      if (_courseNames.containsKey(id)) return;
+      try {
+        final result = await _courses.getCourseById(id);
+        if (result['success'] != true) return;
+        final title = libraryTitle(result['data']).trim();
+        if (title.isNotEmpty && mounted) {
+          setState(() => _courseNames[id] = title);
+        }
+      } catch (_) {
+        // Keep the material usable when course details are unavailable.
+      }
+    }));
   }
 
   /// First attachment, as on the website (its per-attachment list is disabled).
@@ -273,6 +302,10 @@ class _LibraryMaterialDetailScreenState
 
   Widget _buildHeader(bool locked) {
     final type = libraryMaterialType(_material);
+    final courseNames = libraryCourseNamesLabel(
+      _material,
+      resolvedNames: _courseNames,
+    );
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: _cardDecoration(),
@@ -289,7 +322,7 @@ class _LibraryMaterialDetailScreenState
           ),
           const SizedBox(height: 6),
           Text(
-            'library.course_ref'.tr(args: [libraryCourseIdsLabel(_material)]),
+            courseNames.isEmpty ? 'live.course_not_available'.tr() : courseNames,
             style: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w500,

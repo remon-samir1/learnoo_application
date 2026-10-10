@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../data/chapter_repository.dart';
+import '../domain/chapter_access.dart';
 
 enum AttachmentAccessState {
   locked,
@@ -12,87 +13,56 @@ enum AttachmentAccessState {
 class AttachmentPermissionService {
   final ChapterRepository _chapterRepository = ChapterRepository();
 
-  /// Check if attachment can be opened based on multiple permission layers
-  /// Priority order (highest to lowest):
-  /// 1. File is_locked == true → BLOCK always
-  /// 2. Chapter is_locked == true → BLOCK all content
-  /// 3. Chapter is_activated == true → ALLOW (subject to view limit)
-  /// 4. Chapter is_free_preview == true + chapter is_free_preview_attachment == true → ALLOW
-  /// 5. Chapter is_free_preview == true + chapter is_free_preview_attachment == false → BLOCK
-  /// 6. View limit exceeded → BLOCK
+  /// Whether a chapter attachment (PDF) can be opened.
+  ///
+  /// Same rule as the website (`isStudentChapterPdfVisible` +
+  /// the views-exhausted branch of `ChapterRow`), via [canOpenChapterPdf]:
+  ///  1. Views exhausted → BLOCK (only re-activation is offered).
+  ///  2. Course not locked, or chapter `is_activated` → ALLOW.
+  ///  3. Chapter `is_free_preview_attachment` → ALLOW.
+  ///  4. Otherwise → BLOCK.
+  ///
+  /// Chapter `is_locked`, attachment `is_locked` and `is_free_preview` are
+  /// deliberately not inputs: the API sets `is_locked` on every chapter the
+  /// student has not activated, and `is_free_preview` governs the video only.
+  /// Using them is what kept free PDFs locked.
   bool canOpenAttachment({
-    required bool fileIsLocked,
-    required bool chapterIsLocked,
+    required bool courseLocked,
     required bool chapterIsActivated,
-    required bool chapterIsFreePreview,
     required bool chapterIsFreePreviewAttachment,
     required int currentViews,
     required int maxViews,
   }) {
-    // Priority 1: File-level lock (highest priority)
-    if (fileIsLocked) {
-      return false;
-    }
-
-    // Priority 2: Chapter-level lock
-    if (chapterIsLocked) {
-      return false;
-    }
-
-    // Priority 3: Chapter is activated (allow subject to view limit)
-    if (chapterIsActivated) {
-      // Check view limit
-      if (maxViews > 0 && currentViews >= maxViews) {
-        return false;
-      }
-      return true;
-    }
-
-    // Priority 4: Attachment allows free preview (independent of chapter free preview flag)
-    if (chapterIsFreePreviewAttachment) {
-      return true;
-    }
-
-    // Default: Block if none of the above conditions are met
-    return false;
+    return canOpenChapterPdfFlags(
+      courseLocked: courseLocked,
+      chapterIsActivated: chapterIsActivated,
+      chapterIsFreePreviewAttachment: chapterIsFreePreviewAttachment,
+      currentViews: currentViews,
+      maxViews: maxViews,
+    );
   }
 
-  /// Get the access state of an attachment for UI display
+  /// Access state of an attachment for UI display, with the same rule as
+  /// [canOpenAttachment]; `freePreview` when it is open only through
+  /// `is_free_preview_attachment`.
   AttachmentAccessState getAttachmentAccessState({
-    required bool fileIsLocked,
-    required bool chapterIsLocked,
+    required bool courseLocked,
     required bool chapterIsActivated,
-    required bool chapterIsFreePreview,
     required bool chapterIsFreePreviewAttachment,
     required int currentViews,
     required int maxViews,
   }) {
-    // Priority 1: File-level lock
-    if (fileIsLocked) {
-      return AttachmentAccessState.locked;
-    }
-
-    // Priority 2: Chapter-level lock
-    if (chapterIsLocked) {
-      return AttachmentAccessState.locked;
-    }
-
-    // Priority 3: Chapter is activated
-    if (chapterIsActivated) {
-      // Check view limit
-      if (maxViews > 0 && currentViews >= maxViews) {
-        return AttachmentAccessState.locked;
-      }
-      return AttachmentAccessState.unlocked;
-    }
-
-    // Priority 4: Attachment allows free preview (independent of chapter free preview flag)
-    if (chapterIsFreePreviewAttachment) {
-      return AttachmentAccessState.freePreview;
-    }
-
-    // Default: Locked
-    return AttachmentAccessState.locked;
+    final canOpen = canOpenAttachment(
+      courseLocked: courseLocked,
+      chapterIsActivated: chapterIsActivated,
+      chapterIsFreePreviewAttachment: chapterIsFreePreviewAttachment,
+      currentViews: currentViews,
+      maxViews: maxViews,
+    );
+    if (!canOpen) return AttachmentAccessState.locked;
+    return (!courseLocked || chapterIsActivated)
+        ? AttachmentAccessState.unlocked
+        : AttachmentAccessState.freePreview;
   }
 
   /// Show dialog for locked attachment with activation option

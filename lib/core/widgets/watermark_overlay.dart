@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 /// Enhanced watermark overlay with multiple display modes and opacity control
@@ -334,9 +335,9 @@ class _AdjustableWatermarkState extends State<AdjustableWatermark> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Watermark Opacity',
-                    style: TextStyle(
+                  Text(
+                    'security.watermark_opacity'.tr(),
+                    style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 14,
                     ),

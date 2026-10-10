@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -15,7 +16,7 @@ class LectureRepository with OfflineFirstRepository {
   /// Get lectures with offline-first support
   Future<Map<String, dynamic>> getLectures({int? courseId}) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final cacheKey = courseId != null ? 'lectures_course_$courseId' : 'lectures_all';
 
@@ -46,7 +47,7 @@ class LectureRepository with OfflineFirstRepository {
         } else {
           return {
             'success': false,
-            'message': data['message'] ?? 'Failed to fetch lectures',
+            'message': data['message'] ?? 'errors.failed_fetch_lectures'.tr(),
           };
         }
       },
@@ -59,7 +60,7 @@ class LectureRepository with OfflineFirstRepository {
   /// Get lecture by ID with offline-first support
   Future<Map<String, dynamic>> getLectureById(String lectureId) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     return offlineFirstFetch(
       apiFetcher: () async {
@@ -79,7 +80,7 @@ class LectureRepository with OfflineFirstRepository {
         } else {
           return {
             'success': false,
-            'message': data['message'] ?? 'Failed to fetch lecture details',
+            'message': data['message'] ?? 'errors.failed_fetch_lecture_details'.tr(),
           };
         }
       },

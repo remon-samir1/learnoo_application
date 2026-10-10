@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../data/library_repository.dart';
@@ -37,7 +38,7 @@ class _UnlockMaterialScreenState extends State<UnlockMaterialScreen> {
     final code = _codeController.text.trim();
 
     if (code.isEmpty) {
-      _showError('Please enter an activation code');
+      _showError('library.enter_code_error'.tr());
       return;
     }
 
@@ -51,7 +52,7 @@ class _UnlockMaterialScreenState extends State<UnlockMaterialScreen> {
 
       if (libraryId == 0) {
         setState(() => _isVerifying = false);
-        _showError('Invalid library ID');
+        _showError('library.invalid_library_id'.tr());
         return;
       }
 
@@ -69,7 +70,7 @@ class _UnlockMaterialScreenState extends State<UnlockMaterialScreen> {
         if (result['success']) {
           _onActivated();
         } else {
-          _showError(result['message'] ?? 'Invalid activation code');
+          _showError(result['message'] ?? 'library.invalid_activation_code'.tr());
         }
       }
     } catch (e) {
@@ -77,7 +78,7 @@ class _UnlockMaterialScreenState extends State<UnlockMaterialScreen> {
         setState(() {
           _isVerifying = false;
         });
-        _showError('Connection error. Please try again.');
+        _showError('library.connection_error_retry'.tr());
       }
     }
   }
@@ -127,9 +128,9 @@ class _UnlockMaterialScreenState extends State<UnlockMaterialScreen> {
   @override
   Widget build(BuildContext context) {
     final attributes = widget.library['attributes'] ?? {};
-    final title = attributes['title']?.toString() ?? 'Untitled';
+    final title = attributes['title']?.toString() ?? 'common.untitled'.tr();
     final coverImage = attributes['cover_image']?.toString() ?? '';
-    final materialType = attributes['material_type']?.toString() ?? 'Unknown';
+    final materialType = attributes['material_type']?.toString() ?? 'common.unknown'.tr();
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -194,11 +195,11 @@ class _UnlockMaterialScreenState extends State<UnlockMaterialScreen> {
                           ),
                         ),
                       ),
-                      const Expanded(
+                      Expanded(
                         child: Text(
-                          'Unlock Material',
+                          'library.unlock_material_title'.tr(),
                           textAlign: TextAlign.center,
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.w600,
                             color: Color(0xFF1F2937),
@@ -305,9 +306,9 @@ class _UnlockMaterialScreenState extends State<UnlockMaterialScreen> {
                         ),
                         const SizedBox(height: 24),
                         // Title
-                        const Text(
-                          'Enter Activation Code',
-                          style: TextStyle(
+                        Text(
+                          'library.enter_activation_code'.tr(),
+                          style: const TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.w700,
                             color: Color(0xFF1F2937),
@@ -316,7 +317,7 @@ class _UnlockMaterialScreenState extends State<UnlockMaterialScreen> {
                         const SizedBox(height: 12),
                         // Subtitle
                         Text(
-                          'Enter the code you received to unlock this PDF material.',
+                          'library.enter_code_desc'.tr(),
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 14,
@@ -327,9 +328,9 @@ class _UnlockMaterialScreenState extends State<UnlockMaterialScreen> {
                         const SizedBox(height: 32),
                         // Code Input Label
                         Align(
-                          alignment: Alignment.centerLeft,
+                          alignment: AlignmentDirectional.centerStart,
                           child: Text(
-                            'Activation Code',
+                            'library.activation_code_label'.tr(),
                             style: TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.w500,
@@ -385,7 +386,7 @@ class _UnlockMaterialScreenState extends State<UnlockMaterialScreen> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                "Didn't receive a code? Please contact support. Codes are provided after payment.",
+                                'library.no_code_help'.tr(),
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: Colors.grey[400],
@@ -421,7 +422,9 @@ class _UnlockMaterialScreenState extends State<UnlockMaterialScreen> {
                                   )
                                 : const FaIcon(FontAwesomeIcons.key, size: 16),
                             label: Text(
-                              _isVerifying ? 'Verifying...' : 'Verify Code',
+                              _isVerifying
+                                  ? 'library.verifying'.tr()
+                                  : 'library.verify_code'.tr(),
                               style: const TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w600,
@@ -434,7 +437,7 @@ class _UnlockMaterialScreenState extends State<UnlockMaterialScreen> {
                         TextButton(
                           onPressed: () => Navigator.pop(context),
                           child: Text(
-                            'Cancel',
+                            'common.cancel'.tr(),
                             style: TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.w500,

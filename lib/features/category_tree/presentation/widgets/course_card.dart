@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../core/utils/media_url.dart';
@@ -213,18 +214,20 @@ class CourseCard extends StatelessWidget {
                   children: [
                     _buildStatItem(
                       FontAwesomeIcons.bookOpen,
-                      '${course.stats.notesCount} Notes',
+                      'category_tree.notes_count'.plural(course.stats.notesCount),
                     ),
                     const SizedBox(width: 18),
                     _buildStatItem(
                       FontAwesomeIcons.video,
-                      '${course.stats.lecturesCount} Lectures',
+                      'category_tree.lectures_count'
+                          .plural(course.stats.lecturesCount),
                     ),
                     if (course.stats.studentsCount > 0) ...[
                       const SizedBox(width: 18),
                       _buildStatItem(
                         FontAwesomeIcons.users,
-                        '${course.stats.studentsCount} Students',
+                        'category_tree.students_count'
+                            .plural(course.stats.studentsCount),
                       ),
                     ],
                   ],
@@ -247,9 +250,9 @@ class CourseCard extends StatelessWidget {
                           ),
                           elevation: 0,
                         ),
-                        child: const Text(
-                          'Course Details',
-                          style: TextStyle(
+                        child: Text(
+                          'category_tree.course_details'.tr(),
+                          style: const TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.bold,
                           ),
@@ -274,17 +277,17 @@ class CourseCard extends StatelessWidget {
                               color: const Color(0xFFC7D2FE),
                             ),
                           ),
-                          child: const Row(
+                          child: Row(
                             children: [
-                              FaIcon(
+                              const FaIcon(
                                 FontAwesomeIcons.key,
                                 size: 14,
                                 color: Color(0xFF2563EB),
                               ),
-                              SizedBox(width: 6),
+                              const SizedBox(width: 6),
                               Text(
-                                'Unlock',
-                                style: TextStyle(
+                                'course_activation.unlock_button'.tr(),
+                                style: const TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.bold,
                                   color: Color(0xFF2563EB),

@@ -59,17 +59,22 @@ class LiveStatusBadge extends StatelessWidget {
           bg: isDark ? const Color(0xFF1E3A8A) : const Color(0xFFDBEAFE),
           fg: isDark ? const Color(0xFFBFDBFE) : const Color(0xFF1D4ED8),
           label: 'live.status_upcoming'.tr(),
-          leading: Icon(Icons.schedule,
-              size: 11,
-              color: isDark ? const Color(0xFFBFDBFE) : const Color(0xFF1D4ED8)),
+          leading: Icon(
+            Icons.schedule,
+            size: 11,
+            color: isDark ? const Color(0xFFBFDBFE) : const Color(0xFF1D4ED8),
+          ),
         );
       case SessionStatus.recorded:
         return _pill(
           bg: isDark ? const Color(0xFF2E3344) : const Color(0xFFF1F5F9),
           fg: AppColors.subtext(context),
           label: 'live.status_ended'.tr(),
-          leading: Icon(Icons.check_circle_outline,
-              size: 11, color: AppColors.subtext(context)),
+          leading: Icon(
+            Icons.check_circle_outline,
+            size: 11,
+            color: AppColors.subtext(context),
+          ),
         );
       case SessionStatus.unknown:
         return _pill(
@@ -172,7 +177,9 @@ class LiveRoomLeadingIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = AppColors.isDark(context);
-    final neutralBg = isDark ? const Color(0xFF2E3344) : const Color(0xFFF1F5F9);
+    final neutralBg = isDark
+        ? const Color(0xFF2E3344)
+        : const Color(0xFFF1F5F9);
     Color bg;
     Widget icon;
     if (access != LiveRoomAccess.available) {
@@ -183,13 +190,18 @@ class LiveRoomLeadingIcon extends StatelessWidget {
       icon = const Icon(Icons.sensors, size: 22, color: Colors.white);
     } else if (room.isEnded) {
       bg = neutralBg;
-      icon = const Icon(Icons.check_circle_outline,
-          size: 22, color: Color(0xFF94A3B8));
+      icon = const Icon(
+        Icons.check_circle_outline,
+        size: 22,
+        color: Color(0xFF94A3B8),
+      );
     } else {
       bg = isDark ? const Color(0xFF26305E) : const Color(0xFFEEF2FF);
-      icon = Icon(Icons.calendar_month,
-          size: 22,
-          color: isDark ? AppColors.lightBlue : AppColors.primaryBlue);
+      icon = Icon(
+        Icons.calendar_month,
+        size: 22,
+        color: isDark ? AppColors.lightBlue : AppColors.primaryBlue,
+      );
     }
     return Container(
       width: 48,
@@ -203,22 +215,224 @@ class LiveRoomLeadingIcon extends StatelessWidget {
   }
 }
 
+/// A live stopwatch/countdown banner displaying time remaining until a live session starts,
+/// or elapsed time if the live session is currently ongoing.
+class LiveRoomTimerBanner extends StatefulWidget {
+  const LiveRoomTimerBanner({
+    super.key,
+    required this.startTime,
+    required this.isLive,
+    this.isEnded = false,
+    this.onReached,
+  });
+
+  final DateTime startTime;
+  final bool isLive;
+  final bool isEnded;
+  final VoidCallback? onReached;
+
+  @override
+  State<LiveRoomTimerBanner> createState() => _LiveRoomTimerBannerState();
+}
+
+class _LiveRoomTimerBannerState extends State<LiveRoomTimerBanner> {
+  Timer? _timer;
+  bool _reached = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _startTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant LiveRoomTimerBanner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.startTime != widget.startTime ||
+        oldWidget.isLive != widget.isLive ||
+        oldWidget.isEnded != widget.isEnded) {
+      _startTimer();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _startTimer() {
+    _timer?.cancel();
+    _timer = null;
+    if (widget.isEnded) return;
+
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      final nowUtc = DateTime.now().toUtc();
+      final isUpcoming = widget.startTime.isAfter(nowUtc);
+      if (!isUpcoming && !_reached) {
+        _reached = true;
+        widget.onReached?.call();
+      }
+      setState(() {});
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.isEnded) return const SizedBox.shrink();
+
+    final nowUtc = DateTime.now().toUtc();
+    final difference = widget.startTime.difference(nowUtc);
+    final isUpcoming = difference.inSeconds > 0;
+    final isDark = AppColors.isDark(context);
+
+    String pad(int n) => n.toString().padLeft(2, '0');
+    final String timeStr;
+    final String label;
+    final Color bannerBg;
+    final Color bannerBorder;
+    final Color accentColor;
+    final Color clockBg;
+    final IconData icon;
+
+    if (isUpcoming) {
+      final days = difference.inDays;
+      final hours = difference.inHours % 24;
+      final minutes = difference.inMinutes % 60;
+      final seconds = difference.inSeconds % 60;
+
+      final clock = '${pad(hours)}:${pad(minutes)}:${pad(seconds)}';
+      final dayLabel = 'live.day_short'.tr();
+      timeStr = days > 0 ? '$days $dayLabel $clock' : clock;
+      label = 'live.starts_in'.tr();
+      icon = Icons.timer_outlined;
+
+      if (isDark) {
+        bannerBg = const Color(0xFF1E2648);
+        bannerBorder = const Color(0xFF2E3A6E);
+        accentColor = const Color(0xFF93C5FD);
+        clockBg = const Color(0xFF141A33);
+      } else {
+        bannerBg = const Color(0xFFF0F4FF);
+        bannerBorder = const Color(0xFFDBEAFE);
+        accentColor = const Color(0xFF2563EB);
+        clockBg = Colors.white;
+      }
+    } else {
+      // Live stopwatch counting elapsed time from start
+      final elapsed = nowUtc.difference(widget.startTime);
+      final hours = elapsed.inHours;
+      final minutes = elapsed.inMinutes % 60;
+      final seconds = elapsed.inSeconds % 60;
+
+      timeStr = hours > 0
+          ? '${pad(hours)}:${pad(minutes)}:${pad(seconds)}'
+          : '${pad(minutes)}:${pad(seconds)}';
+      label = 'live.live_now'.tr();
+      icon = Icons.sensors;
+
+      if (isDark) {
+        bannerBg = const Color(0xFF331616);
+        bannerBorder = const Color(0xFF5C2222);
+        accentColor = const Color(0xFFF87171);
+        clockBg = const Color(0xFF241010);
+      } else {
+        bannerBg = const Color(0xFFFEF2F2);
+        bannerBorder = const Color(0xFFFECACA);
+        accentColor = const Color(0xFFDC2626);
+        clockBg = Colors.white;
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: bannerBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: bannerBorder),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: accentColor),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: accentColor,
+                ),
+              ),
+            ],
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: clockBg,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: bannerBorder),
+              boxShadow: isDark
+                  ? null
+                  : [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.03),
+                        blurRadius: 3,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+            ),
+            child: Text(
+              timeStr,
+              textDirection: TextDirection.ltr,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: accentColor,
+                letterSpacing: 0.6,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// A live-session card as shown in the website's course details "Live" tab:
-/// status, title, instructor, start time, and "Join Now" (live) or "View".
-class LiveRoomCourseCard extends StatelessWidget {
+/// status, title, instructor, start time, stopwatch timer, and "Join Now" (live) or "View".
+class LiveRoomCourseCard extends StatefulWidget {
   const LiveRoomCourseCard({
     super.key,
     required this.room,
     required this.onOpen,
+    required this.access,
   });
 
   final LiveRoom room;
+  final LiveRoomAccess access;
   final VoidCallback onOpen;
 
   @override
+  State<LiveRoomCourseCard> createState() => _LiveRoomCourseCardState();
+}
+
+class _LiveRoomCourseCardState extends State<LiveRoomCourseCard> {
+  @override
   Widget build(BuildContext context) {
-    final isLive = room.isLive;
-    final when = LiveRoomUi.formatWhen(context, room.startedAtValue);
+    final room = widget.room;
+    final start = room.startedAtValue;
+    final nowUtc = DateTime.now().toUtc();
+    final left = start?.difference(nowUtc);
+    final isLiveByTime =
+        start != null && left != null && left.inSeconds <= 0 && !room.isEnded;
+    final isLive = room.isLive || isLiveByTime;
+    final when = LiveRoomUi.formatWhen(context, start);
     final title = room.title.trim().isEmpty ? '—' : room.title.trim();
 
     return Container(
@@ -237,7 +451,7 @@ class LiveRoomCourseCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              LiveRoomLeadingIcon(room: room),
+              LiveRoomLeadingIcon(room: room, access: widget.access),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
@@ -245,6 +459,7 @@ class LiveRoomCourseCard extends StatelessWidget {
                   children: [
                     if (room.status != SessionStatus.unknown)
                       LiveStatusBadge(room: room),
+                    LiveAccessChip(access: widget.access),
                     const SizedBox(height: 6),
                     Text(
                       title,
@@ -283,10 +498,26 @@ class LiveRoomCourseCard extends StatelessWidget {
               ),
             ],
           ),
+          if (start != null && !room.isEnded) ...[
+            const SizedBox(height: 12),
+            LiveRoomTimerBanner(
+              startTime: start,
+              isLive: isLive,
+              isEnded: room.isEnded,
+              onReached: () {
+                if (mounted) setState(() {});
+              },
+            ),
+          ],
           const SizedBox(height: 14),
-          isLive
+          widget.access != LiveRoomAccess.available
+              ? LiveRoomLockedAction(
+                  access: widget.access,
+                  onPressed: widget.onOpen,
+                )
+              : isLive
               ? ElevatedButton.icon(
-                  onPressed: onOpen,
+                  onPressed: widget.onOpen,
                   icon: const Icon(Icons.sensors, size: 16),
                   label: Text('live.join_now'.tr()),
                   style: ElevatedButton.styleFrom(
@@ -298,11 +529,13 @@ class LiveRoomCourseCard extends StatelessWidget {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     textStyle: const TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w700),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 )
               : OutlinedButton(
-                  onPressed: onOpen,
+                  onPressed: widget.onOpen,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.subtext(context),
                     side: BorderSide(color: AppColors.border(context)),
@@ -311,7 +544,9 @@ class LiveRoomCourseCard extends StatelessWidget {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     textStyle: const TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w600),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   child: Text('live.view'.tr()),
                 ),
@@ -340,7 +575,9 @@ class LiveRoomsEmptyState extends StatelessWidget {
               width: 56,
               height: 56,
               decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF26305E) : const Color(0xFFEEF2FF),
+                color: isDark
+                    ? const Color(0xFF26305E)
+                    : const Color(0xFFEEF2FF),
                 shape: BoxShape.circle,
               ),
               child: Icon(
@@ -421,8 +658,10 @@ class _LiveRoomActivationSheetState extends State<LiveRoomActivationSheet> {
       _error = null;
     });
 
-    final result =
-        await _repository.activateLiveRoom(roomId: widget.roomId, code: code);
+    final result = await _repository.activateLiveRoom(
+      roomId: widget.roomId,
+      code: code,
+    );
     if (!mounted) return;
 
     if (result['success'] == true) {
@@ -440,8 +679,8 @@ class _LiveRoomActivationSheetState extends State<LiveRoomActivationSheet> {
     final message = result['invalidId'] == true
         ? 'live.activation_invalid_id'.tr()
         : ((result['message'] as String?)?.trim().isNotEmpty == true
-            ? result['message'] as String
-            : 'live.activation_failed'.tr());
+              ? result['message'] as String
+              : 'live.activation_failed'.tr());
     setState(() {
       _submitting = false;
       _error = message;
@@ -476,8 +715,11 @@ class _LiveRoomActivationSheetState extends State<LiveRoomActivationSheet> {
             const SizedBox(height: 20),
             Row(
               children: [
-                const Icon(Icons.power_settings_new,
-                    size: 18, color: AppColors.primaryBlue),
+                const Icon(
+                  Icons.power_settings_new,
+                  size: 18,
+                  color: AppColors.primaryBlue,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -529,8 +771,10 @@ class _LiveRoomActivationSheetState extends State<LiveRoomActivationSheet> {
                 hintStyle: TextStyle(color: AppColors.muted(context)),
                 filled: true,
                 fillColor: AppColors.input(context),
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 14,
+                ),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide(color: AppColors.border(context)),
@@ -541,8 +785,10 @@ class _LiveRoomActivationSheetState extends State<LiveRoomActivationSheet> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide:
-                      const BorderSide(color: AppColors.primaryBlue, width: 2),
+                  borderSide: const BorderSide(
+                    color: AppColors.primaryBlue,
+                    width: 2,
+                  ),
                 ),
               ),
               onSubmitted: (_) => _submit(),
@@ -630,9 +876,15 @@ class _LiveRoomActivationSheetState extends State<LiveRoomActivationSheet> {
 /// (weekday + time), course, and a button that counts down to `started_at`
 /// and turns into "Live Now (Join)" once that time has passed.
 class LiveHomeCard extends StatefulWidget {
-  const LiveHomeCard({super.key, required this.room, required this.onOpen});
+  const LiveHomeCard({
+    super.key,
+    required this.room,
+    required this.onOpen,
+    required this.access,
+  });
 
   final LiveRoom room;
+  final LiveRoomAccess access;
   final VoidCallback onOpen;
 
   @override
@@ -691,9 +943,10 @@ class _LiveHomeCardState extends State<LiveHomeCard> {
       when = 'live.time_not_available'.tr();
     } else {
       try {
-        when = intl.DateFormat('EEEE', context.locale.languageCode)
-            .add_jm()
-            .format(start.toLocal());
+        when = intl.DateFormat(
+          'EEEE',
+          context.locale.languageCode,
+        ).add_jm().format(start.toLocal());
       } catch (_) {
         when = LiveRoomUi.formatWhen(context, start);
       }
@@ -723,6 +976,11 @@ class _LiveHomeCardState extends State<LiveHomeCard> {
               ),
             ),
           ),
+          if (widget.access != LiveRoomAccess.available)
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: LiveAccessChip(access: widget.access),
+            ),
           const SizedBox(height: 10),
           _row(context, Icons.people_outline, instructor),
           const SizedBox(height: 6),
@@ -733,40 +991,48 @@ class _LiveHomeCardState extends State<LiveHomeCard> {
             style: TextStyle(fontSize: 12, color: AppColors.muted(context)),
           ),
           const SizedBox(height: 14),
-          ElevatedButton(
-            onPressed: widget.onOpen,
-            style: ElevatedButton.styleFrom(
-              backgroundColor:
-                  isLive ? const Color(0xFF059669) : AppColors.primaryBlue,
-              foregroundColor: Colors.white,
-              elevation: 0,
-              minimumSize: const Size.fromHeight(44),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+          if (widget.access != LiveRoomAccess.available)
+            LiveRoomLockedAction(
+              access: widget.access,
+              onPressed: widget.onOpen,
+            )
+          else
+            ElevatedButton(
+              onPressed: widget.onOpen,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isLive
+                    ? const Color(0xFF059669)
+                    : AppColors.primaryBlue,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                minimumSize: const Size.fromHeight(44),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(isLive ? Icons.sensors : Icons.timer_outlined, size: 16),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    isLive
-                        ? 'live.home_live_join'.tr()
-                        : _countdown(left ?? Duration.zero),
-                    textDirection: isLive ? null : TextDirection.ltr,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      fontFeatures:
-                          isLive ? null : const [FontFeature.tabularFigures()],
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(isLive ? Icons.sensors : Icons.timer_outlined, size: 16),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      isLive
+                          ? 'live.home_live_join'.tr()
+                          : _countdown(left ?? Duration.zero),
+                      textDirection: isLive ? null : TextDirection.ltr,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        fontFeatures: isLive
+                            ? null
+                            : const [FontFeature.tabularFigures()],
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -786,4 +1052,31 @@ class _LiveHomeCardState extends State<LiveHomeCard> {
       ],
     );
   }
+}
+
+class LiveRoomLockedAction extends StatelessWidget {
+  const LiveRoomLockedAction({
+    super.key,
+    required this.access,
+    required this.onPressed,
+  });
+  final LiveRoomAccess access;
+  final VoidCallback onPressed;
+  @override
+  Widget build(BuildContext context) => ElevatedButton.icon(
+    onPressed: onPressed,
+    icon: const Icon(Icons.lock, size: 16),
+    label: Text(
+      (access == LiveRoomAccess.lockedPrivate
+              ? 'live.activate_session'
+              : 'live.activate_course_first')
+          .tr(),
+    ),
+    style: ElevatedButton.styleFrom(
+      backgroundColor: AppColors.primaryBlue,
+      foregroundColor: Colors.white,
+      minimumSize: const Size.fromHeight(44),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ),
+  );
 }

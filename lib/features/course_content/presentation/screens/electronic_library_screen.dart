@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/services/student_scope.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../data/library_repository.dart';
 import '../../domain/library_material.dart';
@@ -54,12 +55,20 @@ class _ElectronicLibraryScreenState extends State<ElectronicLibraryScreen> {
     });
 
     try {
-      final result = await _repository.getLibraries();
+      final results = await Future.wait([
+        _repository.getLibraries(),
+        StudentScopeService().load(),
+      ]);
       if (!mounted) return;
+      final result = results[0] as Map<String, dynamic>;
+      final scope = results[1] as StudentScope;
       if (result['success'] == true) {
         final all = (result['data'] as List?) ?? const [];
         setState(() {
-          _materials = all.where(libraryIsPublished).toList();
+          _materials = all
+              .where(libraryIsPublished)
+              .where((material) => _belongsToStudent(material, scope))
+              .toList();
           _isLoading = false;
         });
       } else {
@@ -76,6 +85,19 @@ class _ElectronicLibraryScreenState extends State<ElectronicLibraryScreen> {
         });
       }
     }
+  }
+
+  /// Keeps only materials attached to one of the student's activated courses.
+  ///
+  /// `GET /v1/library` returns every material of every university and
+  /// faculty; the website's home narrows it to the student's enrolled courses
+  /// (`app/[locale]/student/page.tsx`), and this screen now applies the same
+  /// rule — against all of a material's `course_ids`, not just `course_id`.
+  /// A material attached to no course is dropped, as on the web. Only a scope
+  /// that never loaded (offline) lets the list through untouched.
+  static bool _belongsToStudent(dynamic material, StudentScope scope) {
+    if (!scope.isLoaded) return true;
+    return scope.isAnyEnrolled(libraryCourseIds(material));
   }
 
   List<dynamic> get _visible {

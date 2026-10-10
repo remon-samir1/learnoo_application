@@ -1,17 +1,17 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/app_colors.dart';
 
 /// Gradient header with the step indicator shared by the onboarding screens.
 ///
-/// Extracted so the progress dots stay consistent now that onboarding is four
-/// steps (university → centre → faculty → department) instead of three.
+/// Onboarding has three selections: university → center → faculty.
 class OnboardingStepHeader extends StatelessWidget {
   const OnboardingStepHeader({
     super.key,
     required this.step,
     required this.title,
-    this.totalSteps = 4,
+    this.totalSteps = 3,
   });
 
   /// 1-based position of the current step.
@@ -38,7 +38,9 @@ class OnboardingStepHeader extends StatelessWidget {
             children: List.generate(totalSteps, (index) {
               final isDone = index < step;
               return Padding(
-                padding: EdgeInsets.only(right: index == totalSteps - 1 ? 0 : 8),
+                padding: EdgeInsetsDirectional.only(
+                  end: index == totalSteps - 1 ? 0 : 8,
+                ),
                 child: Container(
                   width: isDone ? 40 : 20,
                   height: 4,
@@ -54,7 +56,7 @@ class OnboardingStepHeader extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            'Step $step of $totalSteps',
+            'academic.step_x_of_y'.tr(args: ['$step', '$totalSteps']),
             style: const TextStyle(color: Colors.white70, fontSize: 12),
           ),
           const SizedBox(height: 24),

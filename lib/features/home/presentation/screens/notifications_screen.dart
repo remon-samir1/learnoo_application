@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:easy_localization/easy_localization.dart';
+import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pull_to_refresh/pull_to_refresh.dart';
@@ -9,7 +9,6 @@ import 'package:learnoo/features/home/presentation/bloc/notification_state.dart'
 import 'package:learnoo/features/home/data/models/notification.dart' as notification_model;
 import 'package:learnoo/features/home/data/notification_repository.dart';
 import 'package:learnoo/core/services/websocket_service.dart';
-import 'package:learnoo/core/services/notification_service.dart';
 import 'package:learnoo/features/auth/data/auth_repository.dart';
 
 class NotificationsScreen extends StatefulWidget {
@@ -33,7 +32,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         authRepository: AuthRepository(),
       ),
       webSocketService: WebSocketService(),
-      notificationService: NotificationService(),
       authRepository: AuthRepository(),
     );
     _notificationBloc.add(LoadNotificationsEvent());
@@ -74,15 +72,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       final difference = now.difference(dateTime);
 
       if (difference.inMinutes < 1) {
-        return 'home.just_now'.tr();
+        return 'time.just_now'.tr();
       } else if (difference.inMinutes < 60) {
-        return 'home.minutes_ago'.tr(args: ['${difference.inMinutes}']);
+        return 'time.minutes_ago'.plural(difference.inMinutes);
       } else if (difference.inHours < 24) {
-        return 'home.hours_ago'.tr(args: ['${difference.inHours}']);
+        return 'time.hours_ago'.plural(difference.inHours);
       } else if (difference.inDays < 7) {
-        return 'home.days_ago'.tr(args: ['${difference.inDays}']);
+        return 'time.days_ago'.plural(difference.inDays);
       } else {
-        return DateFormat('MMM d, yyyy').format(dateTime);
+        return DateFormat('MMM d, yyyy', context.locale.languageCode)
+            .format(dateTime);
       }
     } catch (e) {
       return dateTimeString;
@@ -170,9 +169,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                 width: 1,
                               ),
                             ),
-                            child: const Center(
+                            child: Center(
                               child: FaIcon(
-                                FontAwesomeIcons.arrowLeft,
+                                Directionality.of(context) == TextDirection.rtl
+                                    ? FontAwesomeIcons.arrowRight
+                                    : FontAwesomeIcons.arrowLeft,
                                 color: Color(0xFF374151),
                                 size: 18,
                               ),
@@ -416,8 +417,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       },
       background: Container(
         color: const Color(0xFFFF4B4B),
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
+        alignment: AlignmentDirectional.centerEnd,
+        padding: const EdgeInsetsDirectional.only(end: 20),
         child: const FaIcon(
           FontAwesomeIcons.trash,
           color: Colors.white,
@@ -487,7 +488,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           Container(
                             width: 8,
                             height: 8,
-                            margin: const EdgeInsets.only(left: 8),
+                            margin: const EdgeInsetsDirectional.only(start: 8),
                             decoration: const BoxDecoration(
                               color: Color(0xFF5A75FF),
                               shape: BoxShape.circle,

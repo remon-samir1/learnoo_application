@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:flutter/material.dart';
@@ -180,7 +181,7 @@ class DownloadService {
         url: url,
         fileName: fileName,
         status: DownloadStatus.failed,
-        errorMessage: 'Download failed: ${e.message}',
+        errorMessage: 'downloads.failed_detail'.tr(args: ['${e.message}']),
       );
       _downloads[url] = failedProgress;
       _updateNotifier(url, failedProgress);
@@ -190,7 +191,7 @@ class DownloadService {
         url: url,
         fileName: fileName,
         status: DownloadStatus.failed,
-        errorMessage: 'Download failed: $e',
+        errorMessage: 'downloads.failed_detail'.tr(args: ['$e']),
       );
       _downloads[url] = failedProgress;
       _updateNotifier(url, failedProgress);
@@ -204,7 +205,7 @@ class DownloadService {
   void cancelDownload(String url) {
     final cancelToken = _cancelTokens[url];
     if (cancelToken != null && !cancelToken.isCancelled) {
-      cancelToken.cancel('Download cancelled by user');
+      cancelToken.cancel('downloads.cancelled_by_user'.tr());
     }
   }
 

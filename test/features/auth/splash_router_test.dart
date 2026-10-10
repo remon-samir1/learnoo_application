@@ -133,15 +133,15 @@ void main() {
       expect(cleared, isTrue);
     });
 
-    test('a 403 clears the token and goes to login', () async {
+    test('a 403 keeps the session and opens the cached app', () async {
       var cleared = false;
       final router = buildRouter(
         profile: const {'success': false, 'statusCode': 403},
         onClearToken: () => cleared = true,
       );
 
-      expect(await router.resolve(), SplashDestination.login);
-      expect(cleared, isTrue);
+      expect(await router.resolve(), SplashDestination.studentHome);
+      expect(cleared, isFalse, reason: 'only a 401 revokes the session');
     });
 
     test('a server error keeps the session and opens the cached app', () async {

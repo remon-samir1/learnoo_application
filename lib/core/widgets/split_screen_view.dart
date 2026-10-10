@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 /// A resizable split screen widget that allows two panels to be displayed
@@ -170,12 +171,12 @@ class VideoPdfSplitScreen extends StatelessWidget {
       maxSplitRatio: 0.75,
       resizable: resizable,
       topOrLeftPanel: _PanelContainer(
-        label: 'Video',
+        label: 'course.sheet_video'.tr(),
         icon: Icons.play_circle_outline,
         child: videoWidget,
       ),
       bottomOrRightPanel: _PanelContainer(
-        label: 'PDF Document',
+        label: 'common.pdf_document'.tr(),
         icon: Icons.picture_as_pdf,
         child: pdfWidget,
       ),

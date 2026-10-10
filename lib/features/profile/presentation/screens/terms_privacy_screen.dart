@@ -12,7 +12,7 @@ class TermsPrivacyScreen extends StatelessWidget {
         backgroundColor: Colors.white,
         elevation: 0,
         leading: Padding(
-          padding: const EdgeInsets.only(left: 16.0),
+          padding: const EdgeInsetsDirectional.only(start: 16.0),
           child: IconButton(
             icon: const Icon(Icons.arrow_back, color: Colors.black87),
             onPressed: () => Navigator.pop(context),
@@ -36,9 +36,9 @@ class TermsPrivacyScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'How student data is collected, used, and protected inside the platform.',
-              style: TextStyle(
+            Text(
+              'terms_privacy.intro'.tr(),
+              style: const TextStyle(
                 color: Color(0xFF1E293B),
                 fontWeight: FontWeight.bold,
                 fontSize: 18,
@@ -47,23 +47,23 @@ class TermsPrivacyScreen extends StatelessWidget {
             ),
             const SizedBox(height: 24),
             _buildParagraph(
-              '01 Learnoo may collect student information such as name, mobile number, email, university, faculty, selected centers, course activity, and support history to provide educational services effectively.',
+              'terms_privacy.p1'.tr(),
             ),
             const SizedBox(height: 16),
             _buildParagraph(
-              '02 The platform may also use progress data, watch history, notes, exam records, and community interactions to personalize the learning experience.',
+              'terms_privacy.p2'.tr(),
             ),
             const SizedBox(height: 16),
             _buildParagraph(
-              '03 Student data is used to manage access, deliver notifications, support communication, improve course recommendations, and maintain account security.',
+              'terms_privacy.p3'.tr(),
             ),
             const SizedBox(height: 16),
             _buildParagraph(
-              '04 Sensitive account and activity data should be handled according to platform security standards, with access limited to authorized administrative roles when operationally necessary.',
+              'terms_privacy.p4'.tr(),
             ),
             const SizedBox(height: 16),
             _buildParagraph(
-              '05 Learnoo does not display personal data publicly beyond the features required for learning interactions such as community, Q&A, or instructor communication, depending on the app settings.',
+              'terms_privacy.p5'.tr(),
             ),
           ],
         ),

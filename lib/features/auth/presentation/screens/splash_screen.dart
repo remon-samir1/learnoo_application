@@ -123,11 +123,11 @@ class _SplashScreenState extends State<SplashScreen> {
         mode: LaunchMode.externalApplication,
       );
       if (!launched) {
-        _showError('Could not open the Play Store. Please update the app manually.');
+        _showError('update_play_store_failed'.tr());
         return;
       }
     } catch (e) {
-      _showError('Could not open the Play Store: $e');
+      _showError('update_play_store_error'.tr(args: ['$e']));
       return;
     }
 

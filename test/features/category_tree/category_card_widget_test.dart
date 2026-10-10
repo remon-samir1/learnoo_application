@@ -1,4 +1,9 @@
+import 'dart:convert';
+
+import 'package:easy_localization/src/localization.dart';
+import 'package:easy_localization/src/translations.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:learnoo/features/category_tree/data/models/category_tree_model.dart';
@@ -6,6 +11,20 @@ import 'package:learnoo/features/category_tree/presentation/widgets/category_car
 import 'package:learnoo/features/category_tree/presentation/widgets/course_card.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  // The cards render their labels through easy_localization, so load the
+  // English strings into its singleton the same way test/widget_test.dart does.
+  setUpAll(() async {
+    final raw = await rootBundle.loadString('assets/translations/en.json');
+    final decoded = json.decode(raw) as Map<String, dynamic>;
+    Localization.load(
+      const Locale('en'),
+      translations: Translations(decoded),
+      fallbackTranslations: Translations(decoded),
+    );
+  });
+
   group('CategoryCard & CourseCard Widget Tests', () {
     testWidgets('CategoryCard renders category name and counts', (tester) async {
       const category = Category(

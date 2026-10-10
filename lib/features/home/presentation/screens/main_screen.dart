@@ -7,6 +7,8 @@ import 'package:learnoo/features/home/presentation/screens/my_courses_screen.dar
 import 'package:learnoo/features/community/presentation/screens/community_screen.dart';
 import 'package:learnoo/features/course_content/presentation/screens/live_sessions_screen.dart';
 import 'package:learnoo/core/services/feature_service.dart';
+import 'package:learnoo/core/services/notification_service.dart';
+import 'package:learnoo/features/home/data/notification_sync_service.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -34,6 +36,12 @@ class _MainScreenState extends State<MainScreen> {
       if (success) {
         debugPrint('Features refreshed from API in MainScreen');
       }
+    });
+    // Signed in now: baseline/sync the student's notifications, and open the
+    // notifications screen if the app was launched from one in the tray.
+    NotificationSyncService().resume();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) NotificationService().openPendingNotificationsScreen();
     });
   }
 

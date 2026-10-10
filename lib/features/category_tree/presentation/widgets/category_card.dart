@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -91,14 +92,16 @@ class CategoryCard extends StatelessWidget {
                         if (category.stats.coursesCount > 0)
                           _buildStatChip(
                             icon: FontAwesomeIcons.bookOpen,
-                            label: '${category.stats.coursesCount} Courses',
+                            label: 'category_tree.courses_count'
+                                .plural(category.stats.coursesCount),
                             color: AppColors.primaryBlue,
                             bgColor: const Color(0xFFEEF2FF),
                           )
                         else if (category.childrens.isNotEmpty)
                           _buildStatChip(
                             icon: FontAwesomeIcons.folderTree,
-                            label: '${category.childrens.length} Sub-levels',
+                            label: 'category_tree.sub_levels_count'
+                                .plural(category.childrens.length),
                             color: const Color(0xFF7C3AED),
                             bgColor: const Color(0xFFF5F3FF),
                           ),

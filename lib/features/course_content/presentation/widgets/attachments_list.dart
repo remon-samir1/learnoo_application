@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../../../core/utils/coerce.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
@@ -9,11 +8,12 @@ class AttachmentsList extends StatelessWidget {
   final Function(String path, String name) onOpenPdf;
   final Function(String path, String name)? onDownloadPdf;
   final Function(String path, String name)? onDownloadFile;
-  // Chapter context for permission checking
-  final bool chapterIsLocked;
-  final bool chapterIsActivated;
-  final bool chapterIsFreePreview;
-  final bool chapterIsFreePreviewAttachment;
+  /// Whether the chapter's attachments may be opened, computed by the caller
+  /// with the website rule (`canOpenChapterPdf` in `chapter_access.dart`).
+  final bool canOpen;
+
+  /// Open only through `is_free_preview_attachment` (shows the free badge).
+  final bool isFreePreview;
 
   const AttachmentsList({
     super.key,
@@ -21,10 +21,8 @@ class AttachmentsList extends StatelessWidget {
     required this.onOpenPdf,
     this.onDownloadPdf,
     this.onDownloadFile,
-    this.chapterIsLocked = false,
-    this.chapterIsActivated = false,
-    this.chapterIsFreePreview = false,
-    this.chapterIsFreePreviewAttachment = false,
+    this.canOpen = false,
+    this.isFreePreview = false,
   });
 
   @override
@@ -47,36 +45,16 @@ class AttachmentsList extends StatelessWidget {
           final name = attrs['name']?.toString() ?? 'course.attachment'.tr();
           final size = attrs['size']?.toString() ?? '0';
           final extension = attrs['extension']?.toString() ?? '';
-          final isLocked = coerceFlagOrNull(attrs['is_locked']) == true;
           final path = attrs['path']?.toString() ?? '';
 
-          // Determine effective lock state based on chapter context
-          bool effectivelyLocked = isLocked;
-          bool isFreePreview = false;
-
-          if (!isLocked) {
-            if (chapterIsLocked) {
-              effectivelyLocked = true;
-            } else if (chapterIsActivated) {
-              effectivelyLocked = false;
-            } else if (chapterIsFreePreview) {
-              if (chapterIsFreePreviewAttachment) {
-                effectivelyLocked = false;
-                isFreePreview = true;
-              } else {
-                effectivelyLocked = true;
-              }
-            } else {
-              effectivelyLocked = true;
-            }
-          }
-
+          // The website ignores the attachment's own `is_locked`: access is
+          // decided per chapter (activation / `is_free_preview_attachment`).
           return _buildAttachmentItem(
             name,
             size,
             extension,
-            effectivelyLocked,
-            isFreePreview,
+            !canOpen,
+            canOpen && isFreePreview,
             path,
           );
         }),

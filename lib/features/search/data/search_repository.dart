@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -18,7 +19,7 @@ class SearchRepository {
     try {
       final token = await getToken();
       if (token == null) {
-        return {'success': false, 'message': 'Not authenticated'};
+        return {'success': false, 'message': 'errors.not_authenticated'.tr()};
       }
 
       // Build query parameters
@@ -51,12 +52,12 @@ class SearchRepository {
           'meta': data['meta'] ?? {},
         };
       } else if (response.statusCode == 401) {
-        return {'success': false, 'message': 'Unauthorized'};
+        return {'success': false, 'message': 'errors.unauthorized'.tr()};
       } else {
-        return {'success': false, 'message': 'Search failed'};
+        return {'success': false, 'message': 'errors.search_failed'.tr()};
       }
     } catch (e) {
-      return {'success': false, 'message': 'Network error: $e'};
+      return {'success': false, 'message': 'errors.network_error'.tr(args: ['$e'])};
     }
   }
 }

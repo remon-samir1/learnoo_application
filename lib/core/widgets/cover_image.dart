@@ -19,6 +19,7 @@ class CoverImage extends StatelessWidget {
     this.showTitle = true,
     this.cacheWidth,
     this.darken = 0,
+    this.fallback = CoverFallback.gradient,
   });
 
   /// Raw API value; resolved with [resolveMediaUrl].
@@ -37,6 +38,9 @@ class CoverImage extends StatelessWidget {
 
   /// 0..1 black overlay on a loaded image, for text drawn on top.
   final double darken;
+
+  /// What to draw when there is no image or it fails to load.
+  final CoverFallback fallback;
 
   /// The website's `GRADIENTS` list, in the same order.
   static const List<List<Color>> gradients = [
@@ -91,6 +95,17 @@ class CoverImage extends StatelessWidget {
   }
 
   Widget _fallback() {
+    if (fallback == CoverFallback.logo) {
+      // The website's `thumbnail || "/logo.svg"` in an `object-cover` box on
+      // `bg-slate-100`.
+      return const ColoredBox(
+        color: Color(0xFFF1F5F9),
+        child: CustomPaint(
+          painter: _LearnooLogoPainter(),
+          size: Size.infinite,
+        ),
+      );
+    }
     final colors = gradientFor(title);
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -138,4 +153,58 @@ class CoverImage extends StatelessWidget {
       },
     );
   }
+}
+
+enum CoverFallback {
+  /// Gradient from the title, like the website's category / subject cards.
+  gradient,
+
+  /// The Learnoo mark, like the website's course cards and course hero.
+  logo,
+}
+
+/// Paints the mark from the website's `public/logo.svg` (viewBox 80×77),
+/// scaled like `object-cover` so it fills the box the same way.
+class _LearnooLogoPainter extends CustomPainter {
+  const _LearnooLogoPainter();
+
+  static final Path _mark = Path()
+    ..moveTo(26.4179, 30.7214)
+    ..lineTo(14.5596, 40.596)
+    ..cubicTo(26.178, 45.3543, 32.3101, 49.6582, 36.4964, 59.4254)
+    ..cubicTo(39.1871, 53.3477, 42.4686, 49.2848, 48.5983, 43.8895)
+    ..cubicTo(54.5776, 38.6277, 60.5557, 35.4428, 65.4404, 35.1112)
+    ..lineTo(49.9818, 16.5752)
+    ..cubicTo(45.3096, 18.1808, 40.6016, 21.9753, 39.193, 31.7783)
+    ..cubicTo(38.675, 35.3843, 38.2763, 40.0389, 37.7176, 42.9089)
+    ..lineTo(37.6961, 43.0938)
+    ..cubicTo(37.424, 45.1539, 36.5836, 46.5233, 36.5478, 46.5818)
+    ..lineTo(36.1157, 46.3122)
+    ..cubicTo(36.1228, 46.2991, 36.9405, 44.9643, 37.1936, 43.0056)
+    ..cubicTo(37.2497, 42.5797, 37.2747, 42.1562, 37.2712, 41.7411)
+    ..cubicTo(36.2458, 36.1895, 32.0881, 30.7047, 26.4203, 30.7214)
+    ..close();
+
+  static const double _viewWidth = 80;
+  static const double _viewHeight = 77;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    final scale = size.width / _viewWidth > size.height / _viewHeight
+        ? size.width / _viewWidth
+        : size.height / _viewHeight;
+    canvas
+      ..save()
+      ..translate(
+        (size.width - _viewWidth * scale) / 2,
+        (size.height - _viewHeight * scale) / 2,
+      )
+      ..scale(scale);
+    canvas.drawPath(_mark, Paint()..color = const Color(0xFF2137D6));
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

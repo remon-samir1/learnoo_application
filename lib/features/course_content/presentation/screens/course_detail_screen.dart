@@ -12,7 +12,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_linkify/flutter_linkify.dart';
 import '../../../../core/widgets/video_thumbnail_widget.dart';
-import '../../../../core/network/api_constants.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../data/models/live_room.dart' as lr;
 import '../../../../core/services/student_scope.dart';
@@ -20,11 +19,13 @@ import '../../../../core/utils/coerce.dart';
 import '../../domain/chapter_access.dart';
 import '../../services/attachment_permission_service.dart';
 import '../../data/course_repository.dart';
+import '../../data/chapter_repository.dart';
 import '../../data/library_repository.dart';
 import '../../../notes/presentation/widgets/note_attachment_preview.dart';
 import '../../../exams/domain/quiz_activation_lock.dart';
 import '../../../exams/domain/usecases/exam_access_usecase.dart';
 import '../../../exams/models/quiz_models.dart';
+import '../../../exams/presentation/widgets/exam_countdown.dart';
 import '../../../community/data/repositories/community_repository.dart';
 import '../../../community/data/models/post_model.dart';
 import '../../../community/data/models/social_link_model.dart';
@@ -58,9 +59,12 @@ class CourseDetailScreen extends StatefulWidget {
 class _CourseDetailScreenState extends State<CourseDetailScreen>
     with SingleTickerProviderStateMixin {
   final _courseRepository = CourseRepository();
+  final _chapterRepository = ChapterRepository();
   final _communityRepository = CommunityRepository();
   final _libraryRepository = LibraryRepository();
   late TabController _tabController;
+
+  Map<String, String> _chapterThumbnails = {};
 
   bool _isLoadingLectures = true;
   bool _isLoadingExams = true;
@@ -79,6 +83,102 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
 
   /// Cover from the course record, preferred over the one the caller passed.
   String? _loadedThumbnail;
+
+  /// Course title from the course record, preferred over the caller's.
+  String? _loadedTitle;
+
+  /// Hero subtitle parts, built like the website's `heroBannerSubtitleParts`
+  /// (instructor • center • sub_title • "N Lectures"). `null` until the
+  /// course record loads, so the caller's description ("test" on some
+  /// courses) never flashes in the header.
+  List<String>? _heroSubtitleParts;
+
+  /// The course record's `is_locked` (the web's `courseIsLocked`). Locked
+  /// until the record says otherwise.
+  bool _courseRecordLocked = true;
+
+  /// Whether the course is locked for this student: the web reads the course
+  /// record's `is_locked`; an activated enrolment also unlocks it.
+  bool get _isCourseLocked =>
+      _courseRecordLocked && !_scope.isEnrolled(widget.courseId);
+
+  /// Chapter fields that carry the chapter's own picture.
+  static const List<String> _chapterImageKeys = [
+    'thumbnail',
+    'image',
+    'cover_image',
+    'cover',
+    'poster',
+  ];
+
+  String _extractChapterId(dynamic chapter) {
+    if (chapter is! Map) return '';
+    return chapter['id']?.toString() ??
+        chapter['data']?['id']?.toString() ??
+        (chapter['attributes'] is Map
+            ? chapter['attributes']['id']?.toString()
+            : null) ??
+        '';
+  }
+
+  /// Extracts the chapter thumbnail URL adhering to the API path `data.attributes.thumbnail`,
+  /// while also tolerating `attributes.thumbnail`, nested Strapi/JSON:API maps, or direct keys.
+  String _extractChapterThumbnail(
+    dynamic chapter, [
+    Map<String, dynamic>? chapterAttrs,
+  ]) {
+    if (chapter == null) return '';
+
+    if (chapter is Map) {
+      // 1. Primary path requested: data.attributes.thumbnail
+      if (chapter['data'] is Map) {
+        final data = chapter['data'] as Map;
+        if (data['attributes'] is Map) {
+          final thumb = readMediaUrl(data['attributes'], _chapterImageKeys);
+          if (thumb != null && thumb.isNotEmpty) return thumb;
+        }
+        final thumb = readMediaUrl(data, _chapterImageKeys);
+        if (thumb != null && thumb.isNotEmpty) return thumb;
+      }
+
+      // 2. attributes.thumbnail (or attributes.data.attributes.thumbnail)
+      if (chapter['attributes'] is Map) {
+        final attrs = chapter['attributes'] as Map;
+        if (attrs['data'] is Map) {
+          final d = attrs['data'] as Map;
+          if (d['attributes'] is Map) {
+            final thumb = readMediaUrl(d['attributes'], _chapterImageKeys);
+            if (thumb != null && thumb.isNotEmpty) return thumb;
+          }
+          final thumb = readMediaUrl(d, _chapterImageKeys);
+          if (thumb != null && thumb.isNotEmpty) return thumb;
+        }
+        final thumb = readMediaUrl(attrs, _chapterImageKeys);
+        if (thumb != null && thumb.isNotEmpty) return thumb;
+      }
+
+      // 3. Direct key on chapter
+      final direct = readMediaUrl(chapter, _chapterImageKeys);
+      if (direct != null && direct.isNotEmpty) return direct;
+    }
+
+    if (chapterAttrs != null) {
+      if (chapterAttrs['data'] is Map) {
+        final data = chapterAttrs['data'] as Map;
+        if (data['attributes'] is Map) {
+          final thumb = readMediaUrl(data['attributes'], _chapterImageKeys);
+          if (thumb != null && thumb.isNotEmpty) return thumb;
+        }
+        final thumb = readMediaUrl(data, _chapterImageKeys);
+        if (thumb != null && thumb.isNotEmpty) return thumb;
+      }
+
+      final fromAttrs = readMediaUrl(chapterAttrs, _chapterImageKeys);
+      if (fromAttrs != null && fromAttrs.isNotEmpty) return fromAttrs;
+    }
+
+    return '';
+  }
   bool _isLoadingLibrary = true;
   List<dynamic> _notes = [];
   List<dynamic> _libraryItems = [];
@@ -153,8 +253,33 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
     });
 
     try {
-      final courseResult =
-          await _courseRepository.getCourseById(widget.courseId);
+      final courseIdInt = int.tryParse(widget.courseId);
+      final courseResultFuture =
+          _courseRepository.getCourseById(widget.courseId);
+      final chaptersResultFuture = courseIdInt != null
+          ? _chapterRepository.getChapters(courseId: courseIdInt).catchError((e) {
+              debugPrint('[CourseDetailScreen] getChapters error: $e');
+              return <String, dynamic>{'success': false};
+            })
+          : Future.value(<String, dynamic>{'success': false});
+
+      final results = await Future.wait([courseResultFuture, chaptersResultFuture]);
+      final courseResult = results[0];
+      final chaptersResult = results[1];
+
+      final Map<String, String> apiChapterThumbnails = {};
+      if (chaptersResult['success'] == true &&
+          chaptersResult['data'] is List) {
+        for (final item in (chaptersResult['data'] as List)) {
+          if (item is Map) {
+            final id = _extractChapterId(item);
+            final thumb = _extractChapterThumbnail(item);
+            if (id.isNotEmpty && thumb.isNotEmpty) {
+              apiChapterThumbnails[id] = thumb;
+            }
+          }
+        }
+      }
 
       if (courseResult['success'] == true &&
           courseResult['data'] != null &&
@@ -177,42 +302,81 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
           setState(() => _loadedThumbnail = loadedThumbnail);
         }
 
+        // Header and lock state from the course record, like the website.
+        final loadedTitle = coerceString(attributes['title'])?.trim();
+        final heroParts = _heroSubtitleFrom(attributes);
+        setState(() {
+          if (loadedTitle != null && loadedTitle.isNotEmpty) {
+            _loadedTitle = loadedTitle;
+          }
+          _heroSubtitleParts = heroParts;
+          _courseRecordLocked = courseIsLocked(courseData);
+          _chapterThumbnails = apiChapterThumbnails;
+        });
+
         // 1. Lectures and Chapters from course attributes ONLY
         final rawLectures = attributes['lectures'];
         List<dynamic> lecturesList = [];
         if (rawLectures is List) {
           lecturesList = List<dynamic>.from(rawLectures);
+        } else if (rawLectures is Map && rawLectures['data'] is List) {
+          lecturesList = List<dynamic>.from(rawLectures['data']);
         }
 
         // Attach chapter_attachments to chapters if missing in chapter payload
         final rawChapterAttachments = attributes['chapter_attachments'];
-        if (rawChapterAttachments is List &&
-            rawChapterAttachments.isNotEmpty) {
-          for (var lec in lecturesList) {
-            if (lec is Map) {
-              final lecAttrs = lec['attributes'] is Map
-                  ? lec['attributes'] as Map
-                  : lec;
-              final chs = lecAttrs['chapters'];
-              if (chs is List) {
-                for (var ch in chs) {
-                  if (ch is Map) {
-                    final chAttrs = ch['attributes'] is Map
-                        ? ch['attributes'] as Map
-                        : ch;
-                    final chAtts = chAttrs['attachments'];
-                    if (chAtts == null ||
-                        (chAtts is List && chAtts.isEmpty)) {
-                      final chId = ch['id']?.toString();
-                      final matched = rawChapterAttachments.where((ca) {
-                        final caAttrs = ca is Map && ca['attributes'] is Map
-                            ? ca['attributes'] as Map
-                            : (ca is Map ? ca : {});
-                        return caAttrs['chapter_id']?.toString() == chId;
-                      }).toList();
-                      if (matched.isNotEmpty) {
-                        chAttrs['attachments'] = matched;
-                      }
+        final attachmentsList = rawChapterAttachments is List
+            ? rawChapterAttachments
+            : (rawChapterAttachments is Map && rawChapterAttachments['data'] is List
+                ? rawChapterAttachments['data'] as List
+                : const []);
+
+        for (var lec in lecturesList) {
+          if (lec is Map) {
+            final lecAttrs = lec['attributes'] is Map
+                ? lec['attributes'] as Map
+                : (lec['data'] is Map && (lec['data'] as Map)['attributes'] is Map
+                    ? (lec['data'] as Map)['attributes'] as Map
+                    : lec);
+            final chs = lecAttrs['chapters'];
+            final chsList = chs is List
+                ? chs
+                : (chs is Map && chs['data'] is List
+                    ? chs['data'] as List
+                    : const []);
+
+            for (var ch in chsList) {
+              if (ch is Map) {
+                final chAttrs = ch['attributes'] is Map
+                    ? ch['attributes'] as Map
+                    : (ch['data'] is Map && (ch['data'] as Map)['attributes'] is Map
+                        ? (ch['data'] as Map)['attributes'] as Map
+                        : ch);
+                final chId = _extractChapterId(ch);
+
+                // Enrich thumbnail from API data.attributes.thumbnail if missing
+                if (chId.isNotEmpty && apiChapterThumbnails.containsKey(chId)) {
+                  final apiThumb = apiChapterThumbnails[chId];
+                  if (apiThumb != null && apiThumb.isNotEmpty) {
+                    if (chAttrs['thumbnail'] == null ||
+                        chAttrs['thumbnail'].toString().isEmpty) {
+                      chAttrs['thumbnail'] = apiThumb;
+                    }
+                  }
+                }
+
+                final chAtts = chAttrs['attachments'];
+                if (chAtts == null ||
+                    (chAtts is List && chAtts.isEmpty)) {
+                  if (attachmentsList.isNotEmpty && chId.isNotEmpty) {
+                    final matched = attachmentsList.where((ca) {
+                      final caAttrs = ca is Map && ca['attributes'] is Map
+                          ? ca['attributes'] as Map
+                          : (ca is Map ? ca : {});
+                      return caAttrs['chapter_id']?.toString() == chId;
+                    }).toList();
+                    if (matched.isNotEmpty) {
+                      chAttrs['attachments'] = matched;
                     }
                   }
                 }
@@ -315,7 +479,14 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
           _isExpanded = List<bool>.filled(_lectures.length, false);
           _exams = mergedExams.values.toList();
           _socialLinks = socialLinksList;
-          _posts = postsList;
+          // Like the web's course community feed: top-level, published posts
+          // only, so a post awaiting admin approval is not shown as live.
+          _posts = postsList
+              .where((p) =>
+                  (p.attributes.parentId == null ||
+                      p.attributes.parentId!.isEmpty) &&
+                  p.attributes.isPublished)
+              .toList();
           _liveRooms = liveRoomsList;
           _notes = notesList;
           _isLoadingLectures = false;
@@ -439,20 +610,23 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
   }
 
   void _navigateToLecture(dynamic lecture, dynamic chapter) {
-    final lectureId = lecture['id']?.toString() ?? '';
+    final lectureId = lecture['id']?.toString() ??
+        lecture['data']?['id']?.toString() ??
+        '';
     final lectureTitle =
         lecture['attributes']?['title']?.toString() ??
         'course.untitled_lecture'.tr();
-    final chapterId = chapter['id']?.toString() ?? '';
+    final chapterId = _extractChapterId(chapter);
+    final chAttrs = chapterAttributes(chapter);
     final chapterTitle =
-        chapter['attributes']?['title']?.toString() ??
+        coerceString(chAttrs['title']) ??
         'course.untitled_chapter'.tr();
     // course_id comes directly from the chapter attributes in the chapters API response
     final courseId =
-        chapter['attributes']?['course_id']?.toString() ?? widget.courseId;
+        chAttrs['course_id']?.toString() ?? widget.courseId;
     // Get max_views from chapter data if available
     final maxViews = int.tryParse(
-      chapter['attributes']?['max_views']?.toString() ?? '',
+      chAttrs['max_views']?.toString() ?? '',
     );
 
     Navigator.push(
@@ -465,116 +639,108 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
           chapterTitle: chapterTitle,
           courseId: courseId,
           maxViews: maxViews,
+          courseLocked: _isCourseLocked,
         ),
       ),
     );
   }
 
-  void _navigateToPdfViewer(dynamic chapter, List<dynamic> attachments) {
-    final chapterAttrs = chapter['attributes'] ?? {};
-    final chapterId = chapter['id']?.toString() ?? '';
-    final chapterTitle =
-        chapterAttrs['title']?.toString() ?? 'course.untitled_chapter'.tr();
-    final isLocked = coerceFlagOrNull(chapterAttrs['is_locked']) == true;
-    final isActivated = coerceFlagOrNull(chapterAttrs['is_activated']) == true;
-    final isFreePreview = coerceFlag(chapterAttrs['is_free_preview']);
-    final isFreePreviewAttachment =
-        coerceFlag(chapterAttrs['is_free_preview_attachment']);
-    final maxViews = chapterMaxViews(chapter) ?? 0;
+  /// What a tap on a chapter row does, following the web's `ChapterRow`:
+  /// a playable video opens the player; a PDF-only chapter whose PDF is open
+  /// opens the reviewer; anything else locked opens the access sheet, which
+  /// lists the video and the PDF with their own state.
+  void _onChapterTap(dynamic lecture, dynamic chapter) {
+    final access =
+        summarizeChapterAccess(chapter, courseLocked: _isCourseLocked);
+    if (access.viewsExhausted) {
+      _showChapterAccessSheet(lecture, chapter);
+    } else if (access.videoOpen) {
+      _navigateToLecture(lecture, chapter);
+    } else if (access.isPdfOnly && access.pdfOpen) {
+      _openChapterPdf(lecture, chapter);
+    } else if (!access.hasVideo && !access.hasPdf && access.fullyUnlocked) {
+      // The web's fallback: nothing to classify, but unlocked → watch page.
+      _navigateToLecture(lecture, chapter);
+    } else {
+      _showChapterAccessSheet(lecture, chapter);
+    }
+  }
 
-    // First PDF attachment, matched on extension or a `.pdf` path so a row
-    // with a missing `extension` field is still found.
-    final pdfAttachments = chapterPdfAttachments(chapter);
-    dynamic pdfAttachment = pdfAttachments.isEmpty
-        ? null
-        : pdfAttachments.first;
-
-    if (pdfAttachment == null && attachments.isNotEmpty) {
-      for (final att in attachments) {
-        if (att is Map) {
-          final attrs = att['attributes'] is Map ? att['attributes'] as Map : att;
-          final ext = coerceString(attrs['extension'])?.toLowerCase().trim() ?? '';
-          final path = coerceString(attrs['path'])?.toLowerCase() ?? '';
-          final name = coerceString(attrs['name'])?.toLowerCase() ?? '';
-          if (ext == 'pdf' || path.endsWith('.pdf') || path.contains('.pdf') || name.endsWith('.pdf')) {
-            pdfAttachment = att;
-            break;
-          }
-        }
+  /// The lecture that owns [chapter] in the loaded course.
+  dynamic _lectureOf(dynamic chapter) {
+    final id = _extractChapterId(chapter);
+    for (final lecture in _lectures) {
+      for (final ch in studentVisibleChapters(lecture)) {
+        if (ch is Map && _extractChapterId(ch) == id) return lecture;
       }
-      pdfAttachment ??= attachments.first;
+    }
+    return const <String, dynamic>{};
+  }
+
+  /// Opens [attachment] (or the chapter's first PDF) when the website rule
+  /// allows it (`canOpenChapterPdf`), otherwise shows the access sheet.
+  void _openChapterPdf(dynamic lecture, dynamic chapter, {dynamic attachment}) {
+    if (!canOpenChapterPdf(chapter, courseLocked: _isCourseLocked)) {
+      _showChapterAccessSheet(lecture, chapter);
+      return;
     }
 
-    if (pdfAttachment == null) {
+    final pdfs = chapterPdfAttachments(chapter);
+    final target = attachment ?? (pdfs.isEmpty ? null : pdfs.first);
+    final targetAttrs = target is Map
+        ? (target['attributes'] is Map ? target['attributes'] as Map : target)
+        : const <String, dynamic>{};
+    final pdfUrl = resolveMediaUrl(targetAttrs['path']);
+    if (pdfUrl == null) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('course.no_pdf_available'.tr())));
       return;
     }
+    final chapterTitle = coerceString(chapterAttributes(chapter)['title']) ??
+        'course.untitled_chapter'.tr();
+    final pdfName = coerceString(targetAttrs['name']) ?? chapterTitle;
 
-    final attachmentAttrs = (pdfAttachment is Map && pdfAttachment['attributes'] is Map)
-        ? pdfAttachment['attributes'] as Map
-        : (pdfAttachment is Map ? pdfAttachment : const <String, dynamic>{});
-    final fileIsLocked =
-        coerceFlagOrNull(attachmentAttrs['is_locked']) == true;
-    final pdfPath = attachmentAttrs['path']?.toString() ?? '';
-    final pdfName = attachmentAttrs['name']?.toString() ?? chapterTitle;
-
-    // Check access control using AttachmentPermissionService
-    final permissionService = AttachmentPermissionService();
-    final canOpen = permissionService.canOpenAttachment(
-      fileIsLocked: fileIsLocked,
-      chapterIsLocked: isLocked,
-      chapterIsActivated: isActivated,
-      chapterIsFreePreview: isFreePreview,
-      chapterIsFreePreviewAttachment: isFreePreviewAttachment,
-      currentViews: chapterCurrentViews(chapter),
-      maxViews: maxViews,
-    );
-
-    if (!canOpen) {
-      // Show bottom sheet modal for PDF-only chapters
-      _showPdfUnlockBottomSheet(
-        chapterId: int.tryParse(chapterId) ?? 0,
-        chapterTitle: chapterTitle,
-        attachments: attachments,
-        pdfPath: pdfPath,
-        pdfName: pdfName,
-      );
-      return;
-    }
-
-    // Process PDF URL
-    String processedUrl = pdfPath;
-    if (!processedUrl.startsWith('http')) {
-      processedUrl = processedUrl.replaceAll('\\', '/');
-      if (!processedUrl.startsWith('/')) {
-        processedUrl = '/$processedUrl';
-      }
-      processedUrl = '${ApiConstants.baseUrl}$processedUrl';
-    }
-
-    // Navigate to PDF viewer
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => PdfReviewerScreen(
-          pdfUrl: processedUrl,
+          pdfUrl: pdfUrl,
           title: pdfName,
-          // allowDownload: false,
         ),
       ),
     );
   }
 
-  /// Show bottom sheet modal for PDF-only chapter activation
-  void _showPdfUnlockBottomSheet({
-    required int chapterId,
-    required String chapterTitle,
-    required List<dynamic> attachments,
-    required String pdfPath,
-    required String pdfName,
-  }) {
+  /// The "this attachment is locked" sheet, listing **everything** in the
+  /// chapter — the video (when there is one, even if the API withheld its
+  /// URL) and each PDF — each marked open or locked with the website's rules.
+  void _showChapterAccessSheet(dynamic lecture, dynamic chapter) {
+    final access =
+        summarizeChapterAccess(chapter, courseLocked: _isCourseLocked);
+    final attrs = chapterAttributes(chapter);
+    final chapterId = int.tryParse(_extractChapterId(chapter)) ?? 0;
+    final chapterTitle =
+        coerceString(attrs['title']) ?? 'course.untitled_chapter'.tr();
+    final pdfs = chapterPdfAttachments(chapter);
+    final duration = coerceString(attrs['duration'])?.trim() ?? '';
+
+    final summaryParts = <String>[
+      if (access.hasVideo) 'course.sheet_video'.tr(),
+      if (pdfs.isNotEmpty) 'course.files_count'.tr(args: ['${pdfs.length}']),
+    ];
+
+    final lockedTitle = access.viewsExhausted
+        ? 'course.views_exhausted'.tr()
+        : (access.videoOpen || access.pdfOpen)
+            ? 'course.some_content_locked'.tr()
+            : (access.hasVideo && access.hasPdf)
+                ? 'course.chapter_content_locked'.tr()
+                : 'course.attachment_locked'.tr();
+    final lockedBody = access.viewsExhausted
+        ? 'course.max_views_reached'.tr()
+        : 'course.activate_chapter_to_access'.tr();
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
@@ -582,21 +748,17 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       isScrollControlled: true,
-      builder: (context) => DraggableScrollableSheet(
+      builder: (sheetContext) => DraggableScrollableSheet(
         initialChildSize: 0.6,
-        minChildSize: 0.5,
+        minChildSize: 0.4,
         maxChildSize: 0.9,
         expand: false,
-        builder: (context, scrollController) => Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          child: Column(
-            children: [
-              // Handle bar
-              Container(
-                margin: const EdgeInsets.only(top: 12),
+        builder: (context, scrollController) => ListView(
+          controller: scrollController,
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+          children: [
+            Center(
+              child: Container(
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
@@ -604,59 +766,114 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              const SizedBox(height: 20),
-              // Header
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                _buildSheetThumbnailOrIcon(chapter, attrs, access),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        chapterTitle,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1F2937),
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (summaryParts.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          summaryParts.join(' • '),
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+            if (access.hasVideo)
+              _buildSheetContentRow(
+                icon: FontAwesomeIcons.circlePlay,
+                iconColor: const Color(0xFF2137D6),
+                title: 'course.sheet_video'.tr(),
+                subtitle: duration.isEmpty ? null : duration,
+                isOpen: access.videoOpen,
+                openLabel: 'course.watch'.tr(),
+                onOpen: () {
+                  Navigator.pop(sheetContext);
+                  _navigateToLecture(lecture, chapter);
+                },
+              ),
+            ...pdfs.map((att) {
+              final a = att['attributes'] is Map ? att['attributes'] as Map : att;
+              return _buildSheetContentRow(
+                icon: FontAwesomeIcons.filePdf,
+                iconColor: const Color(0xFFE74C3C),
+                title: coerceString(a['name']) ?? chapterTitle,
+                subtitle: 'PDF',
+                isOpen: access.pdfOpen,
+                openLabel: 'course.open_file'.tr(),
+                onOpen: () {
+                  Navigator.pop(sheetContext);
+                  _openChapterPdf(lecture, chapter, attachment: att);
+                },
+              );
+            }),
+            if (access.needsActivation) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF0F0),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE74C3C)),
+                ),
                 child: Row(
                   children: [
                     Container(
-                      width: 60,
-                      height: 60,
+                      padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [Color(0xFFE74C3C), Color(0xFFFF6B35)],
-                        ),
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFFE74C3C).withOpacity(0.3),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
+                        color: const Color(0xFFE74C3C),
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                      child: const Center(
-                        child: FaIcon(
-                          FontAwesomeIcons.filePdf,
-                          color: Colors.white,
-                          size: 28,
-                        ),
+                      child: const FaIcon(
+                        FontAwesomeIcons.lock,
+                        color: Colors.white,
+                        size: 16,
                       ),
                     ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            chapterTitle,
+                            lockedTitle,
                             style: const TextStyle(
-                              fontSize: 18,
+                              fontSize: 16,
                               fontWeight: FontWeight.bold,
-                              color: Color(0xFF1F2937),
+                              color: Color(0xFFE74C3C),
                             ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            '${attachments.length} ${attachments.length == 1 ? 'file' : 'files'}',
+                            lockedBody,
                             style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey[600],
+                              fontSize: 13,
+                              color: Colors.grey[700],
                             ),
                           ),
                         ],
@@ -665,129 +882,259 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                   ],
                 ),
               ),
-              const SizedBox(height: 24),
-              const Divider(height: 1),
-              const SizedBox(height: 24),
-              // Locked message
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF0F0),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(sheetContext);
+                  AttachmentPermissionService().showLockedAttachmentDialog(
+                    context: context,
+                    chapterId: chapterId,
+                    courseId: widget.courseId,
+                    onRefresh: _loadLectures,
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFE74C3C),
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 56),
+                  shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: const Color(0xFFE74C3C),
-                      width: 1,
-                    ),
                   ),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE74C3C),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const FaIcon(
-                          FontAwesomeIcons.lock,
-                          color: Colors.white,
-                          size: 16,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'course.attachment_locked'.tr(),
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFFE74C3C),
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'course.unlock_to_access_attachment'.tr(),
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.grey[700],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+                  elevation: 0,
                 ),
-              ),
-              const SizedBox(height: 24),
-              // Activation button
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    // Show the activation dialog
-                    final permissionService = AttachmentPermissionService();
-                    permissionService.showLockedAttachmentDialog(
-                      context: context,
-                      chapterId: chapterId,
-                      courseId: widget.courseId,
-                      onRefresh: _loadLectures,
-                    );
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFE74C3C),
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(double.infinity, 56),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 0,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const FaIcon(FontAwesomeIcons.key, size: 18),
-                      const SizedBox(width: 12),
-                      Text(
-                        'course.unlock_now'.tr(),
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const FaIcon(FontAwesomeIcons.key, size: 18),
+                    const SizedBox(width: 12),
+                    Text(
+                      access.viewsExhausted
+                          ? 'course.reactivate'.tr()
+                          : 'course.unlock_now'.tr(),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
                       ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              // Cancel button
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: TextButton.styleFrom(
-                    foregroundColor: Colors.grey[600],
-                    minimumSize: const Size(double.infinity, 48),
-                  ),
-                  child: Text(
-                    'course.cancel'.tr(),
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
                     ),
-                  ),
+                  ],
                 ),
               ),
             ],
-          ),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: () => Navigator.pop(sheetContext),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.grey[600],
+                minimumSize: const Size(double.infinity, 48),
+              ),
+              child: Text(
+                'course.cancel'.tr(),
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  /// One item (video or PDF) in the chapter access sheet.
+  Widget _buildSheetContentRow({
+    required FaIconData icon,
+    required Color iconColor,
+    required String title,
+    String? subtitle,
+    required bool isOpen,
+    required String openLabel,
+    required VoidCallback onOpen,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: isOpen
+                  ? iconColor.withValues(alpha: 0.1)
+                  : const Color(0xFFF3F4F6),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Center(
+              child: FaIcon(
+                icon,
+                size: 18,
+                color: isOpen ? iconColor : const Color(0xFF9CA3AF),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1F2937),
+                  ),
+                ),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (isOpen)
+            TextButton(
+              onPressed: onOpen,
+              style: TextButton.styleFrom(
+                backgroundColor: const Color(0xFF2137D6),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: Text(
+                openLabel,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F4F6),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock, size: 14, color: Color(0xFF6B7280)),
+                  const SizedBox(width: 4),
+                  Text(
+                    'course.locked'.tr(),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF6B7280),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSheetThumbnailOrIcon(
+    dynamic chapter,
+    Map<String, dynamic> attrs,
+    ChapterAccessSummary access,
+  ) {
+    final chId = _extractChapterId(chapter);
+    final thumb = _extractChapterThumbnail(chapter, attrs).isNotEmpty
+        ? _extractChapterThumbnail(chapter, attrs)
+        : (_chapterThumbnails[chId] ?? '');
+
+    if (thumb.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: CachedNetworkImage(
+          imageUrl: thumb,
+          width: 60,
+          height: 60,
+          fit: BoxFit.cover,
+          memCacheWidth: 120,
+          memCacheHeight: 120,
+          placeholder: (context, url) => _buildSheetIconFallback(access),
+          errorWidget: (context, url, error) => _buildSheetIconFallback(access),
+        ),
+      );
+    }
+    return _buildSheetIconFallback(access);
+  }
+
+  Widget _buildSheetIconFallback(ChapterAccessSummary access) {
+    return Container(
+      width: 60,
+      height: 60,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: access.hasVideo
+              ? const [Color(0xFF2137D6), Color(0xFF5A75FF)]
+              : const [Color(0xFFE74C3C), Color(0xFFFF6B35)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Center(
+        child: FaIcon(
+          access.hasVideo
+              ? FontAwesomeIcons.play
+              : FontAwesomeIcons.filePdf,
+          color: Colors.white,
+          size: 26,
+        ),
+      ),
+    );
+  }
+
+  /// The website's hero subtitle: instructor • center • sub_title •
+  /// "N Lectures". The lecture count is `stats.lectures`, falling back to
+  /// the number of lectures in the record when the stats block is missing.
+  List<String> _heroSubtitleFrom(Map<String, dynamic> attributes) {
+    String? nestedName(dynamic node, List<String> keys) {
+      dynamic current = node;
+      if (current is Map && current['data'] is Map) current = current['data'];
+      if (current is Map && current['attributes'] is Map) {
+        current = current['attributes'];
+      }
+      if (current is! Map) return null;
+      for (final key in keys) {
+        final value = coerceString(current[key])?.trim();
+        if (value != null && value.isNotEmpty && value != 'null') return value;
+      }
+      return null;
+    }
+
+    final instructor =
+        nestedName(attributes['instructor'], const ['full_name', 'name']);
+    final center = nestedName(attributes['center'], const ['name']);
+    final subTitle = coerceString(attributes['sub_title'])?.trim();
+    final stats = attributes['stats'];
+    final rawLectures = attributes['lectures'];
+    final lectureCount = (stats is Map
+            ? coerceNonNegativeInt(stats['lectures'])
+            : null) ??
+        (rawLectures is List ? rawLectures.length : 0);
+
+    return [
+      ?instructor,
+      ?center,
+      if (subTitle != null && subTitle.isNotEmpty && subTitle != 'null')
+        subTitle,
+      'course.hero_lecture_count'.tr(args: ['$lectureCount']),
+    ];
   }
 
   @override
@@ -820,6 +1167,8 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
   }
 
   Widget _buildHeader() {
+    final title = _loadedTitle ?? widget.title;
+    final subtitleParts = _heroSubtitleParts ?? const <String>[];
     return Stack(
       children: [
         SizedBox(
@@ -827,10 +1176,11 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
           width: double.infinity,
           child: CoverImage(
             url: _loadedThumbnail ?? widget.thumbnail,
-            title: widget.title,
+            title: title,
             height: 320,
             showTitle: false,
             cacheWidth: 500,
+            fallback: CoverFallback.logo,
           ),
         ),
         Container(
@@ -871,23 +1221,29 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  widget.title,
+                  title,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 28,
                     fontWeight: FontWeight.bold,
                     color: Colors.white,
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  widget.description.isNotEmpty
-                      ? widget.description.split('\n').first
-                      : 'course.course'.tr(),
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.white.withValues(alpha: 0.7),
+                if (subtitleParts.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  // Same parts and "•" separators as the website's hero.
+                  Text(
+                    subtitleParts.join('  •  '),
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.5,
+                      color: Colors.white.withValues(alpha: 0.95),
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
@@ -1004,9 +1360,10 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
               ),
             ),
           ],
-          if (attachment is Map) ...[
+          // Image / video inline, other files as an in-app viewer row.
+          if (NoteAttachmentPreview.hasAttachment(attachment)) ...[
             const SizedBox(height: 12),
-            NoteAttachmentPreview(attachment: Map<String, dynamic>.from(attachment)),
+            NoteAttachmentPreview(attachment: attachment),
           ],
         ],
       ),
@@ -1018,7 +1375,10 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
   // -----------------------------------------------------------------------
 
   Future<void> _loadCourseLibrary() async {
-    setState(() => _isLoadingLibrary = true);
+    setState(() {
+      _isLoadingLibrary = true;
+      _libraryErrorMessage = null;
+    });
     try {
       final courseIdInt = int.tryParse(widget.courseId);
       final result = await _libraryRepository.getLibraries(courseId: courseIdInt);
@@ -1027,15 +1387,9 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
       if (result['success'] == true) {
         final all = (result['data'] as List?) ?? const [];
         setState(() {
-          _libraryItems = all.where((item) {
-            final attrs = item is Map ? (item['attributes'] ?? item) : null;
-            if (attrs is! Map) return false;
-            // The web hides unpublished materials.
-            if (attrs['is_publish'] == false) return false;
-            if (courseIdInt == null) return true;
-            final id = attrs['course_id'];
-            return id != null && id.toString() == widget.courseId;
-          }).toList();
+          // The API already scopes by course_id, including multi-course books.
+          // Match StudentCourseLibraryTab: only hide unpublished materials.
+          _libraryItems = publishedCourseLibraryItems(all);
           _isLoadingLibrary = false;
         });
       } else {
@@ -1045,7 +1399,12 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _isLoadingLibrary = false);
+      if (mounted) {
+        setState(() {
+          _libraryErrorMessage = 'errors.failed_fetch_libraries'.tr();
+          _isLoadingLibrary = false;
+        });
+      }
     }
   }
 
@@ -1517,86 +1876,52 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
               child: Column(
                 children: [
                   const Divider(height: 1, color: Color(0xFFE5E7EB)),
-                  ...chapters.asMap().entries.expand((entry) {
+                  ...chapters.asMap().entries.map((entry) {
                     final chapterIndex = entry.key;
                     final chapter = entry.value;
-                    final chapterAttrs = chapter['attributes'] ?? {};
-                    final chapterTitle =
-                        chapterAttrs['title']?.toString() ??
+                    final chapterAttrs = chapterAttributes(chapter);
+                    final chapterTitle = coerceString(chapterAttrs['title']) ??
                         'course.untitled_chapter'.tr();
                     final duration =
-                        chapterAttrs['duration']?.toString() ?? '--:--';
-                    final thumbnail =
-                        chapterAttrs['thumbnail']?.toString() ?? '';
-                    final rawVideo = chapterAttrs['video'];
-
-                    final videoUrl =
-                        (rawVideo == null || rawVideo.toString() == 'null')
-                        ? ''
-                        : rawVideo.toString();
-                    // Read every flag through the shared helpers: the API sends
-                    // 1 / "1" as often as true, which the old `as bool?` casts
-                    // silently turned into false.
-                    final isLocked =
-                        coerceFlagOrNull(chapterAttrs['is_locked']) == true;
-                    final isFreePreview =
-                        coerceFlag(chapterAttrs['is_free_preview']);
-                    final canWatch =
-                        coerceCanWatchExplicitTrue(chapterAttrs['can_watch']);
-                    final isActivated =
-                        coerceFlagOrNull(chapterAttrs['is_activated']) == true;
-                    final isFreePreviewAttachment =
-                        coerceFlag(chapterAttrs['is_free_preview_attachment']);
+                        coerceString(chapterAttrs['duration']) ?? '--:--';
+                    final chId = _extractChapterId(chapter);
+                    final extractedThumb =
+                        _extractChapterThumbnail(chapter, chapterAttrs);
+                    final thumbnail = extractedThumb.isNotEmpty
+                        ? extractedThumb
+                        : (_chapterThumbnails[chId] ?? '');
+                    // Web `ChapterRow` rules, computed once per row. A locked
+                    // chapter whose video URL the API withheld still counts
+                    // as having a video (client report #9).
+                    final access = summarizeChapterAccess(
+                      chapter,
+                      courseLocked: _isCourseLocked,
+                    );
                     final rawAttachments = chapterAttrs['attachments'];
-
                     final attachments = rawAttachments is List
-                        ? rawAttachments as List<dynamic>
+                        ? rawAttachments
                         : rawAttachments is Map &&
-                              rawAttachments['data'] is List
-                        ? rawAttachments['data'] as List<dynamic>
-                        : <dynamic>[];
-                    final maxViews =
-                        int.tryParse(
-                          chapterAttrs['max_views']?.toString() ?? '',
-                        ) ??
-                        0;
-                    final isLastItem = chapterIndex == chapters.length - 1;
+                                rawAttachments['data'] is List
+                            ? rawAttachments['data'] as List<dynamic>
+                            : <dynamic>[];
+                    final hasPdfOnly = access.isPdfOnly;
 
-                    // PDF-only: no stream in any of the video fields, but a PDF
-                    // attached. Tapping such a chapter opens the reviewer
-                    // directly instead of a player with nothing to play.
-                    final hasPdfOnly = chapterIsPdfOnly(chapter) ||
-                        (!chapterHasVideoContent(chapter) &&
-                            (attachments.isNotEmpty ||
-                                chapterPdfAttachments(chapter).isNotEmpty));
-
-                    final widgets = <Widget>[
-                      _buildNestedChapterItem(
-                        chapter,
-                        chapterTitle,
-                        duration,
-                        thumbnail,
-                        videoUrl,
-                        !isLocked,
-                        index: chapterIndex,
-                        totalCount: chapters.length,
-                        onTap: () => hasPdfOnly
-                            ? _navigateToPdfViewer(chapter, attachments)
-                            : _navigateToLecture(lecture, chapter),
-                        isFreePreview: isFreePreview,
-                        isLocked: isLocked,
-                        canWatch: canWatch,
-                        isLastItem: isLastItem,
-                        hasPdfOnly: hasPdfOnly,
-                        attachments: attachments,
-                        isActivated: isActivated,
-                        isFreePreviewAttachment: isFreePreviewAttachment,
-                        maxViews: maxViews,
-                      ),
-                    ];
-
-                    return widgets;
-                  }).toList(),
+                    return _buildNestedChapterItem(
+                      chapter,
+                      chapterTitle,
+                      duration,
+                      thumbnail,
+                      access.videoOpen ? _thumbnailSourceUrl(chapterAttrs) : '',
+                      access.videoOpen,
+                      index: chapterIndex,
+                      totalCount: chapters.length,
+                      onTap: () => _onChapterTap(lecture, chapter),
+                      isLocked: hasPdfOnly ? !access.pdfOpen : !access.videoOpen,
+                      isLastItem: chapterIndex == chapters.length - 1,
+                      hasPdfOnly: hasPdfOnly,
+                      attachments: attachments,
+                    );
+                  }),
                 ],
               ),
             ),
@@ -1612,12 +1937,11 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
   /// re-activation prompt once the view allowance is spent. The app collapsed
   /// all of that into a single badge driven by `is_free_preview`, so a chapter
   /// whose PDF was free but whose video was locked looked completely unlocked.
-  List<Widget> _buildChapterStateBadges(dynamic chapter) {
-    // A course the student has activated is not locked; an unloaded scope is
-    // treated as locked, which is the safe direction.
-    final courseLocked = !_scope.isEnrolled(widget.courseId);
+  List<Widget> _buildChapterStateBadges(dynamic lecture, dynamic chapter) {
+    final access =
+        summarizeChapterAccess(chapter, courseLocked: _isCourseLocked);
 
-    if (chapterViewsExhausted(chapter)) {
+    if (access.viewsExhausted) {
       return [
         _chapterBadge(
           'course.views_exhausted'.tr(),
@@ -1629,38 +1953,37 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
 
     final badges = <Widget>[];
 
-    if (chapterHasVideoContent(chapter)) {
-      if (isChapterVideoPlayable(chapter, courseLocked: courseLocked)) {
-        badges.add(_chapterBadge(
-          'course.watch'.tr(),
-          const Color(0xFF2DBC77),
-          const Color(0xFFE8F9F0),
-        ));
-      } else if (chapterVideoRequiresActivation(chapter,
-          courseLocked: courseLocked)) {
-        badges.add(_chapterBadge(
-          'course.locked'.tr(),
-          const Color(0xFF92400E),
-          const Color(0xFFFFF7ED),
-        ));
-      }
+    if (access.hasVideo) {
+      badges.add(access.videoOpen
+          ? _chapterBadge(
+              'course.watch'.tr(),
+              const Color(0xFF2DBC77),
+              const Color(0xFFE8F9F0),
+            )
+          : _chapterBadge(
+              'course.locked'.tr(),
+              const Color(0xFF92400E),
+              const Color(0xFFFFF7ED),
+            ));
     }
 
-    if (chapterHasPdfAttachment(chapter)) {
-      if (isChapterPdfVisible(chapter, courseLocked: courseLocked)) {
-        badges.add(_chapterBadge(
-          'course.open_file'.tr(),
-          const Color(0xFFE74C3C),
-          const Color(0xFFFFE8E8),
-        ));
-      } else if (chapterPdfRequiresActivation(chapter,
-          courseLocked: courseLocked)) {
-        badges.add(_chapterBadge(
-          'course.requires_unlock'.tr(),
-          const Color(0xFF6B7280),
-          const Color(0xFFF5F5F5),
-        ));
-      }
+    if (access.hasPdf) {
+      badges.add(access.pdfOpen
+          // An open PDF opens straight from its badge, like the web's
+          // separate "Open PDF" button.
+          ? GestureDetector(
+              onTap: () => _openChapterPdf(lecture, chapter),
+              child: _chapterBadge(
+                'course.open_file'.tr(),
+                const Color(0xFFE74C3C),
+                const Color(0xFFFFE8E8),
+              ),
+            )
+          : _chapterBadge(
+              'course.requires_unlock'.tr(),
+              const Color(0xFF6B7280),
+              const Color(0xFFF5F5F5),
+            ));
     }
 
     if (badges.isEmpty) {
@@ -1710,9 +2033,6 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
     required bool isLastItem,
     bool hasPdfOnly = false,
     List<dynamic> attachments = const [],
-    bool isActivated = false,
-    bool isFreePreviewAttachment = false,
-    int maxViews = 0,
   }) {
     return InkWell(
       onTap: onTap,
@@ -1778,6 +2098,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                   ? _buildPdfOnlyChapterItem(
                       title: title,
                       attachments: attachments,
+                      imageUrl: imageUrl,
                       isLocked: isLocked,
                       onTap: onTap,
                     )
@@ -1825,24 +2146,10 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
           children: [
             Stack(
               children: [
-                // Show network thumbnail if available, otherwise try video thumbnail
+                // Show network thumbnail if available, otherwise try video thumbnail or PDF placeholder
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: hasPdfOnly
-                      ? Container(
-                          width: 80,
-                          height: 60,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFFF0F0),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: FaIcon(
-                            FontAwesomeIcons.filePdf,
-                            color: const Color(0xFFE74C3C),
-                            size: 32,
-                          ),
-                        )
-                      : imageUrl.isNotEmpty
+                  child: imageUrl.isNotEmpty
                       ? CachedNetworkImage(
                           imageUrl: imageUrl,
                           width: 80,
@@ -1850,13 +2157,18 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                           fit: BoxFit.cover,
                           memCacheWidth: 160,
                           memCacheHeight: 120,
+                          fadeInDuration: const Duration(milliseconds: 150),
                           placeholder: (context, url) =>
-                              _buildVideoThumbnail(videoUrl, isLocked),
+                              _buildThumbnailPlaceholder(isLocked),
                           errorWidget: (context, url, error) {
-                            return _buildVideoThumbnail(videoUrl, isLocked);
+                            return hasPdfOnly
+                                ? _buildPdfPlaceholder()
+                                : _buildVideoThumbnail(videoUrl, isLocked);
                           },
                         )
-                      : _buildVideoThumbnail(videoUrl, isLocked),
+                      : (hasPdfOnly
+                          ? _buildPdfPlaceholder()
+                          : _buildVideoThumbnail(videoUrl, isLocked)),
                 ),
                 if (isCompleted)
                   Positioned(
@@ -1939,7 +2251,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                     ],
                   ),
                   const SizedBox(height: 8),
-                  ..._buildChapterStateBadges(chapter),
+                  ..._buildChapterStateBadges(_lectureOf(chapter), chapter),
                 ],
               ),
             ),
@@ -1953,6 +2265,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
   Widget _buildPdfOnlyChapterItem({
     required String title,
     required List<dynamic> attachments,
+    String imageUrl = '',
     required bool isLocked,
     required VoidCallback onTap,
   }) {
@@ -1988,63 +2301,42 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
-              // PDF Icon with gradient background
-              Container(
-                width: 70,
-                height: 70,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: isLocked
-                        ? [const Color(0xFFE0E0E0), const Color(0xFFD0D0D0)]
-                        : [const Color(0xFFE74C3C), const Color(0xFFFF6B35)],
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: isLocked
-                          ? Colors.black.withOpacity(0.1)
-                          : const Color(0xFFE74C3C).withOpacity(0.3),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Center(
-                  child: Stack(
-                    children: [
-                      FaIcon(
-                        FontAwesomeIcons.filePdf,
-                        color: Colors.white,
-                        size: 32,
-                      ),
-                      if (isLocked)
-                        Positioned(
-                          top: 0,
-                          right: 0,
-                          child: Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.1),
-                                  blurRadius: 4,
-                                  offset: const Offset(0, 2),
+              // Chapter Thumbnail or PDF icon with gradient background
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: SizedBox(
+                  width: 70,
+                  height: 70,
+                  child: imageUrl.isNotEmpty
+                      ? Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            CachedNetworkImage(
+                              imageUrl: imageUrl,
+                              width: 70,
+                              height: 70,
+                              fit: BoxFit.cover,
+                              memCacheWidth: 140,
+                              memCacheHeight: 140,
+                              placeholder: (context, url) =>
+                                  _buildPdfOnlyIconPlaceholder(isLocked),
+                              errorWidget: (context, url, error) =>
+                                  _buildPdfOnlyIconPlaceholder(isLocked),
+                            ),
+                            if (isLocked)
+                              Container(
+                                color: Colors.black.withOpacity(0.3),
+                                child: const Center(
+                                  child: Icon(
+                                    Icons.lock,
+                                    size: 20,
+                                    color: Colors.white,
+                                  ),
                                 ),
-                              ],
-                            ),
-                            child: const Icon(
-                              Icons.lock,
-                              size: 12,
-                              color: Color(0xFFE74C3C),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
+                              ),
+                          ],
+                        )
+                      : _buildPdfOnlyIconPlaceholder(isLocked),
                 ),
               ),
               const SizedBox(width: 16),
@@ -2189,38 +2481,127 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
     );
   }
 
-  /// Build video thumbnail widget when network thumbnail is not available
-  Widget _buildVideoThumbnail(String videoUrl, bool isLocked) {
-    if (videoUrl.isEmpty) {
-      // No video URL, show fallback placeholder
-      return Container(
-        width: 80,
-        height: 60,
-        decoration: BoxDecoration(
-          color: Colors.grey[300],
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Icon(
-          isLocked ? Icons.lock : Icons.play_arrow,
-          color: Colors.white,
+  /// Light, instant placeholder for a chapter picture.
+  Widget _buildThumbnailPlaceholder(bool isLocked) {
+    return Container(
+      width: 80,
+      height: 60,
+      decoration: BoxDecoration(
+        color: const Color(0xFFE5E7EB),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Icon(
+        isLocked ? Icons.lock : Icons.play_arrow,
+        color: Colors.white,
+        size: 28,
+      ),
+    );
+  }
+
+  /// Placeholder for PDF chapters without an image thumbnail.
+  Widget _buildPdfPlaceholder() {
+    return Container(
+      width: 80,
+      height: 60,
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF0F0),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Center(
+        child: FaIcon(
+          FontAwesomeIcons.filePdf,
+          color: Color(0xFFE74C3C),
           size: 32,
         ),
-      );
-    }
+      ),
+    );
+  }
 
-    // Process video URL - handle relative URLs
-    String processedUrl = videoUrl;
-    if (!processedUrl.startsWith('http')) {
-      processedUrl = processedUrl.replaceAll('\\', '/');
-      if (!processedUrl.startsWith('/')) {
-        processedUrl = '/$processedUrl';
-      }
-      // Use base URL from API constants
-      processedUrl = '${ApiConstants.baseUrl}$processedUrl';
-    }
+  /// Fallback icon with gradient for PDF-only chapters.
+  Widget _buildPdfOnlyIconPlaceholder(bool isLocked) {
+    return Container(
+      width: 70,
+      height: 70,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: isLocked
+              ? [const Color(0xFFE0E0E0), const Color(0xFFD0D0D0)]
+              : [const Color(0xFFE74C3C), const Color(0xFFFF6B35)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: isLocked
+                ? Colors.black.withOpacity(0.1)
+                : const Color(0xFFE74C3C).withOpacity(0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Center(
+        child: Stack(
+          children: [
+            const FaIcon(
+              FontAwesomeIcons.filePdf,
+              color: Colors.white,
+              size: 32,
+            ),
+            if (isLocked)
+              Positioned(
+                top: 0,
+                right: 0,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.lock,
+                    size: 12,
+                    color: Color(0xFFE74C3C),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 
+  /// A progressive (non-HLS) stream to pull a preview frame from, or `''`.
+  ///
+  /// HLS playlists cannot be decoded by the frame extractor, so trying them
+  /// only burned time before falling back to the placeholder.
+  String _thumbnailSourceUrl(Map<String, dynamic> chapterAttrs) {
+    for (final key in const ['video_mp4_url', 'video', 'main_video']) {
+      final raw = coerceString(chapterAttrs[key]);
+      if (isNoVideoUrl(raw)) continue;
+      final url = resolveMediaUrl(raw);
+      if (url == null) continue;
+      if (url.toLowerCase().split('?').first.endsWith('.m3u8')) continue;
+      return url;
+    }
+    return '';
+  }
+
+  /// Chapter preview when the API has no picture for it: a placeholder, with
+  /// a frame extracted from the video lazily in the background (queued,
+  /// cached on disk; see [VideoThumbnailWidget]).
+  Widget _buildVideoThumbnail(String videoUrl, bool isLocked) {
+    if (videoUrl.isEmpty) return _buildThumbnailPlaceholder(isLocked);
     return VideoThumbnailWidget(
-      videoUrl: processedUrl,
+      videoUrl: videoUrl,
       width: 80,
       height: 60,
       borderRadius: 12,
@@ -2483,39 +2864,62 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
             ],
           ),
           const SizedBox(height: 24),
-          ElevatedButton(
-            // Locked exams stay tappable: the use case opens the activation
-            // prompt, which is how a student unlocks one on the web too.
-            onPressed: bucket == QuizBucket.expired ||
-                    bucket == QuizBucket.completed
-                ? null
-                : () async {
-                    final examAccessUseCase = ExamAccessUseCase();
-                    await examAccessUseCase.handleExamAccess(
-                      context: context,
-                      quiz: exam,
-                      enrolledCourseIds: _scope.enrolledCourseIds,
-                    );
-                  },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: bucket == QuizBucket.available
-                  ? const Color(0xFF263EE2)
-                  : const Color(0xFFC4C4C4),
-              foregroundColor: Colors.white,
-              disabledBackgroundColor: const Color(0xFFC4C4C4),
-              disabledForegroundColor: Colors.white,
-              minimumSize: const Size(double.infinity, 54),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
+          // Not open yet: a live countdown in the button's place, like the
+          // website's `NewestExams`, which becomes Start at zero. Only the
+          // countdown ticks; `onReached` rebuilds once so the badge and the
+          // bucket catch up.
+          if (bucket == QuizBucket.upcoming)
+            ExamCountdown(
+              startTime: exam.startTime,
+              onReached: () {
+                if (mounted) setState(() {});
+              },
+              countdownBuilder: (context, formatted) => ExamCountdownPill(
+                formatted: formatted,
+                height: 54,
+                borderRadius: 16,
+                fontSize: 16,
               ),
-              elevation: 0,
-            ),
-            child: Text(
-              _examBucketButtonLabel(bucket).toUpperCase(),
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-          ),
+              readyBuilder: (context) =>
+                  _buildExamActionButton(exam, QuizBucket.available),
+            )
+          else
+            _buildExamActionButton(exam, bucket),
         ],
+      ),
+    );
+  }
+
+  Widget _buildExamActionButton(Quiz exam, QuizBucket bucket) {
+    return ElevatedButton(
+      // Locked exams stay tappable: the use case opens the activation
+      // prompt, which is how a student unlocks one on the web too.
+      onPressed: bucket == QuizBucket.expired || bucket == QuizBucket.completed
+          ? null
+          : () async {
+              final examAccessUseCase = ExamAccessUseCase();
+              await examAccessUseCase.handleExamAccess(
+                context: context,
+                quiz: exam,
+                enrolledCourseIds: _scope.enrolledCourseIds,
+              );
+            },
+      style: ElevatedButton.styleFrom(
+        backgroundColor: bucket == QuizBucket.available
+            ? const Color(0xFF263EE2)
+            : const Color(0xFFC4C4C4),
+        foregroundColor: Colors.white,
+        disabledBackgroundColor: const Color(0xFFC4C4C4),
+        disabledForegroundColor: Colors.white,
+        minimumSize: const Size(double.infinity, 54),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        elevation: 0,
+      ),
+      child: Text(
+        _examBucketButtonLabel(bucket).toUpperCase(),
+        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
       ),
     );
   }
@@ -2618,16 +3022,25 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
   }
 
   Widget _buildLiveRoomCard(lr.LiveRoom room) {
-    // Website course tab: "Join Now" when live, otherwise "View" — both open
-    // the live session page.
+    final access = room.accessFor(_scope.enrolledCourseIds);
     return LiveRoomCourseCard(
       room: room,
-      onOpen: () => Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) =>
-              LiveSessionDetailScreen(roomId: room.id, initialRoom: room),
-        ),
-      ),
+      access: access,
+      onOpen: () async {
+        if (access == lr.LiveRoomAccess.lockedPrivate) {
+          final activated = await LiveRoomActivationSheet.show(context, roomId: room.id, title: room.title);
+          if (activated == true && mounted) await _loadCourseDetails();
+          return;
+        }
+        if (access == lr.LiveRoomAccess.courseNotEnrolled) {
+          if (room.courseIds.isNotEmpty) {
+            await Navigator.of(context).push(MaterialPageRoute(builder: (_) => CourseDetailScreen(courseId: room.courseIds.first, title: room.courseTitlesLabel, thumbnail: room.courseThumbnail ?? '', price: '', description: '')));
+          }
+          return;
+        }
+        await Navigator.of(context).push(MaterialPageRoute(builder: (_) => LiveSessionDetailScreen(roomId: room.id, initialRoom: room)));
+        if (mounted) await _loadCourseDetails();
+      },
     );
   }
 
@@ -2675,9 +3088,9 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Community',
-                style: TextStyle(
+              Text(
+                'community.title'.tr(),
+                style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: Color(0xFF1F2937),
@@ -2685,7 +3098,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
               ),
               const SizedBox(height: 4),
               Text(
-                '${_posts.length} posts',
+                'community.posts_count'.plural(_posts.length),
                 style: TextStyle(fontSize: 13, color: Colors.grey[600]),
               ),
             ],
@@ -2693,7 +3106,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
           ElevatedButton.icon(
             onPressed: _navigateToCreatePost,
             icon: const FaIcon(FontAwesomeIcons.plus, size: 14),
-            label: const Text('New Post'),
+            label: Text('community.new_post'.tr()),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF5A75FF),
               foregroundColor: Colors.white,
@@ -2745,10 +3158,10 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                 ),
               ),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Course Community',
-                  style: TextStyle(
+                  'community.course_community'.tr(),
+                  style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
                     color: Colors.white,
@@ -2759,7 +3172,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
           ),
           const SizedBox(height: 12),
           Text(
-            'Stay connected with course updates, links, and class discussions for ${widget.title}.',
+            'community.info_card_desc'.tr(args: [widget.title]),
             style: TextStyle(
               fontSize: 13,
               color: Colors.white.withValues(alpha: 0.9),
@@ -2824,9 +3237,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
               ),
               const SizedBox(width: 8),
               Text(
-                context.locale.languageCode == 'ar'
-                    ? 'روابط ومجموعات الكورس'
-                    : 'Quick Links',
+                'community.quick_links'.tr(),
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -2853,8 +3264,8 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                   children: activeLinks.map((link) {
                     return Expanded(
                       child: Padding(
-                        padding: EdgeInsets.only(
-                          right: activeLinks.last == link ? 0 : 12,
+                        padding: EdgeInsetsDirectional.only(
+                          end: activeLinks.last == link ? 0 : 12,
                         ),
                         child: _buildQuickLinkCard(link),
                       ),
@@ -3159,7 +3570,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
           const Icon(Icons.error_outline, size: 48, color: Colors.grey),
           const SizedBox(height: 16),
           Text(
-            _communityErrorMessage ?? 'An error occurred',
+            _communityErrorMessage ?? 'community.error_occurred'.tr(),
             style: const TextStyle(color: Colors.grey),
             textAlign: TextAlign.center,
           ),
@@ -3170,7 +3581,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
               backgroundColor: const Color(0xFF5A75FF),
               foregroundColor: Colors.white,
             ),
-            child: const Text('Retry'),
+            child: Text('community.retry'.tr()),
           ),
         ],
       ),
@@ -3198,7 +3609,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
             ),
             const SizedBox(height: 16),
             Text(
-              'No posts yet in this course',
+              'community.no_posts_course'.tr(),
               style: TextStyle(
                 color: Colors.grey[600],
                 fontSize: 15,
@@ -3207,7 +3618,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
             ),
             const SizedBox(height: 8),
             Text(
-              'Be the first to start a discussion!',
+              'community.be_first_discussion'.tr(),
               style: TextStyle(color: Colors.grey[400], fontSize: 13),
             ),
           ],
@@ -3224,7 +3635,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
         children: [
           const SizedBox(height: 20),
           Text(
-            'Recent Posts',
+            'community.recent_posts'.tr(),
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w600,
@@ -3246,7 +3657,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
   Widget _buildPostCard({required Post post, bool isPinned = false}) {
     final user = post.attributes.user;
     final course = post.attributes.course;
-    final userName = user?.attributes.fullName ?? 'Unknown User';
+    final userName = user?.attributes.fullName ?? 'community.unknown_user'.tr();
     final isInstructor =
         user?.attributes.role.toLowerCase() == 'admin' ||
         user?.attributes.role.toLowerCase() == 'instructor';
@@ -3281,7 +3692,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  'PINNED POST',
+                  'community.pinned_post'.tr(),
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
@@ -3344,9 +3755,9 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                               color: AppColors.accountingBg,
                               borderRadius: BorderRadius.circular(4),
                             ),
-                            child: const Text(
-                              'Instructor',
-                              style: TextStyle(
+                            child: Text(
+                              'community.instructor'.tr(),
+                              style: const TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.w500,
                                 color: AppColors.accountingText,
@@ -3589,17 +4000,17 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
     final difference = now.difference(dateTime);
 
     if (difference.inDays > 365) {
-      return '${difference.inDays ~/ 365} years ago';
+      return 'time.years_ago'.plural(difference.inDays ~/ 365);
     } else if (difference.inDays > 30) {
-      return '${difference.inDays ~/ 30} months ago';
+      return 'time.months_ago'.plural(difference.inDays ~/ 30);
     } else if (difference.inDays > 0) {
-      return '${difference.inDays} days ago';
+      return 'time.days_ago'.plural(difference.inDays);
     } else if (difference.inHours > 0) {
-      return '${difference.inHours} hours ago';
+      return 'time.hours_ago'.plural(difference.inHours);
     } else if (difference.inMinutes > 0) {
-      return '${difference.inMinutes} minutes ago';
+      return 'time.minutes_ago'.plural(difference.inMinutes);
     } else {
-      return 'Just now';
+      return 'time.just_now'.tr();
     }
   }
 }

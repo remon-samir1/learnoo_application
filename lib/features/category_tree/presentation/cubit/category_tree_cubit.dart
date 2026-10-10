@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' hide Category;
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../core/services/student_scope.dart';
 import '../../data/models/category_tree_model.dart';
 import '../../data/repositories/category_tree_repository.dart';
 import 'category_tree_state.dart';
@@ -317,11 +320,18 @@ class CategoryTreeCubit extends Cubit<CategoryTreeState> {
     );
   }
 
-  /// Activate a locked course using code:
-  /// `POST /v1/student/courses/activate` with `code` & `course_id`.
+  /// Activate a locked course with a code through `POST /v1/code/activate`
+  /// (`item_type: "course"`), the same call the website makes.
+  ///
+  /// On success the course is unlocked in memory at once, then the tree is
+  /// re-read from the server so the lock state shown is the server's. On
+  /// failure [CategoryTreeState.activationMessage] holds the server message,
+  /// or [invalidIdError] / [genericError] when there is none.
   Future<bool> activateCourse({
     required String courseId,
     required String code,
+    required String genericError,
+    required String invalidIdError,
   }) async {
     emit(state.copyWith(
       isActivating: true,
@@ -332,21 +342,26 @@ class CategoryTreeCubit extends Cubit<CategoryTreeState> {
     final result = await _repository.activateCourse(
       courseId: courseId,
       code: code,
+      genericError: genericError,
     );
 
     final isSuccess = result['success'] == true;
-    final message = result['message']?.toString() ??
-        (isSuccess ? 'Course activated successfully!' : 'Activation failed');
+    final serverMessage = result['message']?.toString().trim();
+    final message = (serverMessage != null && serverMessage.isNotEmpty)
+        ? serverMessage
+        : (result['invalidId'] == true ? invalidIdError : genericError);
 
     if (isSuccess) {
-      // Update the activated course in state
       _updateCourseLockStatus(courseId, isLocked: false);
+      // Other screens memoise the student's unlocked courses.
+      StudentScopeService().invalidate();
 
       emit(state.copyWith(
         isActivating: false,
         isActivationSuccess: true,
-        activationMessage: message,
+        clearActivationMessage: true,
       ));
+      unawaited(refresh());
       return true;
     } else {
       emit(state.copyWith(

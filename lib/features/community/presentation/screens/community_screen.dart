@@ -284,8 +284,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
         builder: (context) => const CreatePostScreen(),
       ),
     );
+    // CreatePostScreen already told the student whether the post is live or
+    // awaiting admin approval; the reload shows only published posts.
     if (result == true) {
-      _showSnack('community.post_created'.tr());
       _loadPosts();
     }
   }

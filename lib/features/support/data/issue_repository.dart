@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'dart:io';
 
 import '../../../core/network/api_client.dart';
@@ -43,7 +44,7 @@ class IssueRepository {
             if (type != null && type.isNotEmpty) 'type': type,
           },
           files: {'image': attachment.path},
-          fallback: 'Failed to submit your report',
+          fallback: 'errors.failed_submit_report'.tr(),
         );
       } else {
         payload = await _api.post(
@@ -53,7 +54,7 @@ class IssueRepository {
             'description': description,
             if (type != null && type.isNotEmpty) 'type': type,
           },
-          fallback: 'Failed to submit your report',
+          fallback: 'errors.failed_submit_report'.tr(),
         );
       }
 
@@ -63,7 +64,7 @@ class IssueRepository {
         'message': payload is Map ? payload['message'] : null,
       };
     } catch (e) {
-      return _fail(e, 'Failed to submit your report');
+      return _fail(e, 'errors.failed_submit_report'.tr());
     }
   }
 
@@ -72,11 +73,11 @@ class IssueRepository {
     try {
       final payload = await _api.get(
         ApiConstants.issues,
-        fallback: 'Failed to load your reports',
+        fallback: 'errors.failed_load_reports'.tr(),
       );
       return {'success': true, 'data': unwrapList(payload)};
     } catch (e) {
-      return _fail(e, 'Failed to load your reports');
+      return _fail(e, 'errors.failed_load_reports'.tr());
     }
   }
 }

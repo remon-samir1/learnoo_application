@@ -12,7 +12,38 @@ import '../network/api_constants.dart';
 String? resolveMediaUrl(dynamic raw) {
   dynamic value = raw;
   if (value is Map) {
-    value = value['url'] ?? value['original_url'] ?? value['path'] ?? value['src'];
+    if (value['data'] is Map) {
+      final d = value['data'] as Map;
+      if (d['attributes'] is Map) {
+        final a = d['attributes'] as Map;
+        value = a['url'] ??
+            a['original_url'] ??
+            a['path'] ??
+            a['src'] ??
+            a['thumbnail'] ??
+            d['url'] ??
+            d['thumbnail'];
+      } else {
+        value = d['url'] ??
+            d['original_url'] ??
+            d['path'] ??
+            d['src'] ??
+            d['thumbnail'];
+      }
+    } else if (value['attributes'] is Map) {
+      final a = value['attributes'] as Map;
+      value = a['url'] ??
+          a['original_url'] ??
+          a['path'] ??
+          a['src'] ??
+          a['thumbnail'];
+    } else {
+      value = value['url'] ??
+          value['original_url'] ??
+          value['path'] ??
+          value['src'] ??
+          value['thumbnail'];
+    }
   }
   if (value is List) {
     for (final item in value) {

@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:share_plus/share_plus.dart';
@@ -175,7 +176,7 @@ class LinkCardWidget extends StatelessWidget {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Could not open link: $url'),
+              content: Text('links.could_not_open'.tr(args: [url])),
               backgroundColor: Colors.red,
             ),
           );
@@ -185,7 +186,7 @@ class LinkCardWidget extends StatelessWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Invalid URL: $url'),
+            content: Text('links.invalid_url'.tr(args: [url])),
             backgroundColor: Colors.red,
           ),
         );
@@ -206,7 +207,7 @@ class LinkCardWidget extends StatelessWidget {
           iconBackgroundColor: const Color(0xFF25D366).withValues(alpha: 0.1),
           backgroundColor: const Color(0xFF25D366),
           badgeColor: const Color(0xFF25D366),
-          label: 'WhatsApp',
+          label: 'profile.whatsapp'.tr(),
         );
       case LinkType.telegram:
         return _LinkConfig(
@@ -215,7 +216,7 @@ class LinkCardWidget extends StatelessWidget {
           iconBackgroundColor: const Color(0xFF0088CC).withValues(alpha: 0.1),
           backgroundColor: const Color(0xFF0088CC),
           badgeColor: const Color(0xFF0088CC),
-          label: 'Telegram',
+          label: 'profile.telegram'.tr(),
         );
       case LinkType.external:
         return _LinkConfig(
@@ -224,7 +225,7 @@ class LinkCardWidget extends StatelessWidget {
           iconBackgroundColor: const Color(0xFF5A75FF).withValues(alpha: 0.1),
           backgroundColor: const Color(0xFF5A75FF),
           badgeColor: const Color(0xFF5A75FF),
-          label: 'External Link',
+          label: 'links.external_link'.tr(),
         );
     }
   }

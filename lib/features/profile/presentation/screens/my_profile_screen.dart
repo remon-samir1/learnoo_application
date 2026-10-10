@@ -6,6 +6,7 @@ import 'package:learnoo/features/auth/presentation/screens/login_screen.dart';
 import 'package:learnoo/core/services/feature_manager.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:learnoo/features/support/presentation/screens/support_screen.dart';
+import 'package:learnoo/features/home/presentation/screens/main_screen.dart';
 import 'edit_profile_screen.dart';
 import 'downloads_screen.dart';
 import 'settings_screen.dart';
@@ -616,9 +617,27 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
       builder: (context) => EditProfileScreen(
         userData: _userData,
         onUpdate: (updatedData) {
-          setState(() => _userData = updatedData);
+          if (mounted) setState(() => _userData = updatedData);
         },
+        onAcademicScopeChanged: _rebuildForNewAcademicScope,
       ),
+    );
+  }
+
+  /// After university / centre / faculty changed, every screen under this one
+  /// still holds data loaded for the old selection. Rebuild the whole stack —
+  /// a fresh home shell (whose tabs reload from the API, the caches having
+  /// been cleared) with this profile page on top — which is what the web gets
+  /// from `router.push(profile)` + `router.refresh()`.
+  void _rebuildForNewAcademicScope() {
+    if (!mounted) return;
+    final navigator = Navigator.of(context);
+    navigator.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const MainScreen()),
+      (route) => false,
+    );
+    navigator.push(
+      MaterialPageRoute(builder: (_) => const MyProfileScreen()),
     );
   }
 }

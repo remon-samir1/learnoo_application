@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
@@ -26,7 +27,7 @@ class DiscussionRepository with OfflineFirstRepository {
   /// Returns cached discussions if offline or API fails
   Future<Map<String, dynamic>> getDiscussions({int? chapterId}) async {
     final token = await _getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final cacheKey = chapterId != null ? 'discussions_chapter_$chapterId' : 'discussions_all';
 
@@ -50,7 +51,7 @@ class DiscussionRepository with OfflineFirstRepository {
         } else {
           return {
             'success': false,
-            'message': data['message'] ?? 'Failed to fetch discussions',
+            'message': data['message'] ?? 'errors.failed_fetch_discussions'.tr(),
           };
         }
       },
@@ -74,7 +75,7 @@ class DiscussionRepository with OfflineFirstRepository {
     File? screenshotFile,
   }) async {
     final token = await _getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     // For voice files, we need to handle offline differently since
     // we can't easily queue multipart file uploads
@@ -130,7 +131,7 @@ class DiscussionRepository with OfflineFirstRepository {
         'offline': true,
         'queued': true,
         'actionId': action.id,
-        'message': 'Comment queued and will be posted when online',
+        'message': 'errors.comment_queued'.tr(),
         // Optimistic data for UI
         'optimisticData': {
           'id': action.id,
@@ -180,7 +181,7 @@ class DiscussionRepository with OfflineFirstRepository {
           'offline': false,
           'queued': true,
           'actionId': action.id,
-          'message': 'Comment saved locally, will sync when online',
+          'message': 'errors.comment_saved_offline'.tr(),
           'optimisticData': {
             'id': action.id,
             'chapter_id': chapterId,
@@ -206,7 +207,7 @@ class DiscussionRepository with OfflineFirstRepository {
         'offline': true,
         'queued': true,
         'actionId': action.id,
-        'message': 'Comment saved locally, will sync when online',
+        'message': 'errors.comment_saved_offline'.tr(),
         'optimisticData': {
           'id': action.id,
           'chapter_id': chapterId,
@@ -236,7 +237,7 @@ class DiscussionRepository with OfflineFirstRepository {
     File? screenshotFile,
   }) async {
     final token = await _getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.discussion}');
 
@@ -246,7 +247,7 @@ class DiscussionRepository with OfflineFirstRepository {
       return {
         'success': false,
         'offline': true,
-        'message': 'Voice comments require internet connection',
+        'message': 'errors.voice_requires_internet'.tr(),
       };
     }
 
@@ -294,11 +295,11 @@ class DiscussionRepository with OfflineFirstRepository {
       } else {
         return {
           'success': false,
-          'message': data['message'] ?? 'Failed to post voice discussion',
+          'message': data['message'] ?? 'errors.failed_post_voice'.tr(),
         };
       }
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 
@@ -316,7 +317,7 @@ class DiscussionRepository with OfflineFirstRepository {
     required File screenshotFile,
   }) async {
     final token = await _getToken();
-    if (token == null) return {'success': false, 'message': 'No token found'};
+    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
 
     final hasConnection = await ConnectivityService().hasConnection();
     if (!hasConnection) {
@@ -365,10 +366,10 @@ class DiscussionRepository with OfflineFirstRepository {
       }
       return {
         'success': false,
-        'message': data['message'] ?? 'Failed to post discussion',
+        'message': data['message'] ?? 'course.failed_post_discussion'.tr(),
       };
     } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
+      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
     }
   }
 

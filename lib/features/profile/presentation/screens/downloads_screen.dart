@@ -448,13 +448,13 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                       backgroundColor: Colors.white.withValues(alpha: 0.2),
                     ),
                   ),
-                  const Expanded(
+                  Expanded(
                     child: Center(
                       child: Padding(
-                        padding: EdgeInsets.only(right: 48),
+                        padding: const EdgeInsetsDirectional.only(end: 48),
                         child: Text(
-                          'Downloads',
-                          style: TextStyle(
+                          'profile.downloads_title'.tr(),
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 22,
                             fontWeight: FontWeight.bold,
@@ -484,7 +484,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                           const FaIcon(FontAwesomeIcons.hardDrive, color: Colors.white, size: 16),
                           const SizedBox(width: 8),
                           Text(
-                            'Storage Used',
+                            'downloads.storage_used'.tr(),
                             style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 13),
                           ),
                         ],
@@ -510,11 +510,11 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        'Used: $_formattedUsedDeviceStorage',
+                        'downloads.used'.tr(args: [_formattedUsedDeviceStorage]),
                         style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 11),
                       ),
                       Text(
-                        'Free: $_formattedFreeStorage',
+                        'downloads.free'.tr(args: [_formattedFreeStorage]),
                         style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 11),
                       ),
                     ],

@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_constants.dart';
 import '../../../core/network/api_exception.dart';
@@ -17,15 +18,15 @@ class ParentRepository {
       final payload = await _api.post(
         ApiConstants.parentStudents,
         body: {'student_code': studentCode},
-        fallback: 'Failed to link the student',
+        fallback: 'errors.failed_link_student'.tr(),
       );
       return {
         'success': true,
-        'message': _message(payload, 'Student linked successfully'),
+        'message': _message(payload, 'errors.student_linked'.tr()),
         'data': payload is Map ? payload['data'] : null,
       };
     } catch (e) {
-      return _fail(e, 'Failed to link the student');
+      return _fail(e, 'errors.failed_link_student'.tr());
     }
   }
 
@@ -36,41 +37,41 @@ class ParentRepository {
       final payload = await _api.post(
         ApiConstants.parentStudents,
         body: {'codes': codes},
-        fallback: 'Failed to link the students',
+        fallback: 'errors.failed_link_students'.tr(),
       );
       return {
         'success': true,
-        'message': _message(payload, 'Students linked successfully'),
+        'message': _message(payload, 'errors.students_linked'.tr()),
         'data': payload is Map ? payload['data'] : null,
       };
     } catch (e) {
-      return _fail(e, 'Failed to link the students');
+      return _fail(e, 'errors.failed_link_students'.tr());
     }
   }
 
   /// `GET /v1/parent/students` — the children on this parent account.
   Future<Map<String, dynamic>> linkedStudents() =>
-      _list(ApiConstants.parentStudents, 'Failed to load linked students');
+      _list(ApiConstants.parentStudents, 'errors.failed_load_linked_students'.tr());
 
   Future<Map<String, dynamic>> studentDashboard(Object id) =>
-      _object(ApiConstants.parentStudentDashboard(id), 'Failed to load the dashboard');
+      _object(ApiConstants.parentStudentDashboard(id), 'errors.failed_load_dashboard'.tr());
 
   Future<Map<String, dynamic>> studentProgress(Object id) =>
-      _object(ApiConstants.parentStudentProgress(id), 'Failed to load progress');
+      _object(ApiConstants.parentStudentProgress(id), 'errors.failed_load_progress'.tr());
 
   Future<Map<String, dynamic>> studentWeeklyStats(Object id) => _object(
         ApiConstants.parentStudentWeeklyStats(id),
-        'Failed to load weekly stats',
+        'errors.failed_load_weekly_stats'.tr(),
       );
 
   Future<Map<String, dynamic>> studentAlerts(Object id) =>
-      _list(ApiConstants.parentStudentAlerts(id), 'Failed to load alerts');
+      _list(ApiConstants.parentStudentAlerts(id), 'errors.failed_load_alerts'.tr());
 
   Future<Map<String, dynamic>> studentFeedback(Object id) =>
-      _list(ApiConstants.parentStudentFeedback(id), 'Failed to load feedback');
+      _list(ApiConstants.parentStudentFeedback(id), 'errors.failed_load_feedback'.tr());
 
   Future<Map<String, dynamic>> studentActivity(Object id) =>
-      _list(ApiConstants.parentStudentActivity(id), 'Failed to load activity');
+      _list(ApiConstants.parentStudentActivity(id), 'errors.failed_load_activity'.tr());
 
   // ------------------------------------------------------------------
 

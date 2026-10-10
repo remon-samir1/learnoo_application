@@ -1,4 +1,5 @@
 import '../../domain/chapter_access.dart';
+import '../../../../core/utils/coerce.dart';
 import '../../domain/library_material.dart';
 import 'library_material_detail_screen.dart';
 import 'package:flutter/material.dart';
@@ -293,16 +294,17 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
         for (final chapter in chapters) {
           final chapterAttrs = chapter['attributes'] ?? {};
           final chapterId = int.tryParse(chapter['id']?.toString() ?? '');
-          final chapterIsLocked = chapterAttrs['is_locked'] == true;
+          // Same coercion as the website: the API mixes true, 1 and "1", and
+          // a missing `max_views` means unlimited (not 5).
+          final chapterIsLocked = coerceFlag(chapterAttrs['is_locked']);
           final chapterIsFreePreviewAttachment =
-              chapterAttrs['is_free_preview_attachment'] == true;
-          final chapterIsActivated = chapterAttrs['is_activated'] == true;
-          final chapterIsFreePreview = chapterAttrs['is_free_preview'] == true;
-          final currentViews =
-              int.tryParse(chapterAttrs['current_user_views']?.toString() ?? '') ??
-                  0;
-          final maxViews =
-              int.tryParse(chapterAttrs['max_views']?.toString() ?? '') ?? 5;
+              coercePreviewFlag(chapterAttrs['is_free_preview_attachment']);
+          final chapterIsActivated =
+              coerceFlagOrNull(chapterAttrs['is_activated']) == true;
+          final chapterIsFreePreview =
+              coercePreviewFlag(chapterAttrs['is_free_preview']);
+          final currentViews = chapterCurrentViews(chapter);
+          final maxViews = chapterMaxViews(chapter) ?? 0;
           final chapterName = chapterAttrs['title']?.toString();
           final attachments =
               chapterAttrs['attachments'] as List<dynamic>? ?? [];
@@ -321,6 +323,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
                 currentViews: currentViews,
                 maxViews: maxViews,
                 courseId: course['id']?.toString(),
+                courseLocked: courseIsLocked(course),
               );
               if (file.filePath.isNotEmpty) {
                 files.add(file);
@@ -419,7 +422,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
     } catch (e) {
       if (mounted) {
         setState(() {
-          _communityErrorMessage = 'Failed to load community posts';
+          _communityErrorMessage = 'community.load_posts_failed'.tr();
           _isLoadingCommunity = false;
         });
       }
@@ -529,17 +532,17 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
     final difference = now.difference(dateTime);
 
     if (difference.inDays > 365) {
-      return '${difference.inDays ~/ 365} years ago';
+      return 'time.years_ago'.plural(difference.inDays ~/ 365);
     } else if (difference.inDays > 30) {
-      return '${difference.inDays ~/ 30} months ago';
+      return 'time.months_ago'.plural(difference.inDays ~/ 30);
     } else if (difference.inDays > 0) {
-      return '${difference.inDays} days ago';
+      return 'time.days_ago'.plural(difference.inDays);
     } else if (difference.inHours > 0) {
-      return '${difference.inHours} hours ago';
+      return 'time.hours_ago'.plural(difference.inHours);
     } else if (difference.inMinutes > 0) {
-      return '${difference.inMinutes} minutes ago';
+      return 'time.minutes_ago'.plural(difference.inMinutes);
     } else {
-      return 'Just now';
+      return 'time.just_now'.tr();
     }
   }
 
@@ -580,15 +583,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
     }
 
     // Check permission before opening
-    final canOpen = _permissionService.canOpenAttachment(
-      fileIsLocked: file.isLocked,
-      chapterIsLocked: file.chapterIsLocked,
-      chapterIsActivated: file.chapterIsActivated,
-      chapterIsFreePreview: file.chapterIsFreePreview,
-      chapterIsFreePreviewAttachment: file.chapterIsFreePreviewAttachment,
-      currentViews: file.currentViews,
-      maxViews: file.maxViews,
-    );
+    final canOpen = file.canOpen;
 
     if (!canOpen) {
       // Show locked attachment dialog
@@ -630,15 +625,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
 
   void _downloadOrOpenFile(CourseFile file) async {
     // Check permission before showing options
-    final canOpen = _permissionService.canOpenAttachment(
-      fileIsLocked: file.isLocked,
-      chapterIsLocked: file.chapterIsLocked,
-      chapterIsActivated: file.chapterIsActivated,
-      chapterIsFreePreview: file.chapterIsFreePreview,
-      chapterIsFreePreviewAttachment: file.chapterIsFreePreviewAttachment,
-      currentViews: file.currentViews,
-      maxViews: file.maxViews,
-    );
+    final canOpen = file.canOpen;
 
     // Show options for non-PDF files
     showModalBottomSheet(
@@ -1393,7 +1380,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        'EGP $price',
+                        'common.price_egp'.tr(args: [price]),
                         style: TextStyle(
                           color: const Color(0xFF5A75FF),
                           fontSize: 13,
@@ -1411,10 +1398,13 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
     );
   }
 
+  LiveRoomAccessContext _liveAccess = const LiveRoomAccessContext.empty();
+
   Future<void> _loadLiveRooms() async {
     if (!mounted) return;
     setState(() => _isLoadingLiveRooms = true);
     try {
+      final accessContext = await LiveRoomAccessService().load();
       final result = await _liveRoomRepository.getLiveRooms();
       if (result['success'] && mounted) {
         final allLiveRooms = result['data'] as List<lr.LiveRoom>;
@@ -1424,6 +1414,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
             .where((id) => id != null)
             .toSet();
         setState(() {
+          _liveAccess = accessContext;
           _liveRooms = allLiveRooms
               .where((room) => room.courseIds.any(courseIds.contains))
               .toList();
@@ -1525,16 +1516,28 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
   }
 
   Widget _buildLiveRoomCard(lr.LiveRoom room) {
-    // Website course tab: "Join Now" when live, otherwise "View" — both open
-    // the live session page.
+    final access = _liveAccess.accessFor(room);
     return LiveRoomCourseCard(
       room: room,
-      onOpen: () => Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) =>
-              LiveSessionDetailScreen(roomId: room.id, initialRoom: room),
-        ),
-      ),
+      access: access,
+      onOpen: () async {
+        final accessContext = await LiveRoomAccessService().load();
+        if (!mounted) return;
+        final currentAccess = accessContext.accessFor(room);
+        if (currentAccess == lr.LiveRoomAccess.lockedPrivate) {
+          final activated = await LiveRoomActivationSheet.show(context, roomId: room.id, title: room.title);
+          if (activated == true && mounted) await _loadLiveRooms();
+          return;
+        }
+        if (currentAccess == lr.LiveRoomAccess.courseNotEnrolled) {
+          if (room.courseIds.isNotEmpty) {
+            await Navigator.of(context).push(MaterialPageRoute(builder: (_) => CourseDetailScreen(courseId: room.courseIds.first, title: room.courseTitlesLabel, thumbnail: room.courseThumbnail ?? '', price: '', description: '')));
+          }
+          return;
+        }
+        await Navigator.of(context).push(MaterialPageRoute(builder: (_) => LiveSessionDetailScreen(roomId: room.id, initialRoom: room)));
+        if (mounted) await _loadLiveRooms();
+      },
     );
   }
 
@@ -1750,7 +1753,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        '${'course.requires_unlock'.tr()} - EGP $price',
+                        '${'course.requires_unlock'.tr()} - ${'common.price_egp'.tr(args: [price])}',
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
@@ -2057,6 +2060,8 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
                     return _buildLectureFilesItem(
                       entry.value,
                       courseName: courseName,
+                      courseId: course['id']?.toString(),
+                      courseLocked: courseIsLocked(course),
                       isLast: entry.key == lectures.length - 1,
                     );
                   }).toList(),
@@ -2092,6 +2097,8 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
     dynamic lecture, {
     required String courseName,
     required bool isLast,
+    String? courseId,
+    bool courseLocked = true,
   }) {
     final lectureId = lecture['id']?.toString() ?? '';
     final lectureAttrs = lecture['attributes'] ?? {};
@@ -2200,6 +2207,8 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
                   courseName: courseName,
                   lectureName: lectureName,
                   isLast: entry.key == chapters.length - 1,
+                  courseId: courseId,
+                  courseLocked: courseLocked,
                 );
               }).toList(),
             ),
@@ -2213,18 +2222,23 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
     required String courseName,
     required String lectureName,
     required bool isLast,
+    String? courseId,
+    bool courseLocked = true,
   }) {
     final chapterId = chapter['id']?.toString() ?? '';
     final chapterAttrs = chapter['attributes'] ?? {};
     final chapterName =
         chapterAttrs['title']?.toString() ?? 'course.untitled_chapter'.tr();
     final attachments = chapterAttrs['attachments'] as List<dynamic>? ?? [];
-    final chapterIsLocked = chapterAttrs['is_locked'] == true;
-    final chapterIsActivated = chapterAttrs['is_activated'] == true;
-    final chapterIsFreePreview = chapterAttrs['is_free_preview'] == true;
-    final chapterIsFreePreviewAttachment = chapterAttrs['is_free_preview_attachment'] == true;
-    final currentViews = int.tryParse(chapterAttrs['current_user_views']?.toString() ?? '') ?? 0;
-    final maxViews = int.tryParse(chapterAttrs['max_views']?.toString() ?? '') ?? 5;
+    final chapterIsLocked = coerceFlag(chapterAttrs['is_locked']);
+    final chapterIsActivated =
+        coerceFlagOrNull(chapterAttrs['is_activated']) == true;
+    final chapterIsFreePreview =
+        coercePreviewFlag(chapterAttrs['is_free_preview']);
+    final chapterIsFreePreviewAttachment =
+        coercePreviewFlag(chapterAttrs['is_free_preview_attachment']);
+    final currentViews = chapterCurrentViews(chapter);
+    final maxViews = chapterMaxViews(chapter) ?? 0;
 
     final isExpanded =
         _expandedChapters[chapterId] ??
@@ -2341,6 +2355,8 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
                     chapterIsFreePreview: chapterIsFreePreview,
                     currentViews: currentViews,
                     maxViews: maxViews,
+                    courseId: courseId,
+                    courseLocked: courseLocked,
                   );
                   if (file.filePath.isNotEmpty) {
                     return _buildAttachmentItem(file, level: 2);
@@ -2357,9 +2373,11 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
   }
 
   Widget _buildAttachmentItem(CourseFile file, {required int level}) {
-    final isFileLocked = file.isLocked && !file.downloadable;
-    final isChapterLocked = file.chapterIsLocked;
-    final isLocked = isFileLocked || isChapterLocked;
+    // Website rule: the chapter's activation / `is_free_preview_attachment`
+    // decide; the file's and chapter's `is_locked` do not (the API sets them
+    // for every non-activated chapter, which hid free PDFs).
+    final isLocked = !file.canOpen;
+    final isChapterLocked = isLocked;
     final canView = !isLocked && (file.isPdf || file.canPreview);
 
     final indent = 16.0 + (level * 32.0);
@@ -2472,18 +2490,9 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
 
   Widget _buildFileCard(CourseFile file) {
     // Use permission service to determine access state
-    final accessState = _permissionService.getAttachmentAccessState(
-      fileIsLocked: file.isLocked,
-      chapterIsLocked: file.chapterIsLocked,
-      chapterIsActivated: file.chapterIsActivated,
-      chapterIsFreePreview: file.chapterIsFreePreview,
-      chapterIsFreePreviewAttachment: file.chapterIsFreePreviewAttachment,
-      currentViews: file.currentViews,
-      maxViews: file.maxViews,
-    );
-
-    final isLocked = accessState == AttachmentAccessState.locked;
-    final isFreePreview = accessState == AttachmentAccessState.freePreview;
+    // Website rule: chapter activation / `is_free_preview_attachment`.
+    final isLocked = !file.canOpen;
+    final isFreePreview = file.isFreePreviewOpen;
     final canView = !isLocked && (file.isPdf || file.canPreview);
 
     return InkWell(
@@ -2763,12 +2772,12 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
     }
 
     if (_exams.isEmpty) {
-      return const Center(
+      return Center(
         child: Padding(
-          padding: EdgeInsets.all(20),
+          padding: const EdgeInsets.all(20),
           child: Text(
-            'No exams available for this subject',
-            style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
+            'course.no_exams_subject'.tr(),
+            style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
           ),
         ),
       );
@@ -3052,9 +3061,9 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
                 borderRadius: BorderRadius.circular(10),
               ),
             ),
-            child: const Text(
-              'Reply',
-              style: TextStyle(
+            child: Text(
+              'community.reply'.tr(),
+              style: const TextStyle(
                 color: Color(0xFF9CA3AF),
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
@@ -3110,9 +3119,9 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Community',
-                style: TextStyle(
+              Text(
+                'community.title'.tr(),
+                style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: Color(0xFF1F2937),
@@ -3120,7 +3129,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
               ),
               const SizedBox(height: 4),
               Text(
-                '${_posts.length} posts',
+                'community.posts_count'.plural(_posts.length),
                 style: TextStyle(
                   fontSize: 13,
                   color: Colors.grey[600],
@@ -3131,7 +3140,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
           ElevatedButton.icon(
             onPressed: _navigateToCreatePost,
             icon: const FaIcon(FontAwesomeIcons.plus, size: 14),
-            label: const Text('New Post'),
+            label: Text('community.new_post'.tr()),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF5A75FF),
               foregroundColor: Colors.white,
@@ -3195,10 +3204,10 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
                 ),
               ),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Department Community',
-                  style: TextStyle(
+                  'community.department_community'.tr(),
+                  style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
                     color: Colors.white,
@@ -3209,7 +3218,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
           ),
           const SizedBox(height: 12),
           Text(
-            'Stay connected with course updates, links, and class discussions for ${widget.subjectTitle}.',
+            'community.info_card_desc'.tr(args: [widget.subjectTitle]),
             style: TextStyle(
               fontSize: 13,
               color: Colors.white.withValues(alpha: 0.9),
@@ -3249,7 +3258,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Quick Links',
+            'community.quick_links'.tr(),
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w600,
@@ -3261,7 +3270,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
             children: activeLinks.map((link) {
               return Expanded(
                 child: Padding(
-                  padding: EdgeInsets.only(right: activeLinks.last == link ? 0 : 12),
+                  padding: EdgeInsetsDirectional.only(end: activeLinks.last == link ? 0 : 12),
                   child: _buildQuickLinkCard(link),
                 ),
               );
@@ -3502,7 +3511,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
           const Icon(Icons.error_outline, size: 48, color: Colors.grey),
           const SizedBox(height: 16),
           Text(
-            _communityErrorMessage ?? 'An error occurred',
+            _communityErrorMessage ?? 'community.error_occurred'.tr(),
             style: const TextStyle(color: Colors.grey),
             textAlign: TextAlign.center,
           ),
@@ -3513,7 +3522,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
               backgroundColor: const Color(0xFF5A75FF),
               foregroundColor: Colors.white,
             ),
-            child: const Text('Retry'),
+            child: Text('community.retry'.tr()),
           ),
         ],
       ),
@@ -3541,7 +3550,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
             ),
             const SizedBox(height: 16),
             Text(
-              'No posts yet in this department',
+              'community.no_posts_department'.tr(),
               style: TextStyle(
                 color: Colors.grey[600],
                 fontSize: 15,
@@ -3550,7 +3559,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
             ),
             const SizedBox(height: 8),
             Text(
-              'Be the first to start a discussion!',
+              'community.be_first_discussion'.tr(),
               style: TextStyle(
                 color: Colors.grey[400],
                 fontSize: 13,
@@ -3570,7 +3579,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
         children: [
           const SizedBox(height: 20),
           Text(
-            'Recent Posts',
+            'community.recent_posts'.tr(),
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w600,
@@ -3594,7 +3603,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
   }) {
     final user = post.attributes.user;
     final course = post.attributes.course;
-    final userName = user?.attributes.fullName ?? 'Unknown User';
+    final userName = user?.attributes.fullName ?? 'community.unknown_user'.tr();
     final isInstructor = user?.attributes.role.toLowerCase() == 'admin' ||
         user?.attributes.role.toLowerCase() == 'instructor';
     final timeAgo = _formatTimeAgo(post.attributes.createdAt);
@@ -3628,7 +3637,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  'PINNED POST',
+                  'community.pinned_post'.tr(),
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
@@ -3688,9 +3697,9 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
                               color: AppColors.accountingBg,
                               borderRadius: BorderRadius.circular(4),
                             ),
-                            child: const Text(
-                              'Instructor',
-                              style: TextStyle(
+                            child: Text(
+                              'community.instructor'.tr(),
+                              style: const TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.w500,
                                 color: AppColors.accountingText,

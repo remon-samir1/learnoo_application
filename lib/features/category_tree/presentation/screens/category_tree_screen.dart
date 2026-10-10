@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:shimmer/shimmer.dart';
@@ -230,9 +231,9 @@ class _CategoryTreeScreenState extends State<CategoryTreeScreen> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                const Text(
-                  'No subjects or courses found',
-                  style: TextStyle(
+                Text(
+                  'category_tree.empty_title'.tr(),
+                  style: const TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.bold,
                     color: Color(0xFF1F2937),
@@ -240,9 +241,9 @@ class _CategoryTreeScreenState extends State<CategoryTreeScreen> {
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'There are currently no items available in this category level.',
-                  style: TextStyle(
+                Text(
+                  'category_tree.empty_message'.tr(),
+                  style: const TextStyle(
                     fontSize: 13,
                     color: Color(0xFF6B7280),
                   ),
@@ -253,7 +254,7 @@ class _CategoryTreeScreenState extends State<CategoryTreeScreen> {
                   OutlinedButton.icon(
                     onPressed: () => _cubit.popHistory(),
                     icon: const Icon(Icons.arrow_back_rounded, size: 16),
-                    label: const Text('Go Back'),
+                    label: Text('category_tree.go_back'.tr()),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppColors.primaryBlue,
                       side: const BorderSide(color: AppColors.primaryBlue),
@@ -297,9 +298,9 @@ class _CategoryTreeScreenState extends State<CategoryTreeScreen> {
               ),
             ),
             const SizedBox(height: 20),
-            const Text(
-              'Failed to load categories',
-              style: TextStyle(
+            Text(
+              'category_tree.load_failed'.tr(),
+              style: const TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
                 color: Color(0xFF1F2937),
@@ -307,7 +308,7 @@ class _CategoryTreeScreenState extends State<CategoryTreeScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              message ?? 'Please check your internet connection and try again.',
+              message ?? 'category_tree.check_connection'.tr(),
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: 13,
@@ -321,7 +322,7 @@ class _CategoryTreeScreenState extends State<CategoryTreeScreen> {
                 initialSelectedId: widget.initialSelectedId,
               ),
               icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Try Again'),
+              label: Text('category_tree.try_again'.tr()),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryBlue,
                 foregroundColor: Colors.white,

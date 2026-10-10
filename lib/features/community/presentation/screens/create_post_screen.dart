@@ -99,6 +99,13 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     });
 
     if (result['success']) {
+      // A student's post goes to admin moderation (the app sends no `status`;
+      // it stays unpublished until an admin publishes it). Say so,
+      // unless the response already marks it as published.
+      final created = result['data'];
+      final published = created is Post && created.attributes.isPublished;
+      await _showSubmittedDialog(published: published);
+      if (!mounted) return;
       Navigator.of(context).pop(true);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -108,6 +115,37 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         ),
       );
     }
+  }
+
+  Future<void> _showSubmittedDialog({required bool published}) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: Icon(
+          published ? Icons.check_circle_outline : Icons.hourglass_top_rounded,
+          color: published ? Colors.green : AppColors.primaryBlue,
+          size: 40,
+        ),
+        title: Text(
+          published
+              ? 'community.post_published_title'.tr()
+              : 'community.post_pending_title'.tr(),
+          textAlign: TextAlign.center,
+        ),
+        content: Text(
+          published
+              ? 'community.post_published_message'.tr()
+              : 'community.post_pending_message'.tr(),
+          textAlign: TextAlign.center,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text('community.ok'.tr()),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

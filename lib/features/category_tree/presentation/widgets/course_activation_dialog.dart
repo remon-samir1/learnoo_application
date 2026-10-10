@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -56,7 +57,7 @@ class _CourseActivationDialogState extends State<CourseActivationDialog> {
     final code = _codeController.text.trim();
     if (code.isEmpty) {
       setState(() {
-        _errorMessage = 'Please enter an activation code';
+        _errorMessage = 'course_activation.enter_code'.tr();
       });
       return;
     }
@@ -69,6 +70,8 @@ class _CourseActivationDialogState extends State<CourseActivationDialog> {
     final success = await widget.cubit.activateCourse(
       courseId: widget.courseId,
       code: code,
+      genericError: 'course_activation.error_generic'.tr(),
+      invalidIdError: 'course_activation.invalid_course'.tr(),
     );
 
     if (!mounted) return;
@@ -78,25 +81,26 @@ class _CourseActivationDialogState extends State<CourseActivationDialog> {
     });
 
     if (success) {
+      final messenger = ScaffoldMessenger.of(context);
       Navigator.of(context).pop(true);
       widget.onSuccess?.call();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+      messenger.showSnackBar(
+        SnackBar(
           content: Row(
             children: [
-              Icon(Icons.check_circle, color: Colors.white),
-              SizedBox(width: 8),
-              Text('Course activated successfully!'),
+              const Icon(Icons.check_circle, color: Colors.white),
+              const SizedBox(width: 8),
+              Expanded(child: Text('course_activation.success'.tr())),
             ],
           ),
-          backgroundColor: Color(0xFF10B981),
+          backgroundColor: const Color(0xFF10B981),
           behavior: SnackBarBehavior.floating,
         ),
       );
     } else {
       setState(() {
         _errorMessage = widget.cubit.state.activationMessage ??
-            'Invalid activation code. Please check and try again.';
+            'course_activation.error_generic'.tr();
       });
     }
   }
@@ -147,9 +151,9 @@ class _CourseActivationDialogState extends State<CourseActivationDialog> {
           const SizedBox(height: 16),
 
           // Title
-          const Text(
-            'Unlock Course',
-            style: TextStyle(
+          Text(
+            'course_activation.title'.tr(),
+            style: const TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
               color: Color(0xFF111827),
@@ -171,6 +175,17 @@ class _CourseActivationDialogState extends State<CourseActivationDialog> {
             overflow: TextOverflow.ellipsis,
           ),
 
+          const SizedBox(height: 8),
+
+          Text(
+            'course_activation.description'.tr(),
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 12,
+              color: Color(0xFF64748B),
+            ),
+          ),
+
           const SizedBox(height: 20),
 
           // Code Text Field
@@ -187,11 +202,11 @@ class _CourseActivationDialogState extends State<CourseActivationDialog> {
             ),
             textAlign: TextAlign.center,
             decoration: InputDecoration(
-              hintText: 'ABCD-1234',
+              hintText: 'course_activation.code_hint'.tr(),
               hintStyle: TextStyle(
-                fontSize: 18,
+                fontSize: 16,
                 fontWeight: FontWeight.w500,
-                letterSpacing: 3,
+                letterSpacing: 1,
                 color: Colors.grey[400],
               ),
               filled: true,
@@ -253,9 +268,9 @@ class _CourseActivationDialogState extends State<CourseActivationDialog> {
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
-                  child: const Text(
-                    'Cancel',
-                    style: TextStyle(
+                  child: Text(
+                    'course_activation.cancel'.tr(),
+                    style: const TextStyle(
                       color: Color(0xFF4B5563),
                       fontWeight: FontWeight.w600,
                     ),
@@ -285,16 +300,19 @@ class _CourseActivationDialogState extends State<CourseActivationDialog> {
                             strokeWidth: 2,
                           ),
                         )
-                      : const Row(
+                      : Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            FaIcon(FontAwesomeIcons.unlock, size: 14),
-                            SizedBox(width: 8),
-                            Text(
-                              'Unlock Course',
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
+                            const FaIcon(FontAwesomeIcons.unlock, size: 14),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                'course_activation.submit'.tr(),
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
                           ],

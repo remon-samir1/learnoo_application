@@ -117,10 +117,7 @@ dynamic findFacultyById(List<dynamic> faculties, dynamic facultyId) {
 ///
 /// Mirrors `extractFacultyTreeCourses` — the home screen uses it to keep the
 /// "My subjects" tree limited to the student's own faculty.
-Set<String> facultyTreeCourseIds(
-  List<dynamic> categories,
-  dynamic facultyId,
-) {
+Set<String> facultyTreeCourseIds(List<dynamic> categories, dynamic facultyId) {
   final courseIds = <String>{};
   if (categories.isEmpty || facultyId == null) return courseIds;
 
@@ -206,10 +203,7 @@ List<AcademicOption> centerOptionsForUniversity(
     final center = facultyCenterNode(faculty);
     if (center == null) continue;
 
-    final centerAttrs = center['attributes'];
-    final centerParentId =
-        centerAttrs is Map ? centerAttrs['parent_id'] : center['parent_id'];
-    if (!idsMatch(centerParentId, universityId)) continue;
+    if (!idsMatch(parentIdOf(center), universityId)) continue;
 
     final label = entityName(center).trim();
     if (label.isEmpty) continue;
@@ -242,7 +236,9 @@ List<AcademicOption> facultyOptionsForCenter(
     options.add(AcademicOption(id: id, label: label));
   }
 
-  options.sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+  options.sort(
+    (a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()),
+  );
   return options;
 }
 

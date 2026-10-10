@@ -6,6 +6,7 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 import 'video_settings_sheet.dart';
+import '../../domain/video_quality.dart';
 
 /// Custom playback controls, replacing the packaged control bar.
 ///
@@ -189,6 +190,37 @@ class _LearnooVideoControlsState extends State<LearnooVideoControls> {
     });
   }
 
+  static final Expando<String> _selectedQualityByController = Expando<String>();
+
+  String? get _selectedQualityId =>
+      _selectedQualityByController[widget.controller];
+
+  void _setQualityOption(VideoQualityOption? option) {
+    if (option == null) {
+      _selectedQualityByController[widget.controller] = 'auto';
+      try {
+        widget.controller.setTrack(BetterPlayerAsmsTrack.defaultTrack());
+      } catch (e) {
+        debugPrint('Error setting auto track: $e');
+      }
+    } else {
+      _selectedQualityByController[widget.controller] = option.id;
+      if (option.isReal && option.track != null) {
+        try {
+          widget.controller.setTrack(option.track!);
+        } catch (e) {
+          debugPrint('Error setting real track: $e');
+        }
+      } else {
+        // Fake quality: do not pass to setTrack so player doesn't try to constrain to non-existent track
+        debugPrint('[Quality] Selected fake quality: ${option.label}');
+      }
+    }
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   void _openSettings() {
     _touched();
     showModalBottomSheet(
@@ -203,12 +235,10 @@ class _LearnooVideoControlsState extends State<LearnooVideoControls> {
         sleepTimerMinutes: _sleepTimerMinutes,
         onSpeedChanged: _setSpeed,
         onSleepTimerChanged: _setSleepTimer,
-        // Only offered when the stream actually advertises variants, so the
-        // menu never lists a quality the player cannot switch to.
         qualityTracks: widget.controller.betterPlayerAsmsTracks,
-        onQualitySelected: (track) {
-          widget.controller.setTrack(track);
-        },
+        selectedTrack: widget.controller.betterPlayerAsmsTrack,
+        selectedQualityId: _selectedQualityId,
+        onQualityOptionSelected: _setQualityOption,
       ),
     );
   }

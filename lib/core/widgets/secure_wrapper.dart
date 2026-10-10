@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:device_info_plus/device_info_plus.dart';
@@ -25,7 +26,7 @@ class _SecureWrapperState extends State<SecureWrapper> with WidgetsBindingObserv
   final ScreenProtectionService _security = ScreenProtectionService();
   StreamSubscription<bool>? _policySubscription;
   bool _isSafe = false;
-  String _statusMessage = "Initializing security...";
+  String _statusMessage = 'security.initializing'.tr();
   Timer? _appCheckTimer;
   bool _isProtectionEnabled = false;
   bool _isEmulator = false;
@@ -121,7 +122,7 @@ class _SecureWrapperState extends State<SecureWrapper> with WidgetsBindingObserv
 
     setState(() {
       _isSafe = false;
-      _statusMessage = "Scanning for threats...";
+      _statusMessage = 'security.scanning'.tr();
     });
 
     try {
@@ -141,15 +142,15 @@ class _SecureWrapperState extends State<SecureWrapper> with WidgetsBindingObserv
       final isMultiWindow = status['isMultiWindow'] ?? false;
 
       if (isRecording) {
-        _showBreach("Screen recording detected");
+        _showBreach('security.screen_recording'.tr());
         return;
       }
       if (isJailbroken) {
-        _showBreach("Rooted/Jailbroken device detected");
+        _showBreach('security.rooted_device'.tr());
         return;
       }
       if (isMultiWindow) {
-        _showBreach("Split-screen mode not allowed");
+        _showBreach('security.split_screen'.tr());
         return;
       }
 
@@ -164,7 +165,7 @@ class _SecureWrapperState extends State<SecureWrapper> with WidgetsBindingObserv
   Future<void> _scanForSuspiciousApps() async {
     final hasSuspiciousApps = await _security.detectSuspiciousApps();
     if (hasSuspiciousApps) {
-      _showBreach("Suspicious apps (Zoom/Meet/Recorders) detected");
+      _showBreach('security.suspicious_apps'.tr());
       return;
     }
 
@@ -209,7 +210,7 @@ class _SecureWrapperState extends State<SecureWrapper> with WidgetsBindingObserv
                   const SizedBox(height: 24),
                   ElevatedButton(
                     onPressed: _performInitialSecurityScan,
-                    child: const Text("Retry Security Scan"),
+                    child: Text('security.retry_scan'.tr()),
                   )
                 ],
               ),
