@@ -17,6 +17,11 @@ class ApiConstants {
   static const String updateProfile = '/v1/auth/update';
   static const String me = '/v1/auth/me';
   static const String logout = '/v1/auth/logout';
+
+  /// Ask staff to move the account to the device making the call. The web
+  /// posts the refused login's `transfer_token` here
+  /// (`authApi.requestDeviceTransfer` in `src/lib/api.ts`).
+  static const String deviceTransfer = '/v1/auth/device-transfer';
   static const String lectures = '/v1/lecture';
   static const String chapters = '/v1/chapter';
   static const String codeActivate = '/v1/code/activate';

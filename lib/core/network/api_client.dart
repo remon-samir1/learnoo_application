@@ -2,10 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:easy_localization/easy_localization.dart';
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
+import '../services/device_service.dart';
+import '../session/session_end_reason.dart';
 import '../session/session_manager.dart';
 import 'api_constants.dart';
 import 'api_exception.dart';
@@ -35,8 +36,10 @@ class ApiClient {
   static String locale = 'ar';
 
   /// Invoked once when a request is rejected with 401 and the session is
-  /// dropped. The app root wires this to "return to login".
-  static VoidCallback? onUnauthorized;
+  /// dropped. The app root wires this to "return to login", and the reason
+  /// decides which notice the sign-in screen shows — the web does the same by
+  /// redirecting to `/login?session=device-changed|expired`.
+  static void Function(SessionEndReason reason)? onUnauthorized;
 
   bool _handlingUnauthorized = false;
 
@@ -70,6 +73,10 @@ class ApiClient {
     final headers = <String, String>{
       'Accept': 'application/json',
       'lang': locale,
+      // Device identity, exactly like `createHeaders()` in `src/lib/api.ts`.
+      // The backend ties the session to it and refuses a login from an
+      // unapproved device with `code: device_transfer_required`.
+      'X-Device-ID': await DeviceService.deviceId(),
     };
 
     if (!isMultipart) {
@@ -102,7 +109,11 @@ class ApiClient {
   /// against `/v1/auth/me` first. Only a 401 there drops the session. A
   /// timeout, no connection or a 5xx during that check keeps the student
   /// signed in, and so does a token that was replaced (re-login) meanwhile.
-  void _onUnauthorizedResponse(String path, String? sentToken) {
+  void _onUnauthorizedResponse(
+    String path,
+    String? sentToken, {
+    String? errorCode,
+  }) {
     if (sentToken == null) return;
     if (_handlingUnauthorized) return;
     _handlingUnauthorized = true;
@@ -113,7 +124,7 @@ class ApiClient {
       final current = await _session.currentToken();
       if (current != sentToken) return;
       await _session.clear();
-      onUnauthorized?.call();
+      onUnauthorized?.call(SessionEndReason.fromErrorCode(errorCode));
     }()
         .catchError((Object _) {})
         .whenComplete(() => _handlingUnauthorized = false);
@@ -129,6 +140,7 @@ class ApiClient {
       final response = await http.get(_uri(ApiConstants.me), headers: {
         'Accept': 'application/json',
         'lang': locale,
+        'X-Device-ID': await DeviceService.deviceId(),
         'Authorization': 'Bearer $token',
       }).timeout(_timeout);
       return response.statusCode == 401;
@@ -156,10 +168,6 @@ class ApiClient {
       }
     }
 
-    if (status == 401 && !skipAuthRedirect) {
-      _onUnauthorizedResponse(path, _sentToken(headers));
-    }
-
     dynamic body;
     if (response.body.isNotEmpty) {
       try {
@@ -167,6 +175,14 @@ class ApiClient {
       } catch (_) {
         body = null;
       }
+    }
+
+    if (status == 401 && !skipAuthRedirect) {
+      _onUnauthorizedResponse(
+        path,
+        _sentToken(headers),
+        errorCode: body is Map ? body['code']?.toString() : null,
+      );
     }
 
     throw ApiException.fromBody(status, body,

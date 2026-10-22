@@ -3,6 +3,7 @@ import 'package:easy_localization/easy_localization.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/primary_button.dart';
 import '../../domain/academic_tree.dart';
+import '../widgets/academic_option_thumbnail.dart';
 import 'faculty_selection_screen.dart';
 import 'onboarding_step_header.dart';
 
@@ -208,23 +209,18 @@ class _CenterSelectionScreenState extends State<CenterSelectionScreen> {
                           ),
                           child: Row(
                             children: [
-                              Container(
-                                width: 48,
-                                height: 48,
-                                decoration: BoxDecoration(
-                                  color: isSelected
-                                      ? AppColors.primaryBlue
-                                      : (isDark
-                                            ? const Color(0xFF262A36)
-                                            : AppColors.inputFill),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Icon(
-                                  Icons.location_on_outlined,
-                                  color: isSelected
-                                      ? Colors.white
-                                      : AppColors.primaryBlue,
-                                ),
+                              AcademicOptionThumbnail(
+                                imageUrl: center.imageUrl,
+                                label: center.label,
+                                icon: Icons.location_on_outlined,
+                                backgroundColor: isSelected
+                                    ? AppColors.primaryBlue
+                                    : (isDark
+                                          ? const Color(0xFF262A36)
+                                          : AppColors.inputFill),
+                                iconColor: isSelected
+                                    ? Colors.white
+                                    : AppColors.primaryBlue,
                               ),
                               const SizedBox(width: 16),
                               Expanded(

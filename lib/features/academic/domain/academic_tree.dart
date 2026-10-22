@@ -12,6 +12,7 @@
 library;
 
 import '../../../core/utils/coerce.dart';
+import '../../../core/utils/media_url.dart';
 
 /// Loose id equality: `12`, `"12"` and `12.0` all match.
 bool idsMatch(dynamic a, dynamic b) {
@@ -31,6 +32,19 @@ String entityName(dynamic item) {
     if (name != null) return name;
   }
   return coerceString(item['name']) ?? '';
+}
+
+/// Picture of a university / centre / faculty / department node.
+///
+/// The web reads `attributes.image` on every one of these nodes
+/// (`UniversityFacultyFields` and `buildUniversityCenterOptions` both pass it
+/// straight to `<Image src>`), so the app shows the same picture. The flat
+/// `image` is the fallback for the non-JSON:API centre payload, and
+/// [readMediaUrl] copes with relative paths and media-object shapes.
+String? entityImageUrl(dynamic item) {
+  if (item is! Map) return null;
+  const keys = ['image', 'logo', 'thumbnail'];
+  return readMediaUrl(item['attributes'], keys) ?? readMediaUrl(item, keys);
 }
 
 String? entityId(dynamic item) {
@@ -164,10 +178,13 @@ Set<String> facultyTreeCourseIds(List<dynamic> categories, dynamic facultyId) {
 
 /// One entry of an academic dropdown: a stable id plus the label to render.
 class AcademicOption {
-  const AcademicOption({required this.id, required this.label});
+  const AcademicOption({required this.id, required this.label, this.imageUrl});
 
   final String id;
   final String label;
+
+  /// Resolved picture of the node, or `null` when it has none.
+  final String? imageUrl;
 }
 
 /// Centre node hanging off a faculty as `attributes.parent.data`.
@@ -211,7 +228,14 @@ List<AcademicOption> centerOptionsForUniversity(
     final id = entityId(center);
     if (id == null) continue;
 
-    byId.putIfAbsent(id, () => AcademicOption(id: id, label: label));
+    byId.putIfAbsent(
+      id,
+      () => AcademicOption(
+        id: id,
+        label: label,
+        imageUrl: entityImageUrl(center),
+      ),
+    );
   }
 
   final options = byId.values.toList()
@@ -233,7 +257,9 @@ List<AcademicOption> facultyOptionsForCenter(
     final label = entityName(faculty).trim();
     final id = entityId(faculty);
     if (label.isEmpty || id == null) continue;
-    options.add(AcademicOption(id: id, label: label));
+    options.add(
+      AcademicOption(id: id, label: label, imageUrl: entityImageUrl(faculty)),
+    );
   }
 
   options.sort(
@@ -259,7 +285,13 @@ List<AcademicOption> departmentOptionsForFaculty(
     final id = entityId(department);
     final label = entityName(department).trim();
     if (id == null || label.isEmpty) continue;
-    options.add(AcademicOption(id: id, label: label));
+    options.add(
+      AcademicOption(
+        id: id,
+        label: label,
+        imageUrl: entityImageUrl(department),
+      ),
+    );
   }
   return options;
 }

@@ -4,6 +4,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/primary_button.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../../domain/academic_tree.dart';
+import '../widgets/academic_option_thumbnail.dart';
 import 'center_selection_screen.dart';
 import 'onboarding_step_header.dart';
 
@@ -221,19 +222,15 @@ class _UniversitySelectionScreenState extends State<UniversitySelectionScreen> {
                           ),
                           child: Row(
                             children: [
-                              Container(
-                                width: 48,
-                                height: 48,
-                                decoration: BoxDecoration(
-                                  color: isDark
-                                      ? const Color(0xFF262A36)
-                                      : AppColors.inputFill,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Icon(
-                                  Icons.school,
-                                  color: AppColors.primaryBlue,
-                                ),
+                              AcademicOptionThumbnail(
+                                imageUrl: entityImageUrl(uni),
+                                label: name,
+                                icon: Icons.school,
+                                radius: 8,
+                                backgroundColor: isDark
+                                    ? const Color(0xFF262A36)
+                                    : AppColors.inputFill,
+                                iconColor: AppColors.primaryBlue,
                               ),
                               const SizedBox(width: 16),
                               Expanded(

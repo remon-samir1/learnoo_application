@@ -1,12 +1,11 @@
 {
   "schedules": {
-  "search": "Search by course or file name",
-  "no_date": "No scheduled date",
-  "load_error": "Could not load schedules",
-  "empty": "No matching schedules",
-  "retry": "Retry",
-  "title": "Course schedules"
-},
+    "search": "Search by course or file name",
+    "load_error": "Could not load schedules",
+    "empty": "No matching schedules",
+    "retry": "Retry",
+    "title": "Course schedules"
+  },
   "settings": {
     "title": "Settings",
     "section_preferences": "PREFERENCES",
@@ -155,7 +154,13 @@
     "parent_login_link": "Sign in as a parent",
     "student_login_link": "Sign in as a student",
     "sign_in": "Sign in",
-    "failed_fetch": "Failed to load data. Please try again."
+    "failed_fetch": "Failed to load data. Please try again.",
+    "send_device_request": "Send the administrator a request to use this device",
+    "sending_device_request": "Sending request...",
+    "device_request_sent": "Your request was sent to the administrator. Once approved, sign in on this device.",
+    "device_request_failed": "Could not send the device request. Please try again.",
+    "session_device_changed": "This session ended because the approved device changed. Sign in to continue.",
+    "session_expired": "Your session expired. Please sign in again."
   },
   "home": {
     "nav_home": "Home",
@@ -678,6 +683,7 @@
     "channel_description": "Shows download progress notifications"
   },
   "profile": {
+    "approved_device": "Approved device",
     "title": "My Profile",
     "account_info": "Account Information",
     "edit": "Edit",

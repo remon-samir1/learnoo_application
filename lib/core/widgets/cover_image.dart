@@ -20,6 +20,7 @@ class CoverImage extends StatelessWidget {
     this.cacheWidth,
     this.darken = 0,
     this.fallback = CoverFallback.gradient,
+    this.fit = BoxFit.cover,
   });
 
   /// Raw API value; resolved with [resolveMediaUrl].
@@ -41,6 +42,10 @@ class CoverImage extends StatelessWidget {
 
   /// What to draw when there is no image or it fails to load.
   final CoverFallback fallback;
+
+  /// How the image fills its box. Covers by default; logos pass
+  /// [BoxFit.contain] so a wide mark is not cropped, like the website.
+  final BoxFit fit;
 
   /// The website's `GRADIENTS` list, in the same order.
   static const List<List<Color>> gradients = [
@@ -80,7 +85,7 @@ class CoverImage extends StatelessWidget {
                 imageUrl: resolved,
                 width: width,
                 height: height,
-                fit: BoxFit.cover,
+                fit: fit,
                 memCacheWidth: memWidth,
                 color: darken > 0
                     ? Colors.black.withValues(alpha: darken)

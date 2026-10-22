@@ -15,6 +15,7 @@ import 'core/sync/sync_processors.dart';
 import 'core/widgets/back_button_handler.dart';
 import 'features/auth/presentation/screens/login_screen.dart';
 import 'features/auth/presentation/screens/splash_screen.dart';
+import 'core/session/session_end_reason.dart';
 import 'core/session/session_manager.dart';
 import 'features/home/data/notification_sync_service.dart';
 import 'features/home/presentation/screens/notifications_screen.dart';
@@ -217,12 +218,12 @@ class _HomeAppState extends State<LearnooApp> with WidgetsBindingObserver {
   /// Wired to [ApiClient.onUnauthorized]: any 401 that is not a business rule
   /// drops the session and returns the student to sign-in, from wherever they
   /// were. The web does the same in `handleResponse`.
-  void _onSessionRevoked() {
+  void _onSessionRevoked(SessionEndReason reason) {
     _webSocketService.disconnect();
     final navigator = appNavigatorKey.currentState;
     if (navigator == null) return;
     navigator.pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      MaterialPageRoute(builder: (_) => LoginScreen(sessionNotice: reason)),
       (route) => false,
     );
   }

@@ -7,6 +7,7 @@ import '../../../auth/data/auth_repository.dart';
 import '../../data/academic_scope_service.dart';
 import '../../../home/presentation/screens/main_screen.dart';
 import '../../domain/academic_tree.dart';
+import '../widgets/academic_option_thumbnail.dart';
 import 'onboarding_step_header.dart';
 
 /// Third and last onboarding step: select a faculty under the chosen center.
@@ -309,10 +310,17 @@ class _FacultySelectionScreenState extends State<FacultySelectionScreen> {
                           ),
                           child: Row(
                             children: [
-                              Icon(
-                                Icons.school_outlined,
-                                color: isSelected
+                              AcademicOptionThumbnail(
+                                imageUrl: faculty.imageUrl,
+                                label: faculty.label,
+                                icon: Icons.school_outlined,
+                                backgroundColor: isSelected
                                     ? AppColors.primaryBlue
+                                    : (isDark
+                                          ? const Color(0xFF262A36)
+                                          : AppColors.inputFill),
+                                iconColor: isSelected
+                                    ? Colors.white
                                     : (isDark
                                           ? const Color(0xFF94A3B8)
                                           : AppColors.textGray),

@@ -13,6 +13,15 @@ class ScheduleCard extends StatelessWidget {
     String date(DateTime value) => DateFormat.yMd(
       context.locale.toString(),
     ).add_jm().format(value.toLocal());
+
+    final start = entry.start == null ? '' : date(entry.start!);
+    final end = entry.end == null ? '' : date(entry.end!);
+    final dateLine = start.isEmpty
+        ? end
+        : end.isEmpty
+        ? start
+        : '$start — $end';
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -26,10 +35,12 @@ class ScheduleCard extends StatelessWidget {
                 context,
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 8),
-            Text(
-              '${entry.start == null ? 'schedules.no_date'.tr() : date(entry.start!)}${entry.end == null ? '' : ' — ${date(entry.end!)}'}',
-            ),
+            // A schedule without dates shows no date line at all, rather than
+            // a "no date set" placeholder.
+            if (dateLine.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(dateLine),
+            ],
             for (final document in entry.documents)
               ListTile(
                 contentPadding: EdgeInsets.zero,

@@ -70,6 +70,13 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
     final String phone = (attributes?['phone'] ?? attributes?['phone_number'] ?? '').toString();
     final String email = (attributes?['email'] ?? '').toString();
     final String? userImageUrl = attributes?['image']?.toString();
+    // The device the account is bound to, read-only — the web student profile
+    // shows the same `device_access.device` from `/v1/auth/me`. Moving the
+    // account to another device is staff-approved, from the sign-in screen.
+    final deviceAccess = attributes?['device_access'];
+    final String approvedDevice = deviceAccess is Map
+        ? (deviceAccess['device']?.toString().trim() ?? '')
+        : '';
 
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF13151B) : const Color(0xFFFAFBFF),
@@ -86,7 +93,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
                 child: Column(
                   children: [
                     const SizedBox(height: 24),
-                    _buildAccountInfoCard(phone, email, isDark),
+                    _buildAccountInfoCard(phone, email, approvedDevice, isDark),
                     const SizedBox(height: 16),
                     _buildQRCodeCard(fullName, phone, email, isDark),
                     const SizedBox(height: 16),
@@ -243,7 +250,8 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
     );
   }
 
-  Widget _buildAccountInfoCard(String phone, String email, bool isDark) {
+  Widget _buildAccountInfoCard(
+      String phone, String email, String approvedDevice, bool isDark) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -304,6 +312,17 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
             Colors.blue,
             isDark,
           ),
+          if (approvedDevice.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _buildInfoRow(
+              FontAwesomeIcons.mobileScreen,
+              'profile.approved_device'.tr(),
+              approvedDevice,
+              isDark ? const Color(0xFF2D2A1E) : Colors.amber[50]!,
+              Colors.amber,
+              isDark,
+            ),
+          ],
         ],
       ),
     );

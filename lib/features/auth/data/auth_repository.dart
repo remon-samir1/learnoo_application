@@ -62,6 +62,11 @@ class AuthRepository {
         'message': error.display(fallback),
         'errors': error.errors,
         'statusCode': error.status,
+        // `code` / `transferToken` carry the device-authorization refusal
+        // (`device_transfer_required`) to the screen, like `ApiError` does on
+        // the web.
+        'code': ?error.code,
+        'transferToken': ?error.transferToken,
       };
     }
     return {'success': false, 'message': fallback, 'statusCode': 0};
@@ -246,6 +251,44 @@ class AuthRepository {
       );
     } catch (e) {
       return _fail(e, 'auth.login_failed'.tr());
+    }
+  }
+
+  /// `POST /v1/auth/device-transfer`.
+  ///
+  /// Asks staff to authorize the device that was just refused, replaying the
+  /// one-shot `transfer_token` from the `device_transfer_required` body. The
+  /// call is unauthenticated (the student has no session yet) and opts out of
+  /// the 401 redirect, exactly like `authApi.requestDeviceTransfer` on the web.
+  ///
+  /// Staff see the request in the dashboard's device approvals and, once they
+  /// approve, the student signs in normally from this device.
+  Future<Map<String, dynamic>> requestDeviceTransfer(
+      String transferToken) async {
+    if (transferToken.isEmpty) {
+      return {
+        'success': false,
+        'message': 'auth.device_request_failed'.tr(),
+        'statusCode': 0,
+      };
+    }
+
+    try {
+      final payload = await _api.post(
+        ApiConstants.deviceTransfer,
+        includeAuth: false,
+        skipAuthRedirect: true,
+        body: {'transfer_token': transferToken},
+        fallback: 'auth.device_request_failed'.tr(),
+      );
+
+      return _ok(
+        message: payload?['message']?.toString() ??
+            'auth.device_request_sent'.tr(),
+        data: payload,
+      );
+    } catch (e) {
+      return _fail(e, 'auth.device_request_failed'.tr());
     }
   }
 

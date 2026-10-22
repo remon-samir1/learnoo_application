@@ -7,6 +7,7 @@ import '../../../auth/data/auth_repository.dart';
 import '../../data/academic_scope_service.dart';
 import '../../../home/presentation/screens/main_screen.dart';
 import '../../domain/academic_tree.dart';
+import '../widgets/academic_option_thumbnail.dart';
 import 'onboarding_step_header.dart';
 
 /// Fourth onboarding step — the one the app was missing.
@@ -233,7 +234,7 @@ class _DepartmentSelectionScreenState extends State<DepartmentSelectionScreen> {
                 : ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 24),
                     itemCount: _filtered.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    separatorBuilder: (_, _) => const SizedBox(height: 12),
                     itemBuilder: (context, index) {
                       final department = _filtered[index];
                       final id = entityId(department);
@@ -256,10 +257,15 @@ class _DepartmentSelectionScreenState extends State<DepartmentSelectionScreen> {
                           ),
                           child: Row(
                             children: [
-                              Icon(
-                                Icons.class_outlined,
-                                color: isSelected
+                              AcademicOptionThumbnail(
+                                imageUrl: entityImageUrl(department),
+                                label: name,
+                                icon: Icons.class_outlined,
+                                backgroundColor: isSelected
                                     ? AppColors.primaryBlue
+                                    : AppColors.inputFill,
+                                iconColor: isSelected
+                                    ? Colors.white
                                     : AppColors.textGray,
                               ),
                               const SizedBox(width: 16),

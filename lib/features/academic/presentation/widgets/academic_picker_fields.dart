@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../../auth/data/auth_repository.dart';
 import '../../domain/academic_tree.dart';
+import 'academic_option_thumbnail.dart';
 
 /// University -> Centre -> Faculty (-> Department) dropdowns.
 ///
@@ -74,8 +75,11 @@ class _AcademicPickerFieldsState extends State<AcademicPickerFields> {
       if (universities['success'] == true) {
         final list = (universities['data'] as List?) ?? const [];
         _universities = list
-            .map((u) =>
-                AcademicOption(id: entityId(u) ?? '', label: entityName(u)))
+            .map((u) => AcademicOption(
+                  id: entityId(u) ?? '',
+                  label: entityName(u),
+                  imageUrl: entityImageUrl(u),
+                ))
             .where((o) => o.id.isNotEmpty && o.label.isNotEmpty)
             .toList();
       }
@@ -145,6 +149,7 @@ class _AcademicPickerFieldsState extends State<AcademicPickerFields> {
           hint: 'profile.select_university'.tr(),
           value: _valid(widget.universityId, _universities),
           options: _universities,
+          icon: Icons.school,
           onChanged: (value) => widget.onChanged(
             universityId: value,
             centerId: null,
@@ -159,6 +164,7 @@ class _AcademicPickerFieldsState extends State<AcademicPickerFields> {
               : 'profile.select_university_first'.tr(),
           value: _valid(widget.centerId, centerOptions),
           options: centerOptions,
+          icon: Icons.location_on_outlined,
           onChanged: (value) => widget.onChanged(
             universityId: widget.universityId,
             centerId: value,
@@ -173,6 +179,7 @@ class _AcademicPickerFieldsState extends State<AcademicPickerFields> {
               : 'profile.select_center_first'.tr(),
           value: _valid(widget.facultyId, facultyOptions),
           options: facultyOptions,
+          icon: Icons.school_outlined,
           onChanged: (value) => widget.onChanged(
             universityId: widget.universityId,
             centerId: widget.centerId,
@@ -186,6 +193,7 @@ class _AcademicPickerFieldsState extends State<AcademicPickerFields> {
             hint: 'profile.select_department'.tr(),
             value: _valid(widget.departmentId, departmentOptions),
             options: departmentOptions,
+            icon: Icons.class_outlined,
             onChanged: (value) => widget.onChanged(
               universityId: widget.universityId,
               centerId: widget.centerId,
@@ -202,6 +210,7 @@ class _AcademicPickerFieldsState extends State<AcademicPickerFields> {
     required String hint,
     required String? value,
     required List<AcademicOption> options,
+    required IconData icon,
     required ValueChanged<String?> onChanged,
   }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -248,13 +257,35 @@ class _AcademicPickerFieldsState extends State<AcademicPickerFields> {
                       .map(
                         (option) => DropdownMenuItem(
                           value: option.id,
-                          child: Text(
-                            option.label,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
-                            ),
+                          child: Row(
+                            children: [
+                              AcademicOptionThumbnail(
+                                imageUrl: option.imageUrl,
+                                label: option.label,
+                                icon: icon,
+                                size: 28,
+                                radius: 6,
+                                backgroundColor: isDark
+                                    ? const Color(0xFF1E212B)
+                                    : const Color(0xFFF1F5F9),
+                                iconColor: isDark
+                                    ? const Color(0xFF94A3B8)
+                                    : const Color(0xFF64748B),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  option.label,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: isDark
+                                        ? const Color(0xFFF8FAFC)
+                                        : const Color(0xFF1F2937),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       )
