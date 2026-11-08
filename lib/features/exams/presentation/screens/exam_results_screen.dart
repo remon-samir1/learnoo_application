@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:easy_localization/easy_localization.dart';
 import '../../../home/presentation/screens/main_screen.dart';
+import '../../domain/exam_review.dart';
+import '../../domain/exam_score.dart';
 import '../../models/quiz_models.dart';
+import '../../data/exam_repository.dart';
 import 'quiz_review_screen.dart';
 import '../../../../core/widgets/watermark_wrapper.dart';
 import '../../../../core/services/feature_manager.dart';
@@ -12,14 +15,25 @@ class ExamResultsScreen extends StatefulWidget {
   final QuizResult result;
   final List<QuizQuestion>? questions;
 
-  /// Attempt id, so the review can load graded rows from the server.
+  /// Attempt id, so the result and the review can be read from the server —
+  /// `GET /v1/quiz-attempts/{id}/result`, exactly what the website's result
+  /// page does once the attempt is finished.
   final String? attemptId;
+
+  /// The quiz's own `passing_marks`, used as the pass threshold when the result
+  /// payload carries no quiz (an attempt finished while offline).
+  final num? passingMarks;
+
+  /// The quiz's own `total_marks`, same fallback role.
+  final num? totalMarks;
 
   const ExamResultsScreen({
     super.key,
     required this.result,
     this.questions,
     this.attemptId,
+    this.passingMarks,
+    this.totalMarks,
   });
 
   @override
@@ -29,14 +43,75 @@ class ExamResultsScreen extends StatefulWidget {
 class _ExamResultsScreenState extends State<ExamResultsScreen> {
   final FeatureManager _featureManager = FeatureManager();
   final AuthRepository _authRepository = AuthRepository();
+  final ExamRepository _examRepository = ExamRepository();
   String _studentCode = '';
   String _phoneNumber = '';
+
+  /// The server's own figures. Until they arrive — or when the attempt could
+  /// not be read at all — the locally computed [QuizResult] is shown.
+  ExamScoreSummary? _summary;
+  dynamic _resultPayload;
+  int? _serverCorrectCount;
+  int? _serverQuestionCount;
 
   @override
   void initState() {
     super.initState();
     _loadUserData();
+    _loadResult();
   }
+
+  /// Reads the graded attempt. The website renders the result page purely from
+  /// this payload; the app's own tally stays only as the offline fallback.
+  Future<void> _loadResult() async {
+    final attemptId = widget.attemptId?.trim() ?? '';
+    if (attemptId.isEmpty) return;
+    final response = await _examRepository.getAttemptResult(attemptId);
+    if (!mounted || response['success'] != true) return;
+    final payload = response['data'];
+    final summary = ExamScoreSummary.fromResultPayload(
+      payload,
+      fallbackPassingMarks: widget.passingMarks,
+      fallbackTotalMarks: widget.totalMarks,
+    );
+
+    final rows = QuizAnswerReview.mapFromResultPayload(payload);
+    final serverQuestions = questionsFromResultPayload(payload);
+    setState(() {
+      _resultPayload = payload;
+      if (summary != null && summary.hasServerFigures) _summary = summary;
+      if (rows.isNotEmpty) {
+        _serverCorrectCount =
+            rows.values.where((r) => r.isCorrect == true).length;
+        _serverQuestionCount = serverQuestions.isNotEmpty
+            ? serverQuestions.length
+            : rows.length;
+      }
+    });
+  }
+
+  double get _percentage =>
+      _summary?.percentage ?? widget.result.percentage;
+
+  bool get _passed => _summary?.passed ?? widget.result.passed;
+
+  String get _scoreLine {
+    final summary = _summary;
+    if (summary != null && (summary.score != null || summary.total != null)) {
+      return 'exams.score'.tr(args: [
+        formatMarks(summary.score),
+        formatMarks(summary.total),
+      ]);
+    }
+    return 'exams.score'.tr(
+      args: ['${widget.result.score}', '${widget.result.totalScore}'],
+    );
+  }
+
+  String get _correctLine => 'exams.out_of_correct'.tr(args: [
+        '${_serverCorrectCount ?? widget.result.correctAnswers}',
+        '${_serverQuestionCount ?? widget.result.totalQuestions}',
+      ]);
 
   Future<void> _loadUserData() async {
     final result = await _authRepository.getProfile();
@@ -81,12 +156,12 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
                   width: 100,
                   height: 100,
                   decoration: BoxDecoration(
-                    color: widget.result.passed ? const Color(0xFF27AE60) : const Color(0xFFF2994A),
+                    color: _passed ? const Color(0xFF27AE60) : const Color(0xFFF2994A),
                     shape: BoxShape.circle,
                   ),
                   child: Center(
                     child: FaIcon(
-                      widget.result.passed ? FontAwesomeIcons.trophy : FontAwesomeIcons.rotateRight,
+                      _passed ? FontAwesomeIcons.trophy : FontAwesomeIcons.rotateRight,
                       color: Colors.white,
                       size: 44,
                     ),
@@ -95,7 +170,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
                 const SizedBox(height: 24),
                 // Congratulations Text
                 Text(
-                  widget.result.passed ? 'exams.congratulations'.tr() : 'exams.good_try'.tr(),
+                  _passed ? 'exams.congratulations'.tr() : 'exams.good_try'.tr(),
                   style: TextStyle(
                     fontSize: 28,
                     fontWeight: FontWeight.w700,
@@ -104,7 +179,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  widget.result.passed ? 'exams.passed_exam'.tr() : 'exams.keep_practicing'.tr(),
+                  _passed ? 'exams.passed_exam'.tr() : 'exams.keep_practicing'.tr(),
                   style: TextStyle(
                     fontSize: 14,
                     color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF9CA3AF),
@@ -132,7 +207,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
                   child: Column(
                     children: [
                       Text(
-                        '${widget.result.percentage.toInt()}%',
+                        '${_percentage.toInt()}%',
                         style: TextStyle(
                           fontSize: 48,
                           fontWeight: FontWeight.w700,
@@ -141,9 +216,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'exams.out_of_correct'.tr(
-                          args: ['${widget.result.correctAnswers}', '${widget.result.totalQuestions}'],
-                        ),
+                        _correctLine,
                         style: TextStyle(
                           fontSize: 14,
                           color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF9CA3AF),
@@ -151,9 +224,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'exams.score'.tr(
-                          args: ['${widget.result.score}', '${widget.result.totalScore}'],
-                        ),
+                        _scoreLine,
                         style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
@@ -169,16 +240,16 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
                           fit: StackFit.expand,
                           children: [
                             CircularProgressIndicator(
-                              value: widget.result.percentage / 100,
+                              value: _percentage / 100,
                               strokeWidth: 10,
                               backgroundColor: isDark ? const Color(0xFF262A36) : const Color(0xFFE5E7EB),
                               valueColor: AlwaysStoppedAnimation<Color>(
-                                widget.result.passed ? const Color(0xFF27AE60) : const Color(0xFFF2994A),
+                                _passed ? const Color(0xFF27AE60) : const Color(0xFFF2994A),
                               ),
                             ),
                             Center(
                               child: Text(
-                                '${widget.result.percentage.toInt()}%',
+                                '${_percentage.toInt()}%',
                                 style: TextStyle(
                                   fontSize: 22,
                                   fontWeight: FontWeight.bold,
@@ -206,6 +277,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
                               questions: widget.questions!,
                               result: widget.result,
                               attemptId: widget.attemptId,
+                              resultPayload: _resultPayload,
                             ),
                           ),
                         );

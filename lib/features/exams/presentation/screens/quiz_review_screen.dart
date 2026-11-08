@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import '../../data/exam_repository.dart';
+import '../../domain/exam_review.dart';
 import '../../models/quiz_models.dart';
 import '../../../../core/widgets/watermark_wrapper.dart';
 import '../../../../core/widgets/image_preview_screen.dart';
@@ -13,16 +14,22 @@ class QuizReviewScreen extends StatefulWidget {
   final QuizResult result;
   final List<QuizQuestion> questions;
 
-  /// When set, the graded rows from `GET /v1/quiz-attempts/{id}/result` are
-  /// loaded (like the website's review) to show grading status, teacher
-  /// feedback and any images attached to answers or corrections.
+  /// When set, `GET /v1/quiz-attempts/{id}/result` is loaded — the same
+  /// request the website's review makes. It is the only source of the graded
+  /// quiz (options with `is_correct`), the student's own rows (`answer_text`),
+  /// the per-question verdict, teacher feedback and attached images.
   final String? attemptId;
+
+  /// An already-fetched result payload, handed over by the result screen so the
+  /// review does not repeat the request.
+  final dynamic resultPayload;
 
   const QuizReviewScreen({
     super.key,
     required this.result,
     required this.questions,
     this.attemptId,
+    this.resultPayload,
   });
 
   @override
@@ -38,13 +45,19 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
   int _currentPage = 0;
   late PageController _pageController;
   Map<String, QuizAnswerReview> _serverAnswers = const {};
+  late List<QuizQuestion> _questions;
 
   @override
   void initState() {
     super.initState();
     _pageController = PageController();
+    _questions = widget.questions;
     _loadUserData();
-    _loadServerReview();
+    if (widget.resultPayload != null) {
+      _applyResultPayload(widget.resultPayload);
+    } else {
+      _loadServerReview();
+    }
   }
 
   @override
@@ -75,17 +88,56 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
     }
   }
 
-  /// Best-effort: the local questions already render the review; the server
-  /// rows only add grading, feedback and attached images.
+  /// The graded attempt, as the website's review reads it. The in-memory
+  /// questions stay as the fallback for the case the request cannot be made or
+  /// fails (right after finishing while offline).
   Future<void> _loadServerReview() async {
     final attemptId = widget.attemptId?.trim() ?? '';
     if (attemptId.isEmpty) return;
     final result = await _examRepository.getAttemptResult(attemptId);
     if (!mounted || result['success'] != true) return;
-    final answers = QuizAnswerReview.mapFromResultPayload(result['data']);
-    if (answers.isEmpty) return;
-    setState(() => _serverAnswers = answers);
+    _applyResultPayload(result['data']);
   }
+
+  /// Swaps in the server's quiz and answer rows.
+  ///
+  /// The graded quiz is preferred over the one the exam was taken from, because
+  /// only the graded copy carries each option's `is_correct` — without it the
+  /// correct answer cannot be marked at all. The selections made on the device
+  /// are carried across so they can still serve as a fallback for any question
+  /// the server sent no row for.
+  void _applyResultPayload(dynamic payload) {
+    final serverQuestions = questionsFromResultPayload(payload);
+    final answers = QuizAnswerReview.mapFromResultPayload(payload);
+    if (serverQuestions.isEmpty && answers.isEmpty) return;
+
+    if (serverQuestions.isNotEmpty) {
+      final local = <String, QuizQuestion>{
+        for (final q in widget.questions) q.questionId.toString(): q,
+      };
+      for (final question in serverQuestions) {
+        final previous = local[question.questionId.toString()];
+        if (previous == null) continue;
+        question.selectedAnswerId = previous.selectedAnswerId;
+        question.selectedAnswerIds = previous.selectedAnswerIds;
+        question.textAnswer = previous.textAnswer;
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      if (serverQuestions.isNotEmpty) _questions = serverQuestions;
+      _serverAnswers = answers;
+      if (_currentPage >= _questions.length) {
+        _currentPage = _questions.isEmpty ? 0 : _questions.length - 1;
+      }
+    });
+  }
+
+  ExamQuestionReview _reviewFor(QuizQuestion question) => buildQuestionReview(
+        question,
+        _serverAnswers[question.questionId.toString()],
+      );
 
   bool get _isRtl => Directionality.of(context) == TextDirection.rtl;
 
@@ -130,7 +182,7 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
                   Text(
                     'exams.question_x_of_y'.tr(args: [
                       '${_currentPage + 1}',
-                      '${widget.questions.length}',
+                      '${_questions.length}',
                     ]),
                     style: const TextStyle(
                       fontSize: 14,
@@ -145,7 +197,7 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
                       scrollDirection: Axis.horizontal,
                       child: Row(
                         children: List.generate(
-                          widget.questions.length,
+                          _questions.length,
                           (index) => Container(
                             margin: const EdgeInsets.symmetric(horizontal: 2),
                             width: 8,
@@ -173,9 +225,9 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
                     _currentPage = index;
                   });
                 },
-                itemCount: widget.questions.length,
+                itemCount: _questions.length,
                 itemBuilder: (context, index) {
-                  final question = widget.questions[index];
+                  final question = _questions[index];
                   return SingleChildScrollView(
                     padding: const EdgeInsets.all(16),
                     child: _buildQuestionReviewCard(context, question, index),
@@ -217,7 +269,7 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: ElevatedButton(
-                      onPressed: _currentPage < widget.questions.length - 1
+                      onPressed: _currentPage < _questions.length - 1
                           ? () {
                               _pageController.nextPage(
                                 duration: const Duration(milliseconds: 300),
@@ -255,25 +307,13 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
     );
   }
 
-  /// `true` / `false`, or `null` while a short answer awaits manual grading.
-  bool? _correctness(QuizQuestion question) {
-    final server = _serverAnswers[question.questionId.toString()];
-    if (server?.isCorrect != null) return server!.isCorrect;
-    if (question.isShortAnswer) {
-      final typed = question.textAnswer?.trim() ?? '';
-      final serverText = server?.answerText.trim() ?? '';
-      return (typed.isEmpty && serverText.isEmpty) ? false : null;
-    }
-    return question.isUserAnswerCorrect;
-  }
-
   Widget _buildQuestionReviewCard(BuildContext context, QuizQuestion question, int index) {
-    final correctness = _correctness(question);
-    final isCorrect = correctness == true;
-    final isPending = correctness == null;
-    final server = _serverAnswers[question.questionId.toString()];
-    final userAnswerText = _getUserAnswerText(question, server);
-    final correctAnswerText = _getCorrectAnswerText(question);
+    final review = _reviewFor(question);
+    final isCorrect = review.correct == true;
+    final isPending = review.isPending;
+    final server = review.server;
+    final userAnswerText = _userAnswerText(review);
+    final correctAnswerText = _correctAnswerText(review);
 
     const pendingColor = Color(0xFFD97706);
     final statusColor = isPending
@@ -286,8 +326,8 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
         ? 'exams.awaiting_grading'.tr()
         : (isCorrect ? 'exams.correct'.tr() : 'exams.incorrect'.tr());
 
-    final selectedAnswers = _selectedAnswers(question);
-    final feedbackAnswers = _feedbackAnswers(question, selectedAnswers);
+    final selectedAnswers = review.selected;
+    final feedbackAnswers = review.explanationAnswers;
 
     return Container(
       margin: EdgeInsets.zero,
@@ -425,7 +465,7 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
                     isCorrect: true,
                     isPending: false,
                     images: [
-                      for (final a in question.correctAnswers)
+                      for (final a in review.correctAnswers)
                         if (a.hasImage) a.image!,
                     ],
                   ),
@@ -624,41 +664,20 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
     );
   }
 
-  List<QuizAnswer> _selectedAnswers(QuizQuestion question) {
-    if (question.isShortAnswer) return const [];
-    if (question.isMultipleChoice) {
-      return question.answers
-          .where((a) => question.selectedAnswerIds.contains(a.answerId))
-          .toList();
+  /// The student's answer as text: a short answer verbatim, otherwise the
+  /// options resolved from the server's `answer_text`.
+  String _userAnswerText(ExamQuestionReview review) {
+    if (review.question.isShortAnswer) return review.shortText;
+    if (review.selected.isEmpty) {
+      // The row exists but none of its texts matched an option — show what the
+      // server recorded rather than nothing.
+      return review.server?.answerText.trim() ?? '';
     }
-    if (question.selectedAnswerId == null) return const [];
-    return question.answers
-        .where((a) => a.answerId == question.selectedAnswerId)
-        .take(1)
-        .toList();
+    return review.selected.map((a) => a.text).join(', ');
   }
 
-  /// Answers whose explanation is shown: correct ones and the student's picks.
-  List<QuizAnswer> _feedbackAnswers(QuizQuestion question, List<QuizAnswer> selected) {
-    return question.answers
-        .where((a) =>
-            (a.hasReason || a.hasReasonImage) &&
-            (a.isCorrect || selected.contains(a)))
-        .toList();
-  }
-
-  String _getUserAnswerText(QuizQuestion question, QuizAnswerReview? server) {
-    if (question.isShortAnswer) {
-      final typed = question.textAnswer?.trim() ?? '';
-      return typed.isNotEmpty ? typed : (server?.answerText.trim() ?? '');
-    }
-    final selected = _selectedAnswers(question);
-    if (selected.isEmpty) return '';
-    return selected.map((a) => a.text).join(', ');
-  }
-
-  String _getCorrectAnswerText(QuizQuestion question) {
-    final correctAnswers = question.correctAnswers;
+  String _correctAnswerText(ExamQuestionReview review) {
+    final correctAnswers = review.correctAnswers;
     if (correctAnswers.isEmpty) return 'exams.not_available_short'.tr();
     return correctAnswers.map((a) => a.text).join(', ');
   }

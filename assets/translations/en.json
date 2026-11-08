@@ -653,7 +653,8 @@
     "load_result_failed": "Failed to load exam results. Please try again.",
     "network_error": "Connection error. Please check your internet and try again.",
     "invalid_activation_code": "Invalid activation code. Please try again.",
-    "countdown_days_hours_minutes": "{}d {}h {}m"
+    "countdown_days_hours_minutes": "{}d {}h {}m",
+    "label_course": "Course"
   },
   "downloads": {
     "delete_title": "Delete Video",

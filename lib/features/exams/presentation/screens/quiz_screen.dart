@@ -5,6 +5,8 @@ import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../data/exam_repository.dart';
+import '../../domain/exam_review.dart';
+import '../../domain/exam_score.dart';
 import '../../models/quiz_models.dart';
 import 'exam_results_screen.dart';
 import 'exams_list_screen.dart';
@@ -112,22 +114,39 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _loadQuestions() async {
-    // Load questions (answers are now included in the question response)
-    final questionResult = await _examRepository.getQuizQuestions(
-      widget.quiz.quizId,
-    );
-    if (!mounted) return;
+    // The website takes an exam from the quiz resource itself — `StartExamIntro`
+    // hands `quiz.attributes.questions` straight to the run — and that resource
+    // is what carries each option's `is_correct` and `reason`. The app read
+    // `/v1/quiz-question?quiz_id=` instead, so whatever that endpoint chooses to
+    // expose decided the score the app submitted and whether the review could
+    // mark a correct answer at all. Quiz first, that endpoint only as a
+    // fallback.
+    var questions = questionsFromQuizAttributes(widget.quiz.attributes);
 
-    if (questionResult['success']) {
-      setState(() {
-        _questions = questionResult['data'] as List<QuizQuestion>;
-        _isLoading = false;
-      });
-    } else {
-      setState(() {
-        _isLoading = false;
-      });
+    if (questions.isEmpty) {
+      final quizResult = await _examRepository.getQuizById(widget.quiz.quizId);
+      if (!mounted) return;
+      final quiz = quizResult['data'];
+      if (quizResult['success'] == true && quiz is Quiz) {
+        questions = questionsFromQuizAttributes(quiz.attributes);
+      }
     }
+
+    if (questions.isEmpty) {
+      final questionResult = await _examRepository.getQuizQuestions(
+        widget.quiz.quizId,
+      );
+      if (!mounted) return;
+      if (questionResult['success'] == true) {
+        questions = (questionResult['data'] as List<QuizQuestion>?) ?? const [];
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _questions = questions;
+      _isLoading = false;
+    });
   }
 
   @override
@@ -493,6 +512,14 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
     _submitExam(isAutoSubmit: true, navigateToList: true);
   }
 
+  /// A numeric mark from the quiz's own attributes, for the result screen's
+  /// offline fallback.
+  num? _quizMarks(String key) {
+    final value = widget.quiz.attributes[key];
+    if (value is num) return value;
+    return num.tryParse(value?.toString().trim() ?? '');
+  }
+
   Future<void> _submitExam({bool isAutoSubmit = false, bool navigateToList = false}) async {
     if (_isSubmitting) return;
 
@@ -549,6 +576,16 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
 
     final percentage = totalScore > 0 ? (userScore / totalScore) * 100 : 0;
 
+    // The local verdict is only ever a stand-in until the server's result is
+    // read on the next screen, but it must still use the quiz's own
+    // `passing_marks` — the old hard-coded 60% disagreed with the website for
+    // every exam set to anything else.
+    final localPassed = isExamPassed(
+      null,
+      clampPercentage(percentage),
+      passingMarksPercentage(widget.quiz.attributes['passing_marks']),
+    );
+
     // Submit to API with calculated score
     final result = await _examRepository.submitQuizAttempt(
       attemptId: int.parse(widget.attempt.id),
@@ -569,7 +606,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
         percentage: percentage.toDouble(),
         correctAnswers: correctAnswers,
         totalQuestions: _questions.length,
-        passed: percentage >= 60,
+        passed: localPassed,
         completedAt: DateTime.now(),
       );
 
@@ -601,6 +638,8 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                   result: quizResult,
                   questions: _questions,
                   attemptId: widget.attempt.id,
+                  passingMarks: _quizMarks('passing_marks'),
+                  totalMarks: _quizMarks('total_marks'),
                 ),
           ),
         );
@@ -615,7 +654,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
         percentage: percentage.toDouble(),
         correctAnswers: correctAnswers,
         totalQuestions: _questions.length,
-        passed: percentage >= 60,
+        passed: localPassed,
         completedAt: DateTime.now(),
       );
 
@@ -646,6 +685,8 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                   result: quizResult,
                   questions: _questions,
                   attemptId: widget.attempt.id,
+                  passingMarks: _quizMarks('passing_marks'),
+                  totalMarks: _quizMarks('total_marks'),
                 ),
           ),
         );

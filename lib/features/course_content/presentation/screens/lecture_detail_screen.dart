@@ -11,6 +11,7 @@ import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import '../models/pdf_annotation.dart';
 import '../managers/pdf_annotation_manager.dart';
@@ -126,6 +127,23 @@ class VideoControllerHandler {
 
   void setRetrying(bool value) => _isRetrying = value;
 
+  /// Whether the OS screen timeout is currently held off.
+  bool _screenAwake = false;
+
+  /// Holds the screen on while a lecture plays.
+  ///
+  /// Nothing kept the device awake on this screen, so the phone's own display
+  /// timeout — often a minute — blanked the screen mid-lecture even though the
+  /// video was running. The flag keeps this to one platform call per change.
+  void _keepScreenAwake(bool value) {
+    if (_screenAwake == value) return;
+    _screenAwake = value;
+    WakelockPlus.toggle(enable: value).catchError((Object error) {
+      debugPrint('[VideoControllerHandler] wakelock toggle failed');
+      _screenAwake = !value;
+    });
+  }
+
   /// How long to wait for a source before trying the next candidate.
   ///
   /// 90s meant a dead URL held the student on a spinner for a minute and a
@@ -140,6 +158,7 @@ class VideoControllerHandler {
   Future<void> dispose() async {
     _initTimeoutTimer?.cancel();
     _initTimeoutTimer = null;
+    _keepScreenAwake(false);
 
     onPositionChanged = null;
     onPlayingStateChanged = null;
@@ -249,7 +268,13 @@ class VideoControllerHandler {
         case BetterPlayerEventType.bufferingEnd:
           onBufferingEnd();
           break;
+        case BetterPlayerEventType.play:
+          _isPlaying = true;
+          _keepScreenAwake(true);
+          onPlayingStateChanged?.call(true);
+          break;
         case BetterPlayerEventType.progress:
+          _keepScreenAwake(true);
           _currentPosition =
               _controller?.videoPlayerController?.value.position ??
               Duration.zero;
@@ -260,10 +285,12 @@ class VideoControllerHandler {
           break;
         case BetterPlayerEventType.pause:
           _isPlaying = false;
+          _keepScreenAwake(false);
           onPlayingStateChanged?.call(false);
           break;
         case BetterPlayerEventType.finished:
           _isCompleted = true;
+          _keepScreenAwake(false);
           onCompleted?.call();
           break;
         case BetterPlayerEventType.controlsVisible:
@@ -4756,7 +4783,12 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
     } catch (_) {}
 
     final momentSeconds =
-        widget.sourceController.videoPlayerController?.value.position.inSeconds ??
+        widget
+            .sourceController
+            .videoPlayerController
+            ?.value
+            .position
+            .inSeconds ??
         0;
 
     await _exitFullScreenMode(resumePlay: false);

@@ -39,6 +39,7 @@ import '../../../exams/models/quiz_models.dart';
 import '../../../exams/presentation/screens/exams_list_screen.dart';
 import '../../../exams/presentation/widgets/exam_countdown.dart';
 import '../../../notes/data/notes_repository.dart';
+import '../../../notes/domain/note_courses.dart';
 import '../../../notes/presentation/screens/summaries_list_screen.dart';
 import '../../../notes/presentation/screens/summary_detail_screen.dart';
 import '../../../profile/presentation/screens/my_profile_screen.dart';
@@ -200,6 +201,23 @@ class _HomeScreenState extends State<HomeScreen> {
   ) {
     if (!_scope.isLoaded) return items;
     return items.where((item) => _scope.isEnrolled(courseIdOf(item))).toList();
+  }
+
+  /// Same, for items that can name several courses.
+  ///
+  /// A note reaches the student through `course_id`, but the dashboard also
+  /// attaches it through `course_ids` / `courses` / a `course` relation, and
+  /// those rows were dropped because only the flat id was read.
+  List<dynamic> _keepEnrolledAny(
+    List<dynamic> items,
+    List<String> Function(dynamic item) courseIdsOf,
+  ) {
+    if (!_scope.isLoaded) return items;
+    return items.where((item) {
+      final ids = courseIdsOf(item);
+      if (ids.isEmpty) return false;
+      return ids.any(_scope.isEnrolled);
+    }).toList();
   }
 
   /// The three newest posts from the student's own courses.
@@ -401,10 +419,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (result['success'] && mounted) {
         final all = (result['data'] ?? []) as List<dynamic>;
         setState(() {
-          _notes = _keepEnrolled(all, (item) {
-            final attrs = item is Map ? (item['attributes'] ?? item) : null;
-            return attrs is Map ? attrs['course_id'] : null;
-          });
+          _notes = _keepEnrolledAny(all, noteCourseIds);
           _isNotesLoading = false;
         });
       } else if (mounted) {
@@ -2337,12 +2352,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  List<dynamic> get _summaryNotes {
-    return _notes.where((note) {
-      final attributes = note['attributes'] ?? {};
-      return attributes['type'] == 'summary';
-    }).toList();
-  }
+  /// Notes *and* summaries, like the web's home section.
+  ///
+  /// This used to keep `type == 'summary'` only, so a course's notes never
+  /// reached the section the app titles "new notes"; each card already styles
+  /// itself from the note's own type.
+  List<dynamic> get _summaryNotes => _notes;
 
   // -----------------------------------------------------------------------
   // Latest community posts — the web's `LatestPostsSection`.

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../data/exam_repository.dart';
+import '../../domain/quiz_course_title.dart';
 import '../../models/quiz_models.dart';
 import 'quiz_screen.dart';
 
@@ -15,6 +16,8 @@ class ExamNoticeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final courseTitle = quizCourseTitle(quiz.attributes);
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -60,6 +63,10 @@ class ExamNoticeScreen extends StatelessWidget {
                   children: [
                     Text(quiz.title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF1F2937))),
                     const SizedBox(height: 20),
+                    if (courseTitle != null) ...[
+                      _buildDetailRow('exams.label_course'.tr(), courseTitle),
+                      const Divider(height: 16, color: Color(0xFFF1F1F1)),
+                    ],
                     _buildDetailRow('exams.label_type'.tr(), quiz.type.toUpperCase()),
                     const Divider(height: 16, color: Color(0xFFF1F1F1)),
                     _buildDetailRow('exams.label_duration'.tr(), 'course.duration_min'.tr(args: [quiz.duration.toString()])),

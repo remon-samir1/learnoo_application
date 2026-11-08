@@ -680,7 +680,8 @@
     "load_result_failed": "فشل تحميل نتيجة الامتحان. يرجى المحاولة مرة أخرى.",
     "network_error": "خطأ في الاتصال. تحقق من الإنترنت وحاول مرة أخرى.",
     "invalid_activation_code": "كود التفعيل غير صحيح. يرجى المحاولة مرة أخرى.",
-    "countdown_days_hours_minutes": "{} يوم {} س {} د"
+    "countdown_days_hours_minutes": "{} يوم {} س {} د",
+    "label_course": "المادة"
   },
   "profile": {
     "approved_device": "الجهاز المعتمد",
