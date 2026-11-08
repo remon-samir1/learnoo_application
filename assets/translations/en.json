@@ -367,6 +367,8 @@
     "views_usage": "Views Usage",
     "views": "views",
     "chapter_locked_title": "Chapter Locked",
+    "chapter_not_available_title": "Not Available Yet",
+    "chapter_not_available_yet": "This lesson is not available yet.",
     "error_title": "Error",
     "video_unavailable": "Video unavailable",
     "ask_about_moment": "Ask about this moment ({})",

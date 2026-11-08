@@ -130,12 +130,39 @@ class VideoControllerHandler {
   /// Whether the OS screen timeout is currently held off.
   bool _screenAwake = false;
 
-  /// Holds the screen on while a lecture plays.
-  ///
-  /// Nothing kept the device awake on this screen, so the phone's own display
-  /// timeout — often a minute — blanked the screen mid-lecture even though the
-  /// video was running. The flag keeps this to one platform call per change.
-  void _keepScreenAwake(bool value) {
+  /// How long the screen is held on during uninterrupted playback, from the
+  /// administration's `sleep_per_minute` setting. Once it passes, the phone's
+  /// own display timeout applies again, so a phone left playing a lecture
+  /// (e.g. to be filmed by another phone) goes to sleep. Null keeps the screen
+  /// on for the whole video. Browsing the app is never affected.
+  Duration? screenAwakeLimit;
+  Timer? _screenAwakeTimer;
+  bool _screenAwakeLimitReached = false;
+
+  /// Holds the screen on while a lecture plays, up to [screenAwakeLimit].
+  /// Pausing (which also happens when the phone locks) starts a new period.
+  @visibleForTesting
+  void keepScreenAwake(bool value) {
+    if (!value) {
+      _screenAwakeTimer?.cancel();
+      _screenAwakeTimer = null;
+      _screenAwakeLimitReached = false;
+    } else {
+      if (_screenAwakeLimitReached) return;
+      final limit = screenAwakeLimit;
+      if (limit != null) {
+        _screenAwakeTimer ??= Timer(limit, () {
+          _screenAwakeTimer = null;
+          _screenAwakeLimitReached = true;
+          _setScreenAwake(false);
+        });
+      }
+    }
+    _setScreenAwake(value);
+  }
+
+  /// One platform call per change.
+  void _setScreenAwake(bool value) {
     if (_screenAwake == value) return;
     _screenAwake = value;
     WakelockPlus.toggle(enable: value).catchError((Object error) {
@@ -158,7 +185,7 @@ class VideoControllerHandler {
   Future<void> dispose() async {
     _initTimeoutTimer?.cancel();
     _initTimeoutTimer = null;
-    _keepScreenAwake(false);
+    keepScreenAwake(false);
 
     onPositionChanged = null;
     onPlayingStateChanged = null;
@@ -270,11 +297,11 @@ class VideoControllerHandler {
           break;
         case BetterPlayerEventType.play:
           _isPlaying = true;
-          _keepScreenAwake(true);
+          keepScreenAwake(true);
           onPlayingStateChanged?.call(true);
           break;
         case BetterPlayerEventType.progress:
-          _keepScreenAwake(true);
+          keepScreenAwake(true);
           _currentPosition =
               _controller?.videoPlayerController?.value.position ??
               Duration.zero;
@@ -285,12 +312,12 @@ class VideoControllerHandler {
           break;
         case BetterPlayerEventType.pause:
           _isPlaying = false;
-          _keepScreenAwake(false);
+          keepScreenAwake(false);
           onPlayingStateChanged?.call(false);
           break;
         case BetterPlayerEventType.finished:
           _isCompleted = true;
-          _keepScreenAwake(false);
+          keepScreenAwake(false);
           onCompleted?.call();
           break;
         case BetterPlayerEventType.controlsVisible:
@@ -547,6 +574,17 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   bool _canWatch = false;
   bool _isActivated = false;
 
+  /// The server's reason for refusing this chapter, e.g. `activation_required`.
+  String? _watchAccessState;
+
+  /// Scheduled, unpublished or still-processing lessons: no activation code
+  /// can open them, so they must not show the activation prompt.
+  bool get _isNotAvailableYet => const {
+    'not_published',
+    'outside_schedule',
+    'video_not_ready',
+  }.contains(_watchAccessState);
+
   /// Whether the owning course is locked for this student; drives the web's
   /// chapter access helpers (PDF visibility, PDF-only detection).
   bool _courseLocked = true;
@@ -737,6 +775,11 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     WidgetsBinding.instance.addObserver(this);
     _detectEmulator();
     _loadUserData();
+    _chapterRepository.getVideoSleepMinutes().then((minutes) {
+      if (minutes != null) {
+        _videoHandler.screenAwakeLimit = Duration(minutes: minutes);
+      }
+    });
     _initAudioWatermark();
     _encryptedVideoService.loadDownloadedVideos();
     // Captures live in temp; drop yesterday's so they do not accumulate.
@@ -1726,8 +1769,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
         setState(() {
           _isLoadingChapter = false;
-          _errorMessage =
-              result['message'] ?? 'course.failed_load_chapter'.tr();
+          _watchAccessState = result['watch_access_state']?.toString();
+          _errorMessage = _isNotAvailableYet
+              ? 'course.chapter_not_available_yet'.tr()
+              : result['message'] ?? 'course.failed_load_chapter'.tr();
           if (maxViewsFromError != null) _maxViews = maxViewsFromError;
           if (currentViewsFromError != null)
             _currentViews = currentViewsFromError;
@@ -2897,12 +2942,14 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   Widget _buildErrorScreen() {
     final errorLower = _errorMessage?.toLowerCase() ?? '';
     final isLockedError =
-        errorLower.contains('locked') == true ||
-        _isLocked ||
-        errorLower.contains('activate') == true;
+        !_isNotAvailableYet &&
+        (errorLower.contains('locked') == true ||
+            _isLocked ||
+            errorLower.contains('activate') == true);
     final isMaxViewsError =
-        errorLower.contains('maximum') && errorLower.contains('views') ||
-        (_currentViews > 0 && _maxViews > 0 && _currentViews >= _maxViews);
+        !_isNotAvailableYet &&
+        (errorLower.contains('maximum') && errorLower.contains('views') ||
+            (_currentViews > 0 && _maxViews > 0 && _currentViews >= _maxViews));
     final showActivationButton = isLockedError || isMaxViewsError;
     final primaryColor = showActivationButton
         ? const Color(0xFF3451E5)
@@ -2940,7 +2987,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                   ),
                   child: Center(
                     child: FaIcon(
-                      showActivationButton
+                      _isNotAvailableYet
+                          ? FontAwesomeIcons.clock
+                          : showActivationButton
                           ? FontAwesomeIcons.lock
                           : FontAwesomeIcons.circleExclamation,
                       color: Colors.white,
@@ -2950,7 +2999,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                 ),
                 const SizedBox(height: 32),
                 Text(
-                  isMaxViewsError
+                  _isNotAvailableYet
+                      ? 'course.chapter_not_available_title'.tr()
+                      : isMaxViewsError
                       ? 'course.views_exceeded_title'.tr()
                       : (showActivationButton
                             ? 'course.chapter_locked_title'.tr()

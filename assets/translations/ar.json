@@ -367,6 +367,8 @@
     "views_usage": "استخدام المشاهدات",
     "views": "مشاهدات",
     "chapter_locked_title": "الفصل مقفل",
+    "chapter_not_available_title": "غير متاح بعد",
+    "chapter_not_available_yet": "هذا الدرس غير متاح بعد.",
     "error_title": "خطأ",
     "video_unavailable": "الفيديو غير متوفر",
     "ask_about_moment": "اسأل عن هذه اللحظة ({})",

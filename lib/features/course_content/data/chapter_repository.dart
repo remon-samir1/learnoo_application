@@ -19,6 +19,30 @@ class ChapterRepository with OfflineFirstRepository {
     return await _storage.read(key: 'auth_token');
   }
 
+  /// Minutes the screen may stay on during video playback before the phone is
+  /// allowed to sleep, set by the administration (`sleep_per_minute`).
+  /// Returns null when the setting cannot be read.
+  Future<int?> getVideoSleepMinutes() async {
+    final token = await getToken();
+    if (token == null) return null;
+    try {
+      final response = await http.get(
+        Uri.parse('${ApiConstants.baseUrl}${ApiConstants.videoSettings}'),
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+      if (response.statusCode != 200) return null;
+      final minutes = int.tryParse(
+        '${jsonDecode(response.body)['sleep_per_minute']}',
+      );
+      return minutes != null && minutes > 0 ? minutes : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Get all chapters with offline-first support
   Future<Map<String, dynamic>> getChapters({int? courseId}) async {
     final token = await getToken();
@@ -98,6 +122,7 @@ class ChapterRepository with OfflineFirstRepository {
             'message': data['message'] ?? 'errors.access_denied'.tr(),
             'max_views': data['max_views'],
             'current_views': data['current_views'],
+            'watch_access_state': data['watch_access_state'],
           };
           throw 'AUTH_ERROR';
         } else {
@@ -123,6 +148,7 @@ class ChapterRepository with OfflineFirstRepository {
         'max_views': _authErrorData!['max_views'],
         'current_views': _authErrorData!['current_views'],
         'statusCode': _authErrorData!['statusCode'],
+        'watch_access_state': _authErrorData!['watch_access_state'],
         'authorizationError': true,
         'fromCache': false,
         'offline': false,

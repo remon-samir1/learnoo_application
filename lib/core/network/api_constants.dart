@@ -89,6 +89,7 @@ class ApiConstants {
 
   // Feature flags endpoint
   static const String features = '/v1/feature';
+  static const String videoSettings = '/v1/video-settings';
 
   // Global search
   static const String search = '/v1/search';
