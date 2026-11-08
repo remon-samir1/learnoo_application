@@ -17,7 +17,9 @@
     "language": "اللغة",
     "section_support": "الدعم",
     "help_faq": "المساعدة والأسئلة الشائعة",
-    "terms_privacy": "الشروط وسياسة الخصوصية"
+    "terms_privacy": "الشروط وسياسة الخصوصية",
+    "delete_account": "حذف الحساب",
+    "delete_account_description": "تحقّق من رقم هاتفك لطلب حذف حسابك نهائيًا."
   },
   "change_password": {
     "title": "تغيير كلمة المرور",

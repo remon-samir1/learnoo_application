@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
+import '../../../../core/widgets/link_card_widget.dart';
 
 class TermsPrivacyScreen extends StatelessWidget {
   const TermsPrivacyScreen({super.key});
@@ -64,6 +65,15 @@ class TermsPrivacyScreen extends StatelessWidget {
             const SizedBox(height: 16),
             _buildParagraph(
               'terms_privacy.p5'.tr(),
+            ),
+            const SizedBox(height: 24),
+            LinkCardWidget(
+              url: 'https://learnoo.app/privacy.html',
+              title: 'terms_privacy.title'.tr(),
+            ),
+            LinkCardWidget(
+              url: 'https://learnoo.app/support.html',
+              title: 'settings.section_support'.tr(),
             ),
           ],
         ),

@@ -17,7 +17,9 @@
     "language": "Language",
     "section_support": "SUPPORT",
     "help_faq": "Help & FAQ",
-    "terms_privacy": "Terms & Privacy Policy"
+    "terms_privacy": "Terms & Privacy Policy",
+    "delete_account": "Delete Account",
+    "delete_account_description": "Verify your phone number to request permanent account deletion."
   },
   "change_password": {
     "title": "Change Password",
