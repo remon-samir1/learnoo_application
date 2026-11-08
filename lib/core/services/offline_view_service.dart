@@ -116,6 +116,21 @@ class OfflineViewService {
     debugPrint('[OfflineViewService] Cleared offline views for chapter $chapterId');
   }
 
+  /// An activation code resets the server's view count for its chapter, so
+  /// views this device spent before it must neither keep the chapter locked
+  /// here nor be sent later and charged against the new code.
+  Future<void> discardViewsAfterActivation(String chapterId) async {
+    await clearOfflineViews(chapterId);
+    final queue = OfflineQueueService();
+    for (final action in queue.getPendingActionsByType(
+      PendingActionTypes.chapterView,
+    )) {
+      if ('${action.payload['chapter_id']}' == chapterId) {
+        await queue.dequeue(action.id);
+      }
+    }
+  }
+
   /// Check if views are exhausted for a chapter (including offline views)
   bool areViewsExhausted(int apiCurrentViews, String chapterId, int maxViews) {
     final offlineViews = getOfflineViewsSync(chapterId);

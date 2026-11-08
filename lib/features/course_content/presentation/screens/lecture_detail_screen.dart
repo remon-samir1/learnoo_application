@@ -1667,6 +1667,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         final totalViews = apiCurrentViews + offlineViews;
 
         setState(() {
+          // Fresh server data replaces any earlier error, e.g. the
+          // view-limit message after a code has just reset the views.
+          _errorMessage = null;
           _chapterData = data;
           // Same coercion as everywhere else: the API mixes true, 1 and "1".
           _isLocked = coerceFlagOrNull(attributes['is_locked']) ?? true;
@@ -2192,6 +2195,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
       if (_betterPlayerController != null) {
         if (_watchTracker == null) {
+          // Without this the threshold stayed 0, which charges a view the
+          // moment a downloaded lecture starts playing.
+          _viewByMinute =
+              _chapterRepository.cachedViewByMinute(widget.chapterId) ?? 0;
           _initViewTracker();
         }
         _watchTracker?.attach(_betterPlayerController!);
@@ -2379,6 +2386,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     );
     if (mounted) {
       if (result['success']) {
+        await _ensureOfflineViewInitialized();
+        await _offlineViewService.discardViewsAfterActivation(widget.chapterId);
+        if (!mounted) return;
         setState(() {
           _isLocked = false;
           _canWatch = true;
