@@ -70,5 +70,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Calendar access lets the live-session SDK display scheduled meetings. Learnoo currently disables this integration and does not request calendar access.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Learnoo accesses photos you choose for your profile and support requests.</string>
 </dict>
 </plist>

@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:easy_localization/easy_localization.dart';
 
 import '../../../../core/theme/dynamic_theme.dart';
+import '../../../../core/widgets/link_card_widget.dart';
 import 'change_password_screen.dart';
 import 'help_faq_screen.dart';
 import 'terms_privacy_screen.dart';
@@ -84,6 +85,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 24),
                 _buildSectionHeader('settings.section_account'.tr(), isDark),
+                LinkCardWidget(
+                  url: 'https://learnoo.app/delete-account',
+                  title: 'settings.delete_account'.tr(),
+                  description: 'settings.delete_account_description'.tr(),
+                ),
                 _buildNavigationItem(
                   icon: FontAwesomeIcons.lock,
                   label: 'settings.change_password'.tr(),
@@ -290,7 +296,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Container(
       margin: const EdgeInsets.only(bottom: 2),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E212B) : Colors.white,
         border: Border(
           bottom: BorderSide(
             color: isDark ? const Color(0xFF2E3344) : const Color(0xFFF3F4F6),
@@ -298,6 +303,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
       child: ListTile(
+        tileColor: isDark ? const Color(0xFF1E212B) : Colors.white,
         leading: Container(
           width: 36,
           height: 36,
@@ -341,7 +347,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Container(
       margin: const EdgeInsets.only(bottom: 2),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E212B) : Colors.white,
         border: Border(
           bottom: BorderSide(
             color: isDark ? const Color(0xFF2E3344) : const Color(0xFFF3F4F6),
@@ -349,6 +354,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
       child: ListTile(
+        tileColor: isDark ? const Color(0xFF1E212B) : Colors.white,
         onTap: onTap,
         leading: Container(
           width: 36,

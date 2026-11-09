@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../core/network/api_constants.dart';
 import '../../../core/offline/offline_first_repository.dart';
 import '../../../core/local/hive_boxes.dart';
+import '../../../core/local/hive_service.dart';
 import '../../../core/local/models/pending_action.dart';
 
 class ChapterRepository with OfflineFirstRepository {
@@ -17,6 +18,20 @@ class ChapterRepository with OfflineFirstRepository {
 
   Future<String?> getToken() async {
     return await _storage.read(key: 'auth_token');
+  }
+
+  /// The chapter's `view_by_minute` as last loaded online. A downloaded copy
+  /// is played without fetching the chapter, and must still wait this long
+  /// before charging a view.
+  int? cachedViewByMinute(String chapterId) {
+    final data = HiveService().retrieveWithTimestamp(
+      HiveBoxes.chapters,
+      'chapter_$chapterId',
+    )?['data'];
+    final attributes = data is Map ? data['attributes'] : null;
+    return attributes is Map
+        ? int.tryParse('${attributes['view_by_minute']}')
+        : null;
   }
 
   /// Get all chapters with offline-first support
@@ -98,6 +113,7 @@ class ChapterRepository with OfflineFirstRepository {
             'message': data['message'] ?? 'errors.access_denied'.tr(),
             'max_views': data['max_views'],
             'current_views': data['current_views'],
+            'watch_access_state': data['watch_access_state'],
           };
           throw 'AUTH_ERROR';
         } else {
@@ -123,6 +139,7 @@ class ChapterRepository with OfflineFirstRepository {
         'max_views': _authErrorData!['max_views'],
         'current_views': _authErrorData!['current_views'],
         'statusCode': _authErrorData!['statusCode'],
+        'watch_access_state': _authErrorData!['watch_access_state'],
         'authorizationError': true,
         'fromCache': false,
         'offline': false,

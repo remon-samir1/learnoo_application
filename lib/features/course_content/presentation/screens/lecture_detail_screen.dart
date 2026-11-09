@@ -633,6 +633,17 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   bool _canWatch = false;
   bool _isActivated = false;
 
+  /// The server's reason for refusing this chapter, e.g. `activation_required`.
+  String? _watchAccessState;
+
+  /// Scheduled, unpublished or still-processing lessons: no activation code
+  /// can open them, so they must not show the activation prompt.
+  bool get _isNotAvailableYet => const {
+    'not_published',
+    'outside_schedule',
+    'video_not_ready',
+  }.contains(_watchAccessState);
+
   /// Whether the owning course is locked for this student; drives the web's
   /// chapter access helpers (PDF visibility, PDF-only detection).
   bool _courseLocked = true;
@@ -837,6 +848,11 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     WidgetsBinding.instance.addObserver(this);
     _detectEmulator();
     _loadUserData();
+    // Opening a lecture is the moment the screen-awake window matters, so a
+    // stale value is refreshed here too; [VideoSettingsService] caches it and
+    // notifies the player, which starts its countdown against the new value
+    // even if the lecture is already playing.
+    unawaited(VideoSettingsService().refreshIfStale());
     _initAudioWatermark();
     _encryptedVideoService.loadDownloadedVideos();
     // Captures live in temp; drop yesterday's so they do not accumulate.
@@ -1769,6 +1785,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         final totalViews = apiCurrentViews + offlineViews;
 
         setState(() {
+          // Fresh server data replaces any earlier error, e.g. the
+          // view-limit message after a code has just reset the views.
+          _errorMessage = null;
           _chapterData = data;
           // Same coercion as everywhere else: the API mixes true, 1 and "1".
           _isLocked = coerceFlagOrNull(attributes['is_locked']) ?? true;
@@ -1871,8 +1890,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
         setState(() {
           _isLoadingChapter = false;
-          _errorMessage =
-              result['message'] ?? 'course.failed_load_chapter'.tr();
+          _watchAccessState = result['watch_access_state']?.toString();
+          _errorMessage = _isNotAvailableYet
+              ? 'course.chapter_not_available_yet'.tr()
+              : result['message'] ?? 'course.failed_load_chapter'.tr();
           if (maxViewsFromError != null) _maxViews = maxViewsFromError;
           if (currentViewsFromError != null)
             _currentViews = currentViewsFromError;
@@ -2337,6 +2358,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
       if (_betterPlayerController != null) {
         if (_watchTracker == null) {
+          // Without this the threshold stayed 0, which charges a view the
+          // moment a downloaded lecture starts playing.
+          _viewByMinute =
+              _chapterRepository.cachedViewByMinute(widget.chapterId) ?? 0;
           _initViewTracker();
         }
         _watchTracker?.attach(_betterPlayerController!);
@@ -2524,6 +2549,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     );
     if (mounted) {
       if (result['success']) {
+        await _ensureOfflineViewInitialized();
+        await _offlineViewService.discardViewsAfterActivation(widget.chapterId);
+        if (!mounted) return;
         setState(() {
           _isLocked = false;
           _canWatch = true;
@@ -3108,12 +3136,14 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   Widget _buildErrorScreen() {
     final errorLower = _errorMessage?.toLowerCase() ?? '';
     final isLockedError =
-        errorLower.contains('locked') == true ||
-        _isLocked ||
-        errorLower.contains('activate') == true;
+        !_isNotAvailableYet &&
+        (errorLower.contains('locked') == true ||
+            _isLocked ||
+            errorLower.contains('activate') == true);
     final isMaxViewsError =
-        errorLower.contains('maximum') && errorLower.contains('views') ||
-        (_currentViews > 0 && _maxViews > 0 && _currentViews >= _maxViews);
+        !_isNotAvailableYet &&
+        (errorLower.contains('maximum') && errorLower.contains('views') ||
+            (_currentViews > 0 && _maxViews > 0 && _currentViews >= _maxViews));
     final showActivationButton = isLockedError || isMaxViewsError;
     final primaryColor = showActivationButton
         ? const Color(0xFF3451E5)
@@ -3171,7 +3201,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                       ),
                       child: Center(
                         child: FaIcon(
-                          showActivationButton
+                          _isNotAvailableYet
+                              ? FontAwesomeIcons.clock
+                              : showActivationButton
                               ? FontAwesomeIcons.lock
                               : FontAwesomeIcons.circleExclamation,
                           color: Colors.white,
@@ -3181,7 +3213,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                     ),
                     const SizedBox(height: 32),
                     Text(
-                      isMaxViewsError
+                      _isNotAvailableYet
+                          ? 'course.chapter_not_available_title'.tr()
+                          : isMaxViewsError
                           ? 'course.views_exceeded_title'.tr()
                           : (showActivationButton
                                 ? 'course.chapter_locked_title'.tr()

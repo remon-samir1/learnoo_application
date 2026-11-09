@@ -1,0 +1,134 @@
+PODS:
+  - better_player_plus (1.1.2):
+    - Cache (~> 6.0.0)
+    - Flutter
+    - GCDWebServer
+    - HLSCachingReverseProxyServer
+    - PINCache
+  - Cache (6.0.0)
+  - DTTJailbreakDetection (0.4.0)
+  - Flutter (1.0.0)
+  - flutter_downloader (0.0.1):
+    - Flutter
+  - flutter_tts (0.0.1):
+    - Flutter
+  - GCDWebServer (3.5.4):
+    - GCDWebServer/Core (= 3.5.4)
+  - GCDWebServer/Core (3.5.4)
+  - Giphy (2.2.12):
+    - libwebp
+  - HLSCachingReverseProxyServer (0.1.0):
+    - GCDWebServer (~> 3.5)
+    - PINCache (>= 3.0.1-beta.3)
+  - jitsi_meet_flutter_sdk (13.1.1):
+    - Flutter
+    - JitsiMeetSDK (= 13.1.1)
+  - JitsiMeetSDK (13.1.1):
+    - Giphy (= 2.2.12)
+    - JitsiWebRTC (~> 124.0)
+  - JitsiWebRTC (124.0.2)
+  - libwebp (1.6.0):
+    - libwebp/demux (= 1.6.0)
+    - libwebp/mux (= 1.6.0)
+    - libwebp/sharpyuv (= 1.6.0)
+    - libwebp/webp (= 1.6.0)
+  - libwebp/demux (1.6.0):
+    - libwebp/webp
+  - libwebp/mux (1.6.0):
+    - libwebp/demux
+  - libwebp/sharpyuv (1.6.0)
+  - libwebp/webp (1.6.0):
+    - libwebp/sharpyuv
+  - open_file_ios (1.0.3):
+    - Flutter
+  - permission_handler_apple (9.3.0):
+    - Flutter
+  - PINCache (3.0.4):
+    - PINCache/Arc-exception-safe (= 3.0.4)
+    - PINCache/Core (= 3.0.4)
+  - PINCache/Arc-exception-safe (3.0.4):
+    - PINCache/Core
+  - PINCache/Core (3.0.4):
+    - PINOperation (~> 1.2.3)
+  - PINOperation (1.2.3)
+  - root_checker_plus (0.0.1):
+    - DTTJailbreakDetection
+    - Flutter
+  - screen_capture_event (0.0.1):
+    - Flutter
+  - video_thumbnail (0.0.1):
+    - Flutter
+    - libwebp
+
+DEPENDENCIES:
+  - better_player_plus (from `.symlinks/plugins/better_player_plus/ios`)
+  - Flutter (from `Flutter`)
+  - flutter_downloader (from `.symlinks/plugins/flutter_downloader/ios`)
+  - flutter_tts (from `.symlinks/plugins/flutter_tts/ios`)
+  - jitsi_meet_flutter_sdk (from `.symlinks/plugins/jitsi_meet_flutter_sdk/ios`)
+  - open_file_ios (from `.symlinks/plugins/open_file_ios/ios`)
+  - permission_handler_apple (from `.symlinks/plugins/permission_handler_apple/ios`)
+  - root_checker_plus (from `.symlinks/plugins/root_checker_plus/ios`)
+  - screen_capture_event (from `.symlinks/plugins/screen_capture_event/ios`)
+  - video_thumbnail (from `.symlinks/plugins/video_thumbnail/ios`)
+
+SPEC REPOS:
+  trunk:
+    - Cache
+    - DTTJailbreakDetection
+    - GCDWebServer
+    - Giphy
+    - HLSCachingReverseProxyServer
+    - JitsiMeetSDK
+    - JitsiWebRTC
+    - libwebp
+    - PINCache
+    - PINOperation
+
+EXTERNAL SOURCES:
+  better_player_plus:
+    :path: ".symlinks/plugins/better_player_plus/ios"
+  Flutter:
+    :path: Flutter
+  flutter_downloader:
+    :path: ".symlinks/plugins/flutter_downloader/ios"
+  flutter_tts:
+    :path: ".symlinks/plugins/flutter_tts/ios"
+  jitsi_meet_flutter_sdk:
+    :path: ".symlinks/plugins/jitsi_meet_flutter_sdk/ios"
+  open_file_ios:
+    :path: ".symlinks/plugins/open_file_ios/ios"
+  permission_handler_apple:
+    :path: ".symlinks/plugins/permission_handler_apple/ios"
+  root_checker_plus:
+    :path: ".symlinks/plugins/root_checker_plus/ios"
+  screen_capture_event:
+    :path: ".symlinks/plugins/screen_capture_event/ios"
+  video_thumbnail:
+    :path: ".symlinks/plugins/video_thumbnail/ios"
+
+SPEC CHECKSUMS:
+  better_player_plus: 3d40145c650bb83dde08f0d593b21a144196769f
+  Cache: 4ca7e00363fca5455f26534e5607634c820ffc2d
+  DTTJailbreakDetection: 5e356c5badc17995f65a83ed9483f787a0057b71
+  Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
+  flutter_downloader: 78da0da1084e709cbfd3b723c7ea349c71681f09
+  flutter_tts: 35ac3c7d42412733e795ea96ad2d7e05d0a75113
+  GCDWebServer: 2c156a56c8226e2d5c0c3f208a3621ccffbe3ce4
+  Giphy: 83628960ed04e1c3428ff1b4fb2b027f65e82f50
+  HLSCachingReverseProxyServer: 59935e1e0244ad7f3375d75b5ef46e8eb26ab181
+  jitsi_meet_flutter_sdk: 21cef88abb0e17d62bc4ee275767b5fe10b1dfbd
+  JitsiMeetSDK: 64df991a9611cadcc14226d2cc8c1a746799b1fd
+  JitsiWebRTC: b47805ab5668be38e7ee60e2258f49badfe8e1d0
+  libwebp: af5937a13536ef73f3784d69cc342b98961acf33
+  open_file_ios: 46184d802ee7959203f6392abcfa0dd49fdb5be0
+  permission_handler_apple: 4ed2196e43d0651e8ff7ca3483a069d469701f2d
+  PINCache: d9a87a0ff397acffe9e2f0db972ac14680441158
+  PINOperation: fb563bcc9c32c26d6c78aaff967d405aa2ee74a7
+  root_checker_plus: 0d625cf912b8fa2d7c1976a80a4749acf937ce06
+  screen_capture_event: efc4eb455e1c5cc304cec85a4372e0a633ff2a7c
+  video_thumbnail: b637e0ad5f588ca9945f6e2c927f73a69a661140
+
+PODFILE CHECKSUM: ef408bf62401d49418af75b9276d53e23e5fadf7
+
+COCOAPODS: 1.17.0

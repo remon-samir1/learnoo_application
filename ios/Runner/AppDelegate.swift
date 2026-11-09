@@ -300,7 +300,9 @@ class ScreenProtectionManager: NSObject {
     }
     
     private func isJailbroken() -> Bool {
-        if TARGET_OS_SIMULATOR != 0 { return false }
+        #if targetEnvironment(simulator)
+        return false
+        #else
         
         let fileManager = FileManager.default
         let jailbreakPaths = [
@@ -317,6 +319,7 @@ class ScreenProtectionManager: NSObject {
         }
         
         return false
+        #endif
     }
     
     /// Flutter event sinks may only be used from the platform thread.
