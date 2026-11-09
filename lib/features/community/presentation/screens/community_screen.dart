@@ -2,6 +2,7 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/widgets/header_back_button.dart';
 import '../../data/models/post_model.dart';
 import '../../data/models/social_link_model.dart';
 import '../../data/repositories/community_repository.dart';
@@ -385,13 +386,31 @@ class _CommunityScreenState extends State<CommunityScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 26),
               child: Column(
                 children: [
-                  Text(
-                    'community.title'.tr(),
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
+                  // The community feed is both a tab of the home shell and a
+                  // pushed route (home shortcut, bottom bar). When it was
+                  // pushed it needs its own back control: iOS has no hardware
+                  // back button to fall back on.
+                  Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      const SizedBox(width: double.infinity, height: 34),
+                      Text(
+                        'community.title'.tr(),
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+                      if (Navigator.of(context).canPop())
+                        const PositionedDirectional(
+                          start: 0,
+                          child: HeaderBackButton(
+                            padding: EdgeInsets.all(8),
+                            iconSize: 18,
+                          ),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 16),
                   Container(

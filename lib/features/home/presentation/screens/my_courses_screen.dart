@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../course_content/domain/course_visibility.dart';
 import '../../../../core/widgets/cover_image.dart';
+import '../../../../core/widgets/header_back_button.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:shimmer/shimmer.dart';
@@ -209,15 +210,31 @@ class _MyCoursesScreenState extends State<MyCoursesScreen> {
       ),
       child: SafeArea(
         bottom: false,
-        child: Center(
-          child: Text(
-            'home.my_courses_title'.tr(),
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Center(
+              child: Text(
+                'home.my_courses_title'.tr(),
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
             ),
-          ),
+            // The screen is both a tab of the home shell and a pushed route
+            // (bottom bar). When it was pushed it needs its own back control:
+            // iOS has no hardware back button to fall back on.
+            if (Navigator.of(context).canPop())
+              const PositionedDirectional(
+                start: 12,
+                child: HeaderBackButton(
+                  padding: EdgeInsets.all(8),
+                  iconSize: 18,
+                ),
+              ),
+          ],
         ),
       ),
     );

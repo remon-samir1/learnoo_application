@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Keychain Sharing. flutter_secure_storage requires this capability on iOS
+	  (see flutter_secure_storage_darwin's README); without it SecItemAdd can
+	  fail with errSecMissingEntitlement and every keychain write throws. The
+	  offline lecture cipher keeps its installation secret there, so an
+	  encrypted download would fail before a byte reached disk. The empty array
+	  means "this app's own default access group" — nothing is shared with any
+	  other app.
+	-->
+	<key>keychain-access-groups</key>
+	<array/>
+	<key>com.apple.security.get-task-allow</key>
+	<true/>
+</dict>
+</plist>

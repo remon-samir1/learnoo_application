@@ -10,6 +10,7 @@ import '../../domain/exam_score.dart';
 import '../../models/quiz_models.dart';
 import 'exam_results_screen.dart';
 import 'exams_list_screen.dart';
+import '../../../../core/widgets/header_back_button.dart';
 import '../../../../core/widgets/watermark_wrapper.dart';
 import '../../../../core/widgets/image_preview_screen.dart';
 import '../../../../core/services/feature_manager.dart';
@@ -694,6 +695,12 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// Tap on the header's exit control: same path as the Android back button.
+  Future<void> _handleExitRequest() async {
+    final shouldPop = await _onWillPop();
+    if (shouldPop && mounted) Navigator.of(context).pop();
+  }
+
   Future<bool> _onWillPop() async {
     if (_isSubmitting) return false;
 
@@ -816,6 +823,22 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                     // Header Row
                     Row(
                       children: [
+                        // The exam deliberately blocks a plain pop (see the
+                        // PopScope above), which on iOS also disables the
+                        // edge-swipe gesture and leaves no system back
+                        // button. This control is the visible way out and
+                        // goes through the very same confirmation dialog the
+                        // Android back button triggers.
+                        HeaderBackButton(
+                          onPressed: _handleExitRequest,
+                          iconColor: const Color(0xFF1F2937),
+                          backgroundColor: const Color(0xFFF3F4F6),
+                          borderColor: const Color(0xFFE5E7EB),
+                          padding: const EdgeInsets.all(8),
+                          iconSize: 18,
+                          borderRadius: 12,
+                        ),
+                        const SizedBox(width: 12),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,

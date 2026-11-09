@@ -8,6 +8,7 @@ import 'core/network/api_client.dart';
 import 'core/services/websocket_service.dart';
 import 'core/services/feature_service.dart';
 import 'core/services/feature_manager.dart';
+import 'core/services/video_settings_service.dart';
 import 'core/theme/dynamic_theme.dart';
 import 'core/local/hive_service.dart';
 import 'core/sync/sync_service.dart';
@@ -61,7 +62,19 @@ void main() async {
   // `feature_block_screenshots` (cached features + last known value, protected
   // when unknown) and updates whenever features are refreshed.
   screenProtection.bindFeatureManager(featureManager);
-  unawaited(featureService.fetchFeatures());
+  // The screen-awake window is saved through the feature store, so a student
+  // token that cannot read /v1/video-settings still gets it with the features.
+  unawaited(
+    featureService
+        .fetchFeatures()
+        .whenComplete(() => VideoSettingsService().refresh()),
+  );
+
+  // How long a lecture holds the screen awake is a separate dashboard setting
+  // (`sleep_per_minute`), unrelated to screenshot blocking. The cached value is
+  // already loaded, so playback works from the first frame and offline; this
+  // picks up an edit made since the app was last open.
+  unawaited(VideoSettingsService().refresh());
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -138,7 +151,13 @@ class _HomeAppState extends State<LearnooApp> with WidgetsBindingObserver {
         // Pick up dashboard changes (e.g. screenshot blocking) on resume.
         final featureService = FeatureService();
         if (featureService.needsRefresh(maxAge: const Duration(minutes: 5))) {
-          unawaited(featureService.fetchFeatures());
+          unawaited(
+            featureService
+                .fetchFeatures()
+                .whenComplete(() => VideoSettingsService().refresh()),
+          );
+        } else {
+          unawaited(VideoSettingsService().refreshIfStale());
         }
         break;
       case AppLifecycleState.paused:
@@ -255,6 +274,10 @@ Future<Map<String, dynamic>> featureInitialization() async {
 
   final themeService = DynamicThemeService();
   await themeService.initialize();
+
+  // Last good `sleep_per_minute` off the device, so the lecture player knows
+  // the window before any request completes.
+  await VideoSettingsService().initialize();
 
   return {
     'manager': featureManager,

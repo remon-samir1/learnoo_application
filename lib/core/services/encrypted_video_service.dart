@@ -29,7 +29,21 @@ class DownloadedVideo {
   final String lectureTitle;
   final String courseId;
   final String originalUrl;
+
+  /// The absolute path recorded when the file was written.
+  ///
+  /// Kept only so metadata written by older builds still resolves, and so an
+  /// older build can still read metadata written by this one. Never read
+  /// directly to open the file: on iOS the app container is a different random
+  /// directory after every install and update, which makes a stored absolute
+  /// path dangle. [storedFileName] plus the current video directory is what
+  /// [EncryptedVideoService.resolveEncryptedFile] uses instead.
   final String encryptedFilePath;
+
+  /// The file's own name inside the app's video directory, resolved against
+  /// that directory at read time so it survives a container path change.
+  final String storedFileName;
+
   final String thumbnailUrl;
   final int fileSize;
   final String duration;
@@ -70,7 +84,29 @@ class DownloadedVideo {
     this.encryptionVersion = 0,
     this.currentViews = 0,
     this.maxViews = 5,
-  });
+    String? storedFileName,
+  }) : storedFileName = (storedFileName == null || storedFileName.isEmpty)
+            ? fileNameFromPath(encryptedFilePath)
+            : storedFileName;
+
+  /// The last segment of [path], accepting either separator.
+  ///
+  /// Metadata written on Android holds `/`-separated paths, metadata written in
+  /// a desktop test can hold `\`, and either has to reduce to the same name so
+  /// the file is found after the app container moves.
+  static String fileNameFromPath(String path) {
+    if (path.isEmpty) return '';
+    var end = path.length;
+    while (end > 0 && (path[end - 1] == '/' || path[end - 1] == '\\')) {
+      end--;
+    }
+    if (end == 0) return '';
+    var start = end;
+    while (start > 0 && path[start - 1] != '/' && path[start - 1] != '\\') {
+      start--;
+    }
+    return path.substring(start, end);
+  }
 
   Map<String, dynamic> toJson() {
     return {
@@ -81,6 +117,7 @@ class DownloadedVideo {
       'courseId': courseId,
       'originalUrl': originalUrl,
       'encryptedFilePath': encryptedFilePath,
+      'fileName': storedFileName,
       'thumbnailUrl': thumbnailUrl,
       'fileSize': fileSize,
       'duration': duration,
@@ -102,6 +139,9 @@ class DownloadedVideo {
       courseId: json['courseId'] ?? '',
       originalUrl: json['originalUrl'] ?? '',
       encryptedFilePath: json['encryptedFilePath'] ?? '',
+      // Older entries only recorded the absolute path; its last segment is the
+      // name to resolve against the current video directory.
+      storedFileName: (json['fileName'] ?? '').toString(),
       thumbnailUrl: json['thumbnailUrl'] ?? '',
       fileSize: json['fileSize'] ?? 0,
       duration: json['duration'] ?? '',
@@ -199,6 +239,104 @@ class EncryptedVideoService {
 
   final OfflineVideoCipher _cipher = OfflineVideoCipher();
 
+  /// Overridden by tests; production always reads the real platform.
+  @visibleForTesting
+  static bool? debugIsIOSOverride;
+
+  static bool get _isIOS => debugIsIOSOverride ?? Platform.isIOS;
+
+  // ---------------------------------------------------------------------------
+  // Naming and URL hardening (pure, so they are unit-tested directly)
+  // ---------------------------------------------------------------------------
+
+  /// The on-disk name for [videoId].
+  ///
+  /// The id is built from backend ids, which are not guaranteed to be bare
+  /// numbers. Anything that is not a letter, digit, dash or underscore becomes
+  /// an underscore, so a value carrying `/`, `:` or a path traversal can never
+  /// escape the video directory or produce a name a file system rejects. The id
+  /// itself is left untouched: it is bound into the container's associated
+  /// data, so changing it would stop existing downloads decrypting.
+  static String storageFileName(String videoId) {
+    final sanitized = videoId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+    final trimmed = sanitized.isEmpty ? 'unknown' : sanitized;
+    // Keep well inside the 255-byte limit every supported file system has.
+    final capped =
+        trimmed.length > 120 ? trimmed.substring(0, 120) : trimmed;
+    return 'video_$capped.enc';
+  }
+
+  /// The URL to fetch a lecture from.
+  ///
+  /// iOS App Transport Security refuses plain `http://` requests, and the
+  /// Android manifest permits cleartext explicitly — which is why a lecture
+  /// served over `http` downloads on Android and fails on iOS with nothing to
+  /// show the student. Upgrading the scheme on iOS never weakens anything: it
+  /// only asks for the same resource over TLS. Android is left exactly as it
+  /// is so the working path does not change.
+  static String secureVideoUrl(String url, {bool? isIOS}) {
+    if (!(isIOS ?? _isIOS)) return url;
+    if (!url.startsWith('http://')) return url;
+    return 'https://${url.substring('http://'.length)}';
+  }
+
+  /// True when [url] is a cleartext URL that iOS will not load at all.
+  static bool isBlockedOnIOS(String url, {bool? isIOS}) {
+    return (isIOS ?? _isIOS) && url.startsWith('http://');
+  }
+
+  /// Runs a notification call so it can never abort a download.
+  ///
+  /// The progress notification is cosmetic. On iOS the student may have
+  /// refused notification permission, and the plugin can then reject the call;
+  /// before this guard that exception propagated out of [downloadVideo] and the
+  /// download failed before a single byte was fetched.
+  Future<void> _notify(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (_) {
+      // Never surfaced to the student: the download itself is unaffected.
+      debugPrint('[EncryptedVideo] download notification unavailable');
+    }
+  }
+
+  /// The encrypted file for [video], resolved against the video directory as
+  /// it exists right now.
+  ///
+  /// On iOS the app container is a new random directory after every install and
+  /// update, so the absolute path recorded at download time dangles and the
+  /// download looks lost. Resolving the recorded file name against the current
+  /// directory is what makes a download survive an app update. The recorded
+  /// absolute path is still honoured as a fallback for metadata that predates
+  /// the file name field.
+  Future<File> resolveEncryptedFile(DownloadedVideo video) async {
+    if (video.storedFileName.isNotEmpty) {
+      final videoDir = await _getVideoDirectory();
+      final resolved = File('${videoDir.path}/${video.storedFileName}');
+      if (await resolved.exists()) return resolved;
+    }
+    if (video.encryptedFilePath.isNotEmpty) {
+      final recorded = File(video.encryptedFilePath);
+      if (await recorded.exists()) return recorded;
+    }
+    // Nothing on disk: return the place it should be, so callers report a
+    // missing file rather than a dangling one.
+    final videoDir = await _getVideoDirectory();
+    return File(
+      '${videoDir.path}/'
+      '${video.storedFileName.isNotEmpty ? video.storedFileName : storageFileName(video.id)}',
+    );
+  }
+
+  /// The path a screen should hand to the player, or null when the file is no
+  /// longer on disk.
+  Future<String?> resolvedEncryptedFilePath(String videoId) async {
+    final video = _downloadedVideos[videoId];
+    if (video == null) return null;
+    final file = await resolveEncryptedFile(video);
+    return await file.exists() ? file.path : null;
+  }
+
   /// Get or create progress notifier for a URL
   ValueNotifier<EncryptedDownloadProgress> getProgressNotifier(String url, String fileName) {
     if (!_progressNotifiers.containsKey(url)) {
@@ -288,17 +426,25 @@ class EncryptedVideoService {
     return destination.path;
   }
 
-  /// Get app-private video directory (hidden from gallery)
+  /// The app-private directory encrypted downloads live in.
+  ///
+  /// Its absolute path is not stable on iOS — the container is a new random
+  /// directory after every install and update — so it is resolved on every use
+  /// and never recorded in a download's metadata.
   Future<Directory> _getVideoDirectory() async {
     final appDir = await getApplicationDocumentsDirectory();
     final videoDir = Directory('${appDir.path}/.learnoo_videos');
     if (!await videoDir.exists()) {
       await videoDir.create(recursive: true);
     }
-    // Create .nomedia file to hide from gallery
-    final nomediaFile = File('${videoDir.path}/.nomedia');
-    if (!await nomediaFile.exists()) {
-      await nomediaFile.writeAsString('');
+    // `.nomedia` keeps the Android media scanner out of the folder. iOS has no
+    // equivalent and the directory is already outside any shared container, so
+    // the marker is written on Android only.
+    if (Platform.isAndroid) {
+      final nomediaFile = File('${videoDir.path}/.nomedia');
+      if (!await nomediaFile.exists()) {
+        await nomediaFile.writeAsString('');
+      }
     }
     return videoDir;
   }
@@ -387,7 +533,9 @@ class EncryptedVideoService {
       }
 
       if (variantPath != null) {
-        currentUri = currentUri.resolve(variantPath);
+        currentUri = Uri.parse(
+          secureVideoUrl(currentUri.resolve(variantPath).toString()),
+        );
         final mediaResp = await _dio.get<String>(
           currentUri.toString(),
           options: Options(
@@ -423,7 +571,9 @@ class EncryptedVideoService {
         } else if (line.contains('METHOD=AES-128')) {
           final uriMatch = RegExp(r'URI="([^"]+)"').firstMatch(line);
           if (uriMatch != null) {
-            currentKeyUriStr = currentUri.resolve(uriMatch.group(1)!).toString();
+            currentKeyUriStr = secureVideoUrl(
+              currentUri.resolve(uriMatch.group(1)!).toString(),
+            );
           }
           final ivMatch = RegExp(r'IV=0x([0-9a-fA-F]+)').firstMatch(line);
           if (ivMatch != null) {
@@ -449,7 +599,9 @@ class EncryptedVideoService {
           }
         }
         segments.add(_HlsSegment(
-          url: segUri.toString(),
+          // A playlist may name segments with absolute cleartext URLs even
+          // when the playlist itself came over TLS; iOS would refuse those.
+          url: secureVideoUrl(segUri.toString()),
           keyUri: currentKeyUriStr,
           iv: iv,
         ));
@@ -539,14 +691,14 @@ class EncryptedVideoService {
         final now = DateTime.now();
         if (now.difference(lastNotificationTime).inSeconds >= 1) {
           lastNotificationTime = now;
-          await _notificationService.showDownloadProgress(
-            url: url,
-            title: 'downloads.notif_downloading_video'.tr(),
-            body: lectureTitle,
-            progress: progress,
-            receivedBytes: s + 1,
-            totalBytes: segments.length,
-          );
+          await _notify(() => _notificationService.showDownloadProgress(
+                url: url,
+                title: 'downloads.notif_downloading_video'.tr(),
+                body: lectureTitle,
+                progress: progress,
+                receivedBytes: s + 1,
+                totalBytes: segments.length,
+              ));
         }
       }
     } finally {
@@ -556,14 +708,21 @@ class EncryptedVideoService {
     return downloadedBytes;
   }
 
+  /// Streams [fetchUrl] into [tempFilePath].
+  ///
+  /// [notifierUrl] is the URL the caller is listening on, which can differ from
+  /// the one actually fetched (an iOS cleartext upgrade), so progress still
+  /// reaches the screen that started the download.
   Future<int> _downloadDirectToTempFile({
-    required String url,
+    required String fetchUrl,
+    required String notifierUrl,
     required String tempFilePath,
     required String fileName,
     required String lectureTitle,
     required CancelToken cancelToken,
     Map<String, String>? headers,
   }) async {
+    final url = notifierUrl;
     final tempFile = File(tempFilePath);
     int downloadedBytes = 0;
     if (await tempFile.exists()) {
@@ -581,7 +740,7 @@ class EncryptedVideoService {
         };
 
         final response = await _dio.get(
-          url,
+          fetchUrl,
           options: Options(
             responseType: ResponseType.stream,
             headers: requestHeaders.isNotEmpty ? requestHeaders : null,
@@ -634,13 +793,15 @@ class EncryptedVideoService {
               final now = DateTime.now();
               if (now.difference(lastNotificationTime).inSeconds >= 1) {
                 lastNotificationTime = now;
-                await _notificationService.showDownloadProgress(
-                  url: url,
-                  title: 'downloads.notif_downloading_video'.tr(),
-                  body: lectureTitle,
-                  progress: progress * 0.8,
-                  receivedBytes: downloadedBytes,
-                  totalBytes: totalFileSize,
+                await _notify(
+                  () => _notificationService.showDownloadProgress(
+                    url: url,
+                    title: 'downloads.notif_downloading_video'.tr(),
+                    body: lectureTitle,
+                    progress: progress * 0.8,
+                    receivedBytes: downloadedBytes,
+                    totalBytes: totalFileSize,
+                  ),
                 );
               }
             }
@@ -681,19 +842,26 @@ class EncryptedVideoService {
     Map<String, String>? headers,
   }) async {
     final videoId = '${courseId}_$chapterId';
-    final fileName = 'video_$videoId.enc';
+    final fileName = storageFileName(videoId);
+
+    // iOS blocks cleartext requests outright, so the lecture is fetched over
+    // TLS there. The notifier stays keyed on the URL the caller gave us.
+    final fetchUrl = secureVideoUrl(url);
 
     final cancelToken = CancelToken();
     _cancelTokens[url] = cancelToken;
 
+    String? encryptedPathForCleanup;
+
     try {
       final videoDir = await _getVideoDirectory();
       final filePath = '${videoDir.path}/$fileName';
+      encryptedPathForCleanup = filePath;
 
       // Check if already downloaded
       if (_downloadedVideos.containsKey(videoId)) {
         final existingVideo = _downloadedVideos[videoId]!;
-        final file = File(existingVideo.encryptedFilePath);
+        final file = await resolveEncryptedFile(existingVideo);
         if (await file.exists()) {
           final completedProgress = EncryptedDownloadProgress(
             url: url,
@@ -712,12 +880,13 @@ class EncryptedVideoService {
       // Start download
       _updateProgress(url, fileName, EncryptedDownloadStatus.downloading, 0.0);
 
-      // Show download started notification
-      await _notificationService.showDownloadStarted(
-        url: url,
-        title: 'downloads.notif_downloading_video'.tr(),
-        body: '$lectureTitle - $chapterTitle',
-      );
+      // Show download started notification. Guarded: a notification the
+      // platform refuses must never stop the download.
+      await _notify(() => _notificationService.showDownloadStarted(
+            url: url,
+            title: 'downloads.notif_downloading_video'.tr(),
+            body: '$lectureTitle - $chapterTitle',
+          ));
 
       // Download to temp file first
       final tempDir = await getTemporaryDirectory();
@@ -727,9 +896,9 @@ class EncryptedVideoService {
       final tempFilePath = '${tempDir.path}/temp_$fileName';
 
       int totalFileSize = 0;
-      if (_isHlsUrl(url)) {
+      if (_isHlsUrl(fetchUrl)) {
         totalFileSize = await _downloadHlsToTempFile(
-          playlistUrl: url,
+          playlistUrl: fetchUrl,
           tempFilePath: tempFilePath,
           url: url,
           fileName: fileName,
@@ -739,7 +908,8 @@ class EncryptedVideoService {
         );
       } else {
         totalFileSize = await _downloadDirectToTempFile(
-          url: url,
+          fetchUrl: fetchUrl,
+          notifierUrl: url,
           tempFilePath: tempFilePath,
           fileName: fileName,
           lectureTitle: lectureTitle,
@@ -749,22 +919,31 @@ class EncryptedVideoService {
       }
 
       if (cancelToken.isCancelled) {
+        await _discardTempFile(tempFilePath);
         return _handleCancellation(url, fileName);
+      }
+
+      // Nothing arrived: a stalled or refused request that produced no bytes
+      // used to fall through and encrypt an empty file, which looked like a
+      // successful download of a lecture that would not play.
+      if (totalFileSize <= 0) {
+        await _discardTempFile(tempFilePath);
+        throw const _EmptyDownloadException();
       }
 
       // Encrypt the file
       _updateProgress(url, fileName, EncryptedDownloadStatus.encrypting, 0.8, totalBytes: totalFileSize);
 
       // Show encrypting notification
-      await _notificationService.showDownloadProgress(
-        url: url,
-        title: 'downloads.notif_encrypting_video'.tr(),
-        body: lectureTitle,
-        progress: 0.9,
-        receivedBytes: totalFileSize,
-        totalBytes: totalFileSize,
-        indeterminate: true,
-      );
+      await _notify(() => _notificationService.showDownloadProgress(
+            url: url,
+            title: 'downloads.notif_encrypting_video'.tr(),
+            body: lectureTitle,
+            progress: 0.9,
+            receivedBytes: totalFileSize,
+            totalBytes: totalFileSize,
+            indeterminate: true,
+          ));
 
       final tempFile = File(tempFilePath);
       final encryptedFile = File(filePath);
@@ -792,6 +971,9 @@ class EncryptedVideoService {
         courseId: courseId,
         originalUrl: url,
         encryptedFilePath: filePath,
+        // The name is what survives an app update; the absolute path above is
+        // recorded only for builds that predate this field.
+        storedFileName: fileName,
         thumbnailUrl: thumbnailUrl,
         fileSize: encryptedSize,
         duration: duration,
@@ -822,38 +1004,105 @@ class EncryptedVideoService {
       _updateNotifier(url, completedProgress);
 
       // Show completed notification
-      await _notificationService.showDownloadCompleted(
-        url: url,
-        title: 'downloads.notif_complete'.tr(),
-        body: 'downloads.notif_ready_offline'.tr(args: [lectureTitle]),
-      );
+      await _notify(() => _notificationService.showDownloadCompleted(
+            url: url,
+            title: 'downloads.notif_complete'.tr(),
+            body: 'downloads.notif_ready_offline'.tr(args: [lectureTitle]),
+          ));
 
       return completedProgress;
     } on DioException catch (e) {
       if (CancelToken.isCancel(e)) {
-        await _notificationService.showDownloadCancelled(
-          url: url,
-          title: 'downloads.notif_cancelled'.tr(),
-          body: lectureTitle,
-        );
+        await _notify(() => _notificationService.showDownloadCancelled(
+              url: url,
+              title: 'downloads.notif_cancelled'.tr(),
+              body: lectureTitle,
+            ));
         return _handleCancellation(url, fileName);
       }
-      await _notificationService.showDownloadFailed(
-        url: url,
-        title: 'downloads.notif_failed'.tr(),
-        body: '$lectureTitle - ${e.message}',
-      );
-      return _handleError(url, fileName, 'downloads.failed_detail'.tr(args: ['${e.message}']));
+      final message = describeDownloadFailure(e, sourceUrl: url);
+      await _notify(() => _notificationService.showDownloadFailed(
+            url: url,
+            title: 'downloads.notif_failed'.tr(),
+            body: '$lectureTitle - $message',
+          ));
+      // Only the transport kind is logged, never the URL or the token headers.
+      debugPrint('[EncryptedVideo] download failed (${e.type.name})');
+      return _handleError(url, fileName, message);
     } catch (e) {
-      await _notificationService.showDownloadFailed(
-        url: url,
-        title: 'downloads.notif_failed'.tr(),
-        body: '$lectureTitle - ${e.toString()}',
-      );
-      return _handleError(url, fileName, 'downloads.failed_detail'.tr(args: ['$e']));
+      final message = describeDownloadFailure(e, sourceUrl: url);
+      await _notify(() => _notificationService.showDownloadFailed(
+            url: url,
+            title: 'downloads.notif_failed'.tr(),
+            body: '$lectureTitle - $message',
+          ));
+      debugPrint('[EncryptedVideo] download failed (${e.runtimeType})');
+      return _handleError(url, fileName, message);
     } finally {
       _cancelTokens.remove(url);
+      // An interrupted encryption leaves a `.part` sibling behind; it is of no
+      // use to anyone and would otherwise sit in the student's storage.
+      if (encryptedPathForCleanup != null) {
+        await _cipher.discardPartial(File(encryptedPathForCleanup));
+      }
     }
+  }
+
+  /// Where the temp download is dropped when it cannot be resumed.
+  Future<void> _discardTempFile(String tempFilePath) async {
+    try {
+      final file = File(tempFilePath);
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      debugPrint('[EncryptedVideo] could not remove partial download');
+    }
+  }
+
+  /// A translated, student-readable reason for a failed download.
+  ///
+  /// Every failure used to reach the student as `Download failed: <raw Dart
+  /// exception>` — on iOS usually an opaque transport error that said nothing
+  /// about what to do. The cases a student or support can act on are separated
+  /// out; anything else falls back to a plain "try again".
+  static String describeDownloadFailure(Object error, {String sourceUrl = ''}) {
+    if (error is _EmptyDownloadException) {
+      return 'downloads.failed_empty'.tr();
+    }
+    if (error is DioException) {
+      switch (error.type) {
+        case DioExceptionType.badResponse:
+          // The server answered, so the transport is fine; what it answered is
+          // the thing to report.
+          final code = error.response?.statusCode;
+          if (code == 401 || code == 403) {
+            return 'downloads.failed_not_allowed'.tr();
+          }
+          return 'downloads.failed_connection'.tr();
+        case DioExceptionType.connectionTimeout:
+        case DioExceptionType.sendTimeout:
+        case DioExceptionType.receiveTimeout:
+        case DioExceptionType.connectionError:
+          // Nothing reached the host. On iOS a cleartext lecture never can:
+          // App Transport Security refuses the request before it is sent, and
+          // the TLS upgrade only works if the host serves HTTPS at all.
+          if (isBlockedOnIOS(sourceUrl)) {
+            return 'downloads.failed_insecure_source'.tr();
+          }
+          return 'downloads.failed_connection'.tr();
+        default:
+          break;
+      }
+    }
+    if (error is FileSystemException) {
+      return 'downloads.failed_storage'.tr();
+    }
+    if (error is OfflineCipherException) {
+      return 'downloads.failed_encrypting'.tr();
+    }
+    if (isBlockedOnIOS(sourceUrl)) {
+      return 'downloads.failed_insecure_source'.tr();
+    }
+    return 'downloads.failed_generic'.tr();
   }
 
   EncryptedDownloadProgress _handleCancellation(String url, String fileName) {
@@ -915,13 +1164,22 @@ class EncryptedVideoService {
   Future<String?> getDecryptedVideoPath(String videoId) async {
     try {
       final video = _downloadedVideos[videoId];
-      if (video == null) return null;
+      if (video == null) {
+        debugPrint('[EncryptedVideo] no download recorded for this lecture');
+        return null;
+      }
 
-      final encryptedFile = File(video.encryptedFilePath);
-      if (!await encryptedFile.exists()) return null;
+      // Resolved against the current app container, not the path recorded at
+      // download time, which an iOS app update invalidates.
+      final encryptedFile = await resolveEncryptedFile(video);
+      if (!await encryptedFile.exists()) {
+        debugPrint('[EncryptedVideo] downloaded file is no longer on disk');
+        return null;
+      }
 
       final tempDir = await getTemporaryDirectory();
-      final tempFilePath = '${tempDir.path}/temp_playback_$videoId.mp4';
+      final tempFilePath =
+          '${tempDir.path}/temp_playback_${storageFileName(videoId)}.mp4';
       final tempFile = File(tempFilePath);
 
       // The magic decides, not the metadata: a legacy file can never take the
@@ -990,7 +1248,7 @@ class EncryptedVideoService {
       if (video == null) return false;
 
       // Delete encrypted file
-      final file = File(video.encryptedFilePath);
+      final file = await resolveEncryptedFile(video);
       if (await file.exists()) {
         await file.delete();
       }
@@ -1010,7 +1268,7 @@ class EncryptedVideoService {
   Future<bool> deleteAllVideos() async {
     try {
       for (final video in _downloadedVideos.values) {
-        final file = File(video.encryptedFilePath);
+        final file = await resolveEncryptedFile(video);
         if (await file.exists()) {
           await file.delete();
         }
@@ -1047,6 +1305,7 @@ class EncryptedVideoService {
         courseId: video.courseId,
         originalUrl: video.originalUrl,
         encryptedFilePath: video.encryptedFilePath,
+        storedFileName: video.storedFileName,
         thumbnailUrl: video.thumbnailUrl,
         fileSize: video.fileSize,
         duration: video.duration,
@@ -1087,6 +1346,14 @@ class EncryptedVideoService {
   void disposeNotifier(String url) {
     _progressNotifiers.remove(url);
   }
+}
+
+/// A download that completed without producing a single byte.
+///
+/// Treated as a failure rather than encrypted into an empty container that
+/// would look like a finished lecture.
+class _EmptyDownloadException implements Exception {
+  const _EmptyDownloadException();
 }
 
 class _HlsSegment {

@@ -10,6 +10,7 @@ import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
 import '../../../../core/network/api_constants.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/widgets/header_back_button.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../../../auth/domain/student_profile.dart';
 import '../../data/models/live_room.dart';
@@ -935,14 +936,38 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
                     ),
 
                   if (_isLoading) Positioned.fill(child: _buildLoading()),
+
+                  // While the whiteboard is full-bleed there is no AppBar, so
+                  // on iOS — no hardware back button, and the PopScope above
+                  // blocks the edge-swipe gesture — this floating control is
+                  // the only way out of the meeting. It leaves exactly the way
+                  // the Android back button does.
+                  if (_isWhiteboardFullBleed)
+                    PositionedDirectional(
+                      top: 0,
+                      start: 0,
+                      child: SafeArea(
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: HeaderBackButton(
+                            onPressed: _leaveFromBackButton,
+                            backgroundColor: Colors.black.withValues(
+                              alpha: 0.55,
+                            ),
+                            borderColor: Colors.white.withValues(alpha: 0.3),
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
       ),
     );
   }
 
-  /// Android back button: leave the meeting cleanly instead of tearing the
-  /// WebView down under Jitsi's feet.
+  /// Android back button, and the header control shown while the whiteboard
+  /// is full-bleed: leave the meeting cleanly instead of tearing the WebView
+  /// down under Jitsi's feet.
   void _leaveFromBackButton() {
     _controller?.runJavaScript(
       'window.learnooHangup && window.learnooHangup();',

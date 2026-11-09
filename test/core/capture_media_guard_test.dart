@@ -36,6 +36,19 @@ void main() {
     expect(player.value.isPlaying, false);
     CaptureMediaGuard.detach(player);
   });
+  test('capture ending mid-enforce never leaves the player paused', () async {
+    // A capture signal that turns on and straight back off — what iOS does
+    // when `isCaptured` flickers. The pause belonging to the capture must not
+    // land afterwards, or playback is stuck with nothing left to release it.
+    final player = FakePlayer();
+    CaptureMediaGuard.attachVideoPlayer(player);
+    capture.value = true;
+    capture.value = false;
+    await Future<void>.delayed(Duration.zero);
+    expect(player.value.isPlaying, true);
+    expect(player.value.volume, 0.6);
+    CaptureMediaGuard.detach(player);
+  });
   test('player created during recording stays silent and preserves prior mute', () async {
     capture.value = true;
     final player = FakePlayer(volume: 0);

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:easy_localization/easy_localization.dart';
+import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/app_bottom_navigation_bar.dart';
@@ -132,10 +132,16 @@ class DepartmentOptionsScreen extends StatelessWidget {
                                   ),
                                 ],
                               ),
-                              child: const Center(
+                              child: Center(
+                                // FontAwesome icons do not mirror themselves
+                                // in RTL, so the chevron is picked per
+                                // direction: in Arabic "back" points right.
                                 child: FaIcon(
-                                  FontAwesomeIcons.chevronLeft,
-                                  color: Color(0xFF5A75FF),
+                                  Directionality.of(context) ==
+                                          TextDirection.rtl
+                                      ? FontAwesomeIcons.chevronRight
+                                      : FontAwesomeIcons.chevronLeft,
+                                  color: const Color(0xFF5A75FF),
                                   size: 18,
                                 ),
                               ),
@@ -292,7 +298,11 @@ class DepartmentOptionsScreen extends StatelessWidget {
               ),
             ),
             FaIcon(
-              FontAwesomeIcons.chevronRight,
+              // "Forward" follows the reading direction; FontAwesome icons do
+              // not mirror themselves.
+              Directionality.of(context) == TextDirection.rtl
+                  ? FontAwesomeIcons.chevronLeft
+                  : FontAwesomeIcons.chevronRight,
               color: color.withValues(alpha: 0.6),
               size: 20,
             ),

@@ -42,27 +42,35 @@ class ImagePreviewScreen extends StatelessWidget {
               ),
             ),
           ),
-          // Close button
-          Positioned(
-            top: 40,
-            right: 20,
-            child: GestureDetector(
-              onTap: () => Navigator.of(context).pop(),
-              child: Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.5),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.3),
-                    width: 1,
+          // Close button. It is laid out with a directional inset and inside
+          // the safe area so it stays reachable in Arabic/RTL and clear of the
+          // iOS notch / Dynamic Island.
+          PositionedDirectional(
+            top: 0,
+            end: 0,
+            child: SafeArea(
+              minimum: const EdgeInsets.only(top: 20),
+              child: Padding(
+                padding: const EdgeInsetsDirectional.only(top: 8, end: 20),
+                child: GestureDetector(
+                  onTap: () => Navigator.of(context).pop(),
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.5),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.3),
+                        width: 1,
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 24,
+                    ),
                   ),
-                ),
-                child: const Icon(
-                  Icons.close,
-                  color: Colors.white,
-                  size: 24,
                 ),
               ),
             ),

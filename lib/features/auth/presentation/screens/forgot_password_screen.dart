@@ -3,6 +3,7 @@ import 'package:easy_localization/easy_localization.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/app_logo.dart';
 import '../../../../core/widgets/custom_text_field.dart';
+import '../../../../core/widgets/header_back_button.dart';
 import '../../../../core/widgets/primary_button.dart';
 import '../../data/auth_repository.dart';
 import 'reset_password_verification_screen.dart';
@@ -90,34 +91,52 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       body: SingleChildScrollView(
         child: Column(
           children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.only(top: 80, bottom: 50),
-              decoration: const BoxDecoration(
-                gradient: AppColors.mainGradient,
-                borderRadius: BorderRadius.only(
-                  bottomLeft: Radius.circular(50),
-                  bottomRight: Radius.circular(50),
-                ),
-              ),
-              child: Column(
-                children: [
-                  const AppLogo(size: 85),
-                  const SizedBox(height: 24),
-                  Text(
-                    _isEmailMode
-                        ? 'auth.forgot_email_desc'.tr()
-                        : 'auth.forgot_phone_desc'.tr(),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      height: 1.4,
+            Stack(
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.only(top: 80, bottom: 50),
+                  decoration: const BoxDecoration(
+                    gradient: AppColors.mainGradient,
+                    borderRadius: BorderRadius.only(
+                      bottomLeft: Radius.circular(50),
+                      bottomRight: Radius.circular(50),
                     ),
                   ),
-                ],
-              ),
+                  child: Column(
+                    children: [
+                      const AppLogo(size: 85),
+                      const SizedBox(height: 24),
+                      Text(
+                        _isEmailMode
+                            ? 'auth.forgot_email_desc'.tr()
+                            : 'auth.forgot_phone_desc'.tr(),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // iOS has no hardware back button, so this pushed screen needs
+                // a visible way back to the login screen. The control sits
+                // inside the safe area and follows the reading direction.
+                if (Navigator.of(context).canPop())
+                  const PositionedDirectional(
+                    top: 0,
+                    start: 0,
+                    child: SafeArea(
+                      child: Padding(
+                        padding: EdgeInsets.all(12),
+                        child: HeaderBackButton(),
+                      ),
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 40),
             Padding(

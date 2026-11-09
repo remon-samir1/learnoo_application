@@ -4,6 +4,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:learnoo/features/auth/data/auth_repository.dart';
 import 'package:learnoo/features/auth/presentation/screens/login_screen.dart';
 import 'package:learnoo/core/services/feature_manager.dart';
+import 'package:learnoo/core/widgets/header_back_button.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:learnoo/features/support/presentation/screens/support_screen.dart';
 import 'package:learnoo/features/home/presentation/screens/main_screen.dart';
@@ -159,15 +160,27 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
             ),
           ),
           child: SafeArea(
-            child: Center(
-              child: Text(
-                'profile.title'.tr(),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
+            child: Stack(
+              children: [
+                Center(
+                  child: Text(
+                    'profile.title'.tr(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
-              ),
+                // The profile page is pushed on top of the home shell, and iOS
+                // has no hardware back button, so it needs its own way back.
+                if (Navigator.of(context).canPop())
+                  const PositionedDirectional(
+                    top: 8,
+                    start: 12,
+                    child: HeaderBackButton(),
+                  ),
+              ],
             ),
           ),
         ),

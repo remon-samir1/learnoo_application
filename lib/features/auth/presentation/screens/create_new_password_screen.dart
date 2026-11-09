@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/widgets/header_back_button.dart';
 import '../../../../core/widgets/primary_button.dart';
 import '../../data/auth_repository.dart';
 import 'login_screen.dart';
@@ -150,61 +151,80 @@ class _CreateNewPasswordScreenState extends State<CreateNewPasswordScreen> {
           return SingleChildScrollView(
             child: Column(
               children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.only(top: 80, bottom: 50),
-                  decoration: const BoxDecoration(
-                    gradient: AppColors.mainGradient,
-                    borderRadius: BorderRadius.only(
-                      bottomLeft: Radius.circular(50),
-                      bottomRight: Radius.circular(50),
+                Stack(
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.only(top: 80, bottom: 50),
+                      decoration: const BoxDecoration(
+                        gradient: AppColors.mainGradient,
+                        borderRadius: BorderRadius.only(
+                          bottomLeft: Radius.circular(50),
+                          bottomRight: Radius.circular(50),
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 70,
+                            height: 70,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withAlpha(51),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: Colors.white.withAlpha(30),
+                                width: 1.5,
+                              ),
+                            ),
+                            child: const Center(
+                              child: Icon(
+                                Icons.school_rounded,
+                                size: 35,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          Text(
+                            'auth.create_new_password_title'.tr(),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 40),
+                            child: Text(
+                              'auth.new_password_different'.tr(),
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                height: 1.4,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  child: Column(
-                    children: [
-                      Container(
-                        width: 70,
-                        height: 70,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withAlpha(51),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: Colors.white.withAlpha(30),
-                            width: 1.5,
-                          ),
-                        ),
-                        child: const Center(
-                          child: Icon(
-                            Icons.school_rounded,
-                            size: 35,
-                            color: Colors.white,
+                    // iOS has no hardware back button, so this pushed screen
+                    // needs a visible way back to the verification step. The
+                    // control sits inside the safe area and follows the
+                    // reading direction.
+                    if (Navigator.of(context).canPop())
+                      const PositionedDirectional(
+                        top: 0,
+                        start: 0,
+                        child: SafeArea(
+                          child: Padding(
+                            padding: EdgeInsets.all(12),
+                            child: HeaderBackButton(),
                           ),
                         ),
                       ),
-                      const SizedBox(height: 24),
-                      Text(
-                        'auth.create_new_password_title'.tr(),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 40),
-                        child: Text(
-                          'auth.new_password_different'.tr(),
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            height: 1.4,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                  ],
                 ),
                 const SizedBox(height: 30),
                 Padding(

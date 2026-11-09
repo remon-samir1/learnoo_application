@@ -90,6 +90,10 @@ class ApiConstants {
   // Feature flags endpoint
   static const String features = '/v1/feature';
 
+  /// Playback settings owned by the dashboard, e.g. `sleep_per_minute` — how
+  /// long the screen is kept awake while a lecture plays.
+  static const String videoSettings = '/v1/video-settings';
+
   // Global search
   static const String search = '/v1/search';
 

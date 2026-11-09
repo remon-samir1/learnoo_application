@@ -3,9 +3,11 @@ import 'dart:io';
 import 'package:flutter/foundation.dart'
     show ValueListenable, ValueNotifier, debugPrint, kDebugMode;
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import 'package:screen_capture_event/screen_capture_event.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'capture_signal.dart';
 import 'feature_manager.dart';
 
 /// Production-grade screen protection service with extreme security.
@@ -47,10 +49,18 @@ class ScreenProtectionService {
   /// Recording/capture as reported by the native channel (Android display
   /// listener + Android 15 screen-recording callback, iOS `isCaptured`) and
   /// by the screen_capture_event plugin.
-  bool _nativeRecording = false;
-  bool _pluginRecording = false;
+  final CaptureSignal _capture = CaptureSignal();
   bool _closingForScreenRecording = false;
   final ValueNotifier<bool> _mediaCaptureActive = ValueNotifier<bool>(false);
+
+  /// Re-checks a believed-active capture on iOS, where both signals are edges
+  /// that can stay latched (see [CaptureSignal]).
+  Timer? _captureVerifyTimer;
+  AppLifecycleListener? _lifecycleListener;
+  bool _verifying = false;
+
+  /// How often an active capture is re-checked against the platform.
+  static const Duration captureVerifyInterval = Duration(seconds: 3);
 
   /// True while the screen is being recorded/captured and the dashboard
   /// requires protection: video players must pause and stay muted (the
@@ -59,10 +69,72 @@ class ScreenProtectionService {
   ValueListenable<bool> get mediaCaptureActive => _mediaCaptureActive;
 
   void _updateMediaCapture() {
-    _mediaCaptureActive.value =
-        isProtectionActive && (_nativeRecording || _pluginRecording);
+    _mediaCaptureActive.value = isProtectionActive && _capture.isCapturing;
     if (_mediaCaptureActive.value && Platform.isAndroid) {
       unawaited(_closeForScreenRecording());
+    }
+    _syncCaptureVerifyTimer();
+  }
+
+  /// iOS only: while capture is believed active, keep asking the platform
+  /// whether it still is. Both iOS signals are edges, so without this a
+  /// "started" that is never followed by a "stopped" — AirPlay, mirroring, a
+  /// recording begun before launch, or a notification missed while the app was
+  /// suspended — left every video player paused and muted for good.
+  void _syncCaptureVerifyTimer() {
+    if (!Platform.isIOS || !_mediaCaptureActive.value) {
+      _captureVerifyTimer?.cancel();
+      _captureVerifyTimer = null;
+      return;
+    }
+    _captureVerifyTimer ??= Timer.periodic(
+      captureVerifyInterval,
+      (_) => unawaited(refreshCaptureState()),
+    );
+  }
+
+  /// Asks the platform whether the screen is being captured right now and
+  /// replaces the edge signals with the answer.
+  ///
+  /// Safe to call at any time; a platform that cannot answer leaves the
+  /// current state alone, so protection never relaxes on a failed check.
+  ///
+  /// iOS only. Android's own channel reports recording live (display listener
+  /// plus the Android 15 callback) and closes the app for it, so nothing there
+  /// needs — or may risk — a second opinion.
+  Future<void> refreshCaptureState() async {
+    if (!Platform.isIOS) return;
+    if (!_isInitialized || screenCaptureAllowed || _verifying) return;
+    _verifying = true;
+    try {
+      final bool? capturing = await _readCaptureState();
+      if (capturing == null) return;
+      if (_capture.verify(capturing)) {
+        debugPrint(
+          '[ScreenProtection] Capture re-checked: ${capturing ? 'active' : 'clear'}',
+        );
+      }
+      _updateMediaCapture();
+      if (!capturing && !_capture.isCapturing) _resetSecurityStatus();
+    } finally {
+      _verifying = false;
+    }
+  }
+
+  /// The platform's current answer, or null when neither side could answer.
+  Future<bool?> _readCaptureState() async {
+    try {
+      return await _captureEvent.isRecording();
+    } catch (e) {
+      debugPrint('[ScreenProtection] Plugin capture check failed: ${e.runtimeType}');
+    }
+    try {
+      return await _channel.invokeMethod<bool>('isScreenRecording');
+    } on MissingPluginException {
+      return null;
+    } on PlatformException catch (e) {
+      debugPrint('[ScreenProtection] Native capture check failed: ${e.code}');
+      return null;
     }
   }
 
@@ -114,7 +186,7 @@ class ScreenProtectionService {
     // Hybrid Detection: Plugin + Native
     _captureEvent.addScreenShotListener((_) => _handleSecurityBreach());
     _captureEvent.addScreenRecordListener((recording) {
-      _pluginRecording = recording;
+      _capture.setPlugin(recording);
       _updateMediaCapture();
       if (recording) _handleSecurityBreach();
     });
@@ -122,17 +194,23 @@ class ScreenProtectionService {
 
     _eventChannel.receiveBroadcastStream().listen((data) {
       if (data is Map && data['event'] == 'recording_started') {
-        _nativeRecording = true;
+        _capture.setNative(true);
         _updateMediaCapture();
         _handleSecurityBreach();
       } else if (data is Map && data['event'] == 'screenshot') {
         _handleSecurityBreach();
       } else if (data is Map && data['event'] == 'recording_stopped') {
-        _nativeRecording = false;
+        _capture.setNative(false);
         _updateMediaCapture();
         _resetSecurityStatus();
       }
     });
+
+    // Coming back to the foreground is when a missed capture transition shows
+    // up, so re-check then as well as on the periodic timer.
+    _lifecycleListener ??= AppLifecycleListener(
+      onResume: () => unawaited(refreshCaptureState()),
+    );
 
     unawaited(_checkInitialStatus());
   }
@@ -202,10 +280,17 @@ class ScreenProtectionService {
 
   /// Native sides persist the value themselves (Android SharedPreferences,
   /// iOS UserDefaults) so it applies before Dart runs on the next cold start.
+  ///
+  /// `allowCapture` carries [screenCaptureAllowed] (debug builds) to the
+  /// platform: Android decides that itself from its debuggable flag and
+  /// ignores the argument, while iOS has no build-time equivalent it can
+  /// trust and uses this to skip the secure canvas in debug builds, keeping
+  /// the two platforms' debug exception the same.
   Future<void> _pushPolicyToNative() async {
     try {
       await _channel.invokeMethod(
         _policyEnabled ? 'enableGlobalProtection' : 'disableGlobalProtection',
+        <String, dynamic>{'allowCapture': screenCaptureAllowed},
       );
     } on MissingPluginException {
       // Platform without the native channel (e.g. tests/desktop).
@@ -228,7 +313,7 @@ class ScreenProtectionService {
   Future<void> _checkInitialStatus() async {
     try {
       final status = await getProtectionStatus();
-      _nativeRecording = status['isRecording'] == true;
+      _capture.setNative(status['isRecording'] == true);
       _updateMediaCapture();
       _isSecure = !isProtectionActive ||
           (!(status['isRecording'] ?? false) && !(status['isJailbroken'] ?? false));

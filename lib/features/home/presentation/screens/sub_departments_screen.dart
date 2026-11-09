@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../core/widgets/cover_image.dart';
-import 'package:easy_localization/easy_localization.dart';
+import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:learnoo/features/category_tree/presentation/screens/category_tree_screen.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -188,10 +188,16 @@ class SubDepartmentsScreen extends StatelessWidget {
                                   ),
                                 ],
                               ),
-                              child: const Center(
+                              child: Center(
+                                // FontAwesome icons do not mirror themselves
+                                // in RTL, so the chevron is picked per
+                                // direction: in Arabic "back" points right.
                                 child: FaIcon(
-                                  FontAwesomeIcons.chevronLeft,
-                                  color: Color(0xFF5A75FF),
+                                  Directionality.of(context) ==
+                                          TextDirection.rtl
+                                      ? FontAwesomeIcons.chevronRight
+                                      : FontAwesomeIcons.chevronLeft,
+                                  color: const Color(0xFF5A75FF),
                                   size: 18,
                                 ),
                               ),

@@ -27,10 +27,11 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   List<DownloadedVideo> _downloadedVideos = [];
   List<_CourseGroup> _courseGroups = [];
   bool _isLoading = true;
+  /// Real bytes the app occupies in its own container.
   int _totalStorageUsed = 0;
-  int _totalDeviceSpace = 0;
-  int _freeDeviceSpace = 0;
-  int _usedDeviceSpace = 0;
+
+  /// Real bytes the downloaded lectures occupy.
+  int _lectureStorageUsed = 0;
 
   @override
   void initState() {
@@ -40,14 +41,14 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
 
   Future<void> _loadDownloads() async {
     await _encryptedVideoService.loadDownloadedVideos();
-    await _loadDeviceStorageInfo();
+    await _loadStorageInfo();
     if (mounted) {
       setState(() {
         _downloadedVideos = _encryptedVideoService.getAllDownloadedVideos();
+        _lectureStorageUsed = _encryptedVideoService.getTotalStorageUsed();
         // Recalculate total storage used from videos if directory calculation fails
-        final videoStorage = _encryptedVideoService.getTotalStorageUsed();
-        if (_totalStorageUsed < videoStorage) {
-          _totalStorageUsed = videoStorage;
+        if (_totalStorageUsed < _lectureStorageUsed) {
+          _totalStorageUsed = _lectureStorageUsed;
         }
         _groupVideosByCourse();
         _isLoading = false;
@@ -79,18 +80,19 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       ..sort((a, b) => b.videos.first.downloadDate.compareTo(a.videos.first.downloadDate));
   }
 
-  Future<void> _loadDeviceStorageInfo() async {
+  /// Measures what the app actually occupies.
+  ///
+  /// It used to probe device-wide capacity: `getExternalStorageDirectory()` and
+  /// `/storage/emulated/0` on Android — the first throws on iOS and the second
+  /// does not exist there — and then filled the panel with invented figures
+  /// (a 64 GB or 128 GB "typical" total and a flat 25-30% free). Neither
+  /// platform exposes free volume capacity to Dart without a native call, so
+  /// the panel now shows only what can be measured: the bytes the app holds and
+  /// the share of them taken by downloaded lectures.
+  Future<void> _loadStorageInfo() async {
     try {
-      // Get app storage info
       final appDir = await getApplicationDocumentsDirectory();
       _totalStorageUsed = await _calculateDirectorySize(appDir);
-
-      // Get device storage info
-      if (Platform.isAndroid) {
-        await _getAndroidStorageInfo();
-      } else if (Platform.isIOS) {
-        await _getIOSStorageInfo();
-      }
     } catch (e) {
       debugPrint('Error getting storage info: $e');
     }
@@ -116,71 +118,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     return totalSize;
   }
 
-  Future<void> _getAndroidStorageInfo() async {
-    try {
-      // Get external storage directory for device-wide storage info
-      final externalDir = await getExternalStorageDirectory();
-      if (externalDir != null) {
-        final stat = await FileStat.stat(externalDir.path);
-        _totalDeviceSpace = stat.size;
-
-        // Try to get more accurate storage info from /data or /storage
-        final rootDir = Directory('/storage/emulated/0');
-        if (await rootDir.exists()) {
-          try {
-            final result = await Process.run('stat', ['-f', rootDir.path]);
-            if (result.exitCode == 0) {
-              final output = result.stdout.toString();
-              // Parse stat output for block size and available blocks
-              final lines = output.split('\n');
-              for (final line in lines) {
-                if (line.contains('Block size:')) {
-                  final match = RegExp(r'(\d+)').firstMatch(line);
-                  if (match != null) {
-                    final blockSize = int.tryParse(match.group(0)!) ?? 4096;
-                  }
-                }
-              }
-            }
-          } catch (e) {
-            // Process.run may fail, fallback to estimation
-          }
-        }
-      }
-
-      // Fallback: try to estimate from app directories
-      if (_totalDeviceSpace == 0) {
-        final appDir = await getApplicationDocumentsDirectory();
-        final stat = await FileStat.stat(appDir.path);
-        // Estimate based on available space in the filesystem
-        _totalDeviceSpace = 64 * 1024 * 1024 * 1024; // 64GB fallback
-      }
-
-      // Estimate free space (rough approximation)
-      _freeDeviceSpace = (_totalDeviceSpace * 0.3).toInt(); // Assume 30% free as fallback
-      _usedDeviceSpace = _totalDeviceSpace - _freeDeviceSpace;
-    } catch (e) {
-      debugPrint('Error getting Android storage: $e');
-    }
-  }
-
-  Future<void> _getIOSStorageInfo() async {
-    try {
-      final appDir = await getApplicationDocumentsDirectory();
-      final stat = await FileStat.stat(appDir.path);
-
-      // On iOS, we get limited storage info
-      // Use NSFileManager attributes for better estimates if available
-      _totalDeviceSpace = 128 * 1024 * 1024 * 1024; // 128GB typical fallback
-
-      // Estimate free space based on app directory availability
-      _freeDeviceSpace = (_totalDeviceSpace * 0.25).toInt(); // Assume 25% free
-      _usedDeviceSpace = _totalDeviceSpace - _freeDeviceSpace;
-    } catch (e) {
-      debugPrint('Error getting iOS storage: $e');
-    }
-  }
-
   Future<void> _playOfflineVideo(DownloadedVideo video) async {
     debugPrint('[OFFLINE_PLAY] _playOfflineVideo called for ${video.id}');
     // Check if views are already exhausted
@@ -199,6 +136,27 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       return;
     }
 
+    // The path is resolved against the app container as it is right now. The
+    // absolute path recorded at download time dangles on iOS, where the
+    // container is a new random directory after every install and update.
+    final offlinePath =
+        await _encryptedVideoService.resolvedEncryptedFilePath(video.id);
+    if (!mounted) return;
+    if (offlinePath == null) {
+      // The file is gone (cleared storage, a failed migration). Say so and drop
+      // the dead entry instead of opening a player that cannot load anything.
+      await _encryptedVideoService.deleteDownloadedVideo(video.id);
+      await _loadDownloads();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('downloads.file_missing'.tr()),
+          backgroundColor: const Color(0xFFFF4B4B),
+        ),
+      );
+      return;
+    }
+
     // Navigate to video player
     await Navigator.push(
       context,
@@ -209,7 +167,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
           chapterId: video.chapterId,
           chapterTitle: video.chapterTitle,
           courseId: video.courseId,
-          offlineVideoPath: video.encryptedFilePath,
+          offlineVideoPath: offlinePath,
           maxViews: video.maxViews,
         ),
       ),
@@ -238,21 +196,15 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     return _formatBytes(_totalStorageUsed);
   }
 
-  String get _formattedDeviceStorage {
-    return _formatBytes(_totalDeviceSpace);
+  String get _formattedLectureStorage {
+    return _formatBytes(_lectureStorageUsed);
   }
 
-  String get _formattedFreeStorage {
-    return _formatBytes(_freeDeviceSpace);
-  }
-
-  String get _formattedUsedDeviceStorage {
-    return _formatBytes(_usedDeviceSpace);
-  }
-
-  double get _storageUsageRatio {
-    if (_totalDeviceSpace <= 0) return 0.0;
-    return _usedDeviceSpace / _totalDeviceSpace;
+  /// Share of the app's own storage taken by downloaded lectures. Both halves
+  /// are measured, so the bar means something.
+  double get _lectureStorageRatio {
+    if (_totalStorageUsed <= 0) return 0.0;
+    return _lectureStorageUsed / _totalStorageUsed;
   }
 
   String _formatBytes(int bytes) {
@@ -499,25 +451,19 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(4),
                     child: LinearProgressIndicator(
-                      value: _storageUsageRatio.clamp(0.0, 1.0),
+                      value: _lectureStorageRatio.clamp(0.0, 1.0),
                       backgroundColor: Colors.white.withValues(alpha: 0.2),
                       valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
                       minHeight: 6,
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'downloads.used'.tr(args: [_formattedUsedDeviceStorage]),
-                        style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 11),
-                      ),
-                      Text(
-                        'downloads.free'.tr(args: [_formattedFreeStorage]),
-                        style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 11),
-                      ),
-                    ],
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(
+                      'downloads.used'.tr(args: [_formattedLectureStorage]),
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 11),
+                    ),
                   ),
                 ],
               ),

@@ -474,7 +474,9 @@
     "offline_video_not_found": "Downloaded video file not found",
     "offline_video_decrypt_failed": "Downloaded video could not be decrypted",
     "discussions": "Discussions",
-    "discussions_with_count": "Discussions ({})"
+    "discussions_with_count": "Discussions ({})",
+    "download_not_allowed": "You cannot download this lecture yet.",
+    "download_no_video": "This lecture has no video to download."
   },
   "exams": {
     "title": "Quizzes & Exams",
@@ -670,7 +672,6 @@
     "no_downloads_desc": "Download videos to watch them offline anytime",
     "storage_used": "Storage Used",
     "used": "Used: {}",
-    "free": "Free: {}",
     "notif_downloading_video": "Downloading Video",
     "notif_encrypting_video": "Encrypting Video",
     "notif_complete": "Download Complete",
@@ -681,7 +682,15 @@
     "no_segments": "No video segments found in HLS playlist",
     "cancelled_by_user": "Download cancelled by user",
     "channel_name": "Downloads",
-    "channel_description": "Shows download progress notifications"
+    "channel_description": "Shows download progress notifications",
+    "failed_empty": "The lecture could not be downloaded: no video data was received. Please try again.",
+    "failed_insecure_source": "This lecture is not served over a secure connection, so it cannot be downloaded on this device. Please contact support.",
+    "failed_connection": "The download stopped because of the connection. Reconnect and tap download again to continue.",
+    "failed_not_allowed": "You are not allowed to download this lecture.",
+    "failed_storage": "There is not enough space on your device to save this lecture.",
+    "failed_encrypting": "The lecture could not be saved securely. Please download it again.",
+    "failed_generic": "The lecture could not be downloaded. Please try again.",
+    "file_missing": "The downloaded file is no longer on this device. Please download the lecture again."
   },
   "profile": {
     "approved_device": "Approved device",
@@ -1018,6 +1027,7 @@
   },
   "academic_journey": "Your academic journey starts here",
   "common": {
+    "back": "Back",
     "cancel": "Cancel",
     "retry": "Retry",
     "try_again": "Try Again",

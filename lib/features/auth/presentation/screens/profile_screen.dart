@@ -5,6 +5,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/app_logo.dart';
 import '../../../../core/widgets/country_code_field.dart';
 import '../../../../core/widgets/custom_text_field.dart';
+import '../../../../core/widgets/header_back_button.dart';
 import '../../../../core/widgets/primary_button.dart';
 import '../../data/auth_repository.dart';
 import '../../../parent/presentation/screens/link_student_screen.dart';
@@ -242,43 +243,61 @@ class _ProfileScreenState extends State<ProfileScreen> {
       body: SingleChildScrollView(
         child: Column(
           children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.only(top: 80, bottom: 50),
-              decoration: const BoxDecoration(
-                gradient: AppColors.mainGradient,
-                borderRadius: BorderRadius.only(
-                  bottomLeft: Radius.circular(50),
-                  bottomRight: Radius.circular(50),
-                ),
-              ),
-              child: Column(
-                children: [
-                  const AppLogo(size: 85),
-                  const SizedBox(height: 24),
-                  Text(
-                    'auth.complete_profile'.tr(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
+            Stack(
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.only(top: 80, bottom: 50),
+                  decoration: const BoxDecoration(
+                    gradient: AppColors.mainGradient,
+                    borderRadius: BorderRadius.only(
+                      bottomLeft: Radius.circular(50),
+                      bottomRight: Radius.circular(50),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 40),
-                    child: Text(
-                      'auth.profile_verify_desc'.tr(),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.85),
-                        fontSize: 14,
-                        height: 1.4,
+                  child: Column(
+                    children: [
+                      const AppLogo(size: 85),
+                      const SizedBox(height: 24),
+                      Text(
+                        'auth.complete_profile'.tr(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 40),
+                        child: Text(
+                          'auth.profile_verify_desc'.tr(),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.85),
+                            fontSize: 14,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // iOS has no hardware back button, so this pushed screen needs
+                // a visible way back. The control sits inside the safe area
+                // and follows the reading direction.
+                if (Navigator.of(context).canPop())
+                  const PositionedDirectional(
+                    top: 0,
+                    start: 0,
+                    child: SafeArea(
+                      child: Padding(
+                        padding: EdgeInsets.all(12),
+                        child: HeaderBackButton(),
                       ),
                     ),
                   ),
-                ],
-              ),
+              ],
             ),
             Padding(
               padding: const EdgeInsets.symmetric(

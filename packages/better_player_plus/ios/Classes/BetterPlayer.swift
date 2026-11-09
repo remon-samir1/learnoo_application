@@ -36,6 +36,12 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     private var pipController: AVPictureInPictureController?
     private var restoreUIOnPipStop: ((Bool) -> Void)?
 
+    /// Audio-session interruption observer. Registered with a block, so the
+    /// blanket `NotificationCenter.removeObserver(self)` in `removeObservers()`
+    /// (which runs whenever an item ends) does not take it away.
+    private var audioInterruptionObserver: NSObjectProtocol?
+    private var wasPlayingBeforeInterruption = false
+
     public override init() {
         self.player = AVPlayer()
         super.init()
@@ -47,6 +53,48 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         self.isInitialized = false
         self.isPlaying = false
         self.disposed = false
+        observeAudioSessionInterruptions()
+    }
+
+    // MARK: - Audio session interruptions
+
+    /// Resumes after an interruption that iOS says we may resume from.
+    ///
+    /// Without this a lecture simply stopped and stayed stopped whenever iOS
+    /// took the audio session away for a moment — an incoming call, Siri, a
+    /// timer or an alarm. iOS pauses the AVPlayer itself and never resumes it,
+    /// and nothing on the Flutter side knew to. `shouldResume` is only set when
+    /// the interruption is over and the app may play again, so another app that
+    /// keeps the audio session (music, a call still running) is still honoured.
+    private func observeAudioSessionInterruptions() {
+        audioInterruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            self?.handleAudioSessionInterruption(notification)
+        }
+    }
+
+    private func handleAudioSessionInterruption(_ notification: Notification) {
+        guard !disposed,
+              let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
+
+        switch type {
+        case .began:
+            wasPlayingBeforeInterruption = isPlaying
+        case .ended:
+            guard wasPlayingBeforeInterruption else { return }
+            wasPlayingBeforeInterruption = false
+            let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let options = AVAudioSession.InterruptionOptions(rawValue: rawOptions)
+            guard options.contains(.shouldResume) else { return }
+            try? AVAudioSession.sharedInstance().setActive(true)
+            play()
+        @unknown default:
+            break
+        }
     }
 
     public convenience init(frame: CGRect) {
@@ -575,6 +623,13 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     }
 
     public func clear() {
+        // The plugin's "dispose" channel call goes through `clear()`, not
+        // `dispose()`, so the interruption observer is released here too.
+        if let observer = audioInterruptionObserver {
+            NotificationCenter.default.removeObserver(observer)
+            audioInterruptionObserver = nil
+        }
+        wasPlayingBeforeInterruption = false
         isInitialized = false
         isPlaying = false
         disposed = false
@@ -593,6 +648,11 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
 
     public func dispose() {
         pause()
+        if let observer = audioInterruptionObserver {
+            NotificationCenter.default.removeObserver(observer)
+            audioInterruptionObserver = nil
+        }
+        wasPlayingBeforeInterruption = false
         disposeSansEventChannel()
         eventChannel?.setStreamHandler(nil)
         disablePictureInPicture()

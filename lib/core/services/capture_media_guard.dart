@@ -72,6 +72,12 @@ abstract class _GuardedPlayer {
   double? _savedVolume;
   bool _enforcing = false;
 
+  /// Bumped by [restore]. An [enforce] that was already in flight compares
+  /// against it and gives up, so a pause can never be applied after capture
+  /// has ended — which would leave the student staring at a video that will
+  /// not play with nothing left to release it.
+  int _generation = 0;
+
   void init();
   void dispose();
   double get volume;
@@ -87,6 +93,10 @@ abstract class _GuardedPlayer {
   void restore() {
     final saved = _savedVolume;
     _savedVolume = null;
+    // Capture is over: nothing may stay latched, including a half-finished
+    // enforce() whose player went away before it could clear the flag.
+    _generation++;
+    _enforcing = false;
     if (saved != null) _safely(() => setVolume(saved));
   }
 
@@ -96,12 +106,15 @@ abstract class _GuardedPlayer {
     if (!CaptureMediaGuard.isCaptureActive || _enforcing) return;
     _savedVolume ??= volume;
     _enforcing = true;
+    final generation = _generation;
     _safely(() async {
       try {
+        if (generation != _generation) return;
         if (volume > 0) await setVolume(0);
+        if (generation != _generation) return;
         if (isPlaying) await pause();
       } finally {
-        _enforcing = false;
+        if (generation == _generation) _enforcing = false;
       }
     });
   }

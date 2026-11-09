@@ -1,5 +1,6 @@
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import '../../../../core/widgets/header_back_button.dart';
 import '../cubit/category_tree_cubit.dart';
 import '../cubit/category_tree_state.dart';
 
@@ -17,7 +18,11 @@ class CategoryTreeHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final canGoBack = state.canGoBack;
+    // The back control is shown both when there is in-screen history to unwind
+    // (a deeper category level) and when the screen itself can be popped. iOS
+    // has no hardware back button, so without the second case the student
+    // would have no way out of the root level of the tree.
+    final canGoBack = state.canGoBack || Navigator.of(context).canPop();
     final title = state.selectedCategory != null
         ? state.selectedCategory!.name
         : 'category_tree.educational_programs'.tr();
@@ -63,26 +68,7 @@ class CategoryTreeHeader extends StatelessWidget {
               Row(
                 children: [
                   if (canGoBack) ...[
-                    InkWell(
-                      onTap: onBack,
-                      borderRadius: BorderRadius.circular(14),
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.25),
-                            width: 1,
-                          ),
-                        ),
-                        child: const Icon(
-                          Icons.arrow_back_rounded,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                      ),
-                    ),
+                    HeaderBackButton(onPressed: onBack),
                     const SizedBox(width: 14),
                   ],
                   Expanded(

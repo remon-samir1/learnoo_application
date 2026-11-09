@@ -27,9 +27,12 @@ import '../../../../core/services/offline_view_service.dart';
 import '../../../../core/services/chapter_audio_watermark_service.dart';
 import '../../../../core/services/video_watch_tracker.dart';
 import '../../../../core/services/capture_media_guard.dart';
+import '../../../../core/services/video_settings_service.dart';
+import '../../../../core/video/screen_awake_controller.dart';
 import '../../services/video_frame_capture_service.dart';
 import '../../../../core/services/encrypted_video_service.dart';
 import '../../../../core/services/user_progress_service.dart';
+import '../../../../core/widgets/header_back_button.dart';
 import '../../../../core/widgets/watermark_wrapper.dart';
 import '../../data/chapter_repository.dart';
 import '../../data/discussion_repository.dart';
@@ -109,15 +112,29 @@ class VideoControllerHandler {
   bool _isBuffering = false;
   bool _isCompleted = false;
 
+  /// True once the current data source has reported `initialized`.
+  ///
+  /// After that point a player exception is a *playback* failure, not a dead
+  /// URL, and must not restart the candidate search: on iOS AVPlayer reports
+  /// one for an ordinary stall or a lost connection, and walking to the next
+  /// candidate threw away a lecture that was already playing.
+  bool _hasInitialized = false;
+
   void Function(Duration position, Duration duration)? onPositionChanged;
   void Function(bool isPlaying)? onPlayingStateChanged;
   void Function(bool isBuffering)? onBufferingStateChanged;
   void Function()? onCompleted;
   void Function(bool visible)? onControlsVisibilityChanged;
 
+  /// Called for an exception raised after the source was initialized.
+  void Function()? onPlaybackError;
+
   BetterPlayerController? get controller => _controller;
   get videoPlayerController => _controller?.videoPlayerController;
   bool get isRetrying => _isRetrying;
+
+  /// Whether the current data source already reached `initialized`.
+  bool get hasInitialized => _hasInitialized;
 
   Duration get currentPosition => _currentPosition;
   Duration get totalDuration => _totalDuration;
@@ -127,20 +144,50 @@ class VideoControllerHandler {
 
   void setRetrying(bool value) => _isRetrying = value;
 
-  /// Whether the OS screen timeout is currently held off.
-  bool _screenAwake = false;
-
   /// Holds the screen on while a lecture plays.
   ///
   /// Nothing kept the device awake on this screen, so the phone's own display
   /// timeout — often a minute — blanked the screen mid-lecture even though the
-  /// video was running. The flag keeps this to one platform call per change.
-  void _keepScreenAwake(bool value) {
-    if (_screenAwake == value) return;
-    _screenAwake = value;
+  /// video was running. How long the screen is held is the dashboard's
+  /// `sleep_per_minute` setting; [ScreenAwakeController] owns the countdown and
+  /// calls back here only when the wakelock actually has to change.
+  /// When the window elapses the lecture is paused as well, so the phone is
+  /// not left playing to a dark screen.
+  late final ScreenAwakeController _screenAwake = ScreenAwakeController(
+    setAwake: _toggleWakelock,
+    timeout: () => VideoSettingsService().screenAwakeTimeout,
+    onExpired: _pauseForScreenSleep,
+  );
+
+  /// The dashboard value can land after a lecture is already playing; the
+  /// countdown then starts against it instead of never running at all.
+  late final VoidCallback _onVideoSettingsChanged = _screenAwake.timeoutChanged;
+
+  bool _screenAwakeListenerAttached = false;
+
+  void _attachVideoSettingsListener() {
+    if (_screenAwakeListenerAttached) return;
+    _screenAwakeListenerAttached = true;
+    VideoSettingsService().addListener(_onVideoSettingsChanged);
+  }
+
+  void _detachVideoSettingsListener() {
+    if (!_screenAwakeListenerAttached) return;
+    _screenAwakeListenerAttached = false;
+    VideoSettingsService().removeListener(_onVideoSettingsChanged);
+  }
+
+  void _pauseForScreenSleep() {
+    try {
+      _controller?.pause();
+    } catch (e) {
+      debugPrint('[VideoControllerHandler] pause on screen sleep failed');
+    }
+  }
+
+  void _toggleWakelock(bool value) {
     WakelockPlus.toggle(enable: value).catchError((Object error) {
       debugPrint('[VideoControllerHandler] wakelock toggle failed');
-      _screenAwake = !value;
     });
   }
 
@@ -156,15 +203,30 @@ class VideoControllerHandler {
   }
 
   Future<void> dispose() async {
-    _initTimeoutTimer?.cancel();
-    _initTimeoutTimer = null;
-    _keepScreenAwake(false);
-
+    // Cleared first: the screen is going away, so nothing the teardown emits
+    // may reach a callback that would call setState on it.
     onPositionChanged = null;
     onPlayingStateChanged = null;
     onBufferingStateChanged = null;
     onCompleted = null;
     onControlsVisibilityChanged = null;
+    onPlaybackError = null;
+
+    await _releaseController();
+  }
+
+  /// Tears the current player down but keeps the screen's callbacks.
+  ///
+  /// Building a source used to go through [dispose], which cleared them — and
+  /// the screen assigns them *before* it asks for a source, so every one of
+  /// them (`onCompleted`, which saves the student's progress, among them) was
+  /// silently null for the whole of playback.
+  Future<void> _releaseController() async {
+    _initTimeoutTimer?.cancel();
+    _initTimeoutTimer = null;
+    _detachVideoSettingsListener();
+    _screenAwake.playbackStopped();
+    _hasInitialized = false;
 
     final ctrl = _controller;
     _controller = null;
@@ -227,7 +289,7 @@ class VideoControllerHandler {
     required VoidCallback onBufferingEnd,
     required VoidCallback onTimeout,
   }) async {
-    await dispose();
+    await _releaseController();
 
     final dataSource = BetterPlayerDataSource(
       BetterPlayerDataSourceType.file,
@@ -270,11 +332,14 @@ class VideoControllerHandler {
           break;
         case BetterPlayerEventType.play:
           _isPlaying = true;
-          _keepScreenAwake(true);
+          _attachVideoSettingsListener();
+          _screenAwake.playbackStarted();
           onPlayingStateChanged?.call(true);
           break;
+        case BetterPlayerEventType.seekTo:
+          _screenAwake.userActivity();
+          break;
         case BetterPlayerEventType.progress:
-          _keepScreenAwake(true);
           _currentPosition =
               _controller?.videoPlayerController?.value.position ??
               Duration.zero;
@@ -285,16 +350,17 @@ class VideoControllerHandler {
           break;
         case BetterPlayerEventType.pause:
           _isPlaying = false;
-          _keepScreenAwake(false);
+          _screenAwake.playbackStopped();
           onPlayingStateChanged?.call(false);
           break;
         case BetterPlayerEventType.finished:
           _isCompleted = true;
-          _keepScreenAwake(false);
+          _screenAwake.playbackStopped();
           onCompleted?.call();
           break;
         case BetterPlayerEventType.controlsVisible:
           debugPrint("[VideoControllerHandler] controlsVisible event received");
+          _screenAwake.userActivity();
           onControlsVisibilityChanged?.call(true);
           break;
         case BetterPlayerEventType.controlsHiddenEnd:
@@ -330,7 +396,7 @@ class VideoControllerHandler {
     Map<String, String>? headers,
     bool autoPlay = true,
   }) async {
-    await dispose();
+    await _releaseController();
 
     final isHls =
         videoUrl.toLowerCase().contains('.m3u8') ||
@@ -396,6 +462,7 @@ class VideoControllerHandler {
       switch (event.betterPlayerEventType) {
         case BetterPlayerEventType.initialized:
           _initTimeoutTimer?.cancel();
+          _hasInitialized = true;
           _totalDuration =
               _controller?.videoPlayerController?.value.duration ??
               Duration.zero;
@@ -404,7 +471,14 @@ class VideoControllerHandler {
           break;
         case BetterPlayerEventType.exception:
           _initTimeoutTimer?.cancel();
-          onError();
+          if (_hasInitialized && onPlaybackError != null) {
+            // The source was good enough to start: this is a stall or a lost
+            // connection, so recover on the same URL instead of walking to
+            // the next candidate from position zero.
+            onPlaybackError!.call();
+          } else {
+            onError();
+          }
           if (!completer.isCompleted) completer.complete(null);
           break;
         case BetterPlayerEventType.bufferingStart:
@@ -412,6 +486,15 @@ class VideoControllerHandler {
           break;
         case BetterPlayerEventType.bufferingEnd:
           onBufferingEnd();
+          break;
+        case BetterPlayerEventType.play:
+          // Only the wakelock is driven from here: `_isPlaying` and
+          // `onPlayingStateChanged` stay as they were for streamed playback.
+          _attachVideoSettingsListener();
+          _screenAwake.playbackStarted();
+          break;
+        case BetterPlayerEventType.seekTo:
+          _screenAwake.userActivity();
           break;
         case BetterPlayerEventType.progress:
           _currentPosition =
@@ -424,13 +507,16 @@ class VideoControllerHandler {
           break;
         case BetterPlayerEventType.pause:
           _isPlaying = false;
+          _screenAwake.playbackStopped();
           onPlayingStateChanged?.call(false);
           break;
         case BetterPlayerEventType.finished:
           _isCompleted = true;
+          _screenAwake.playbackStopped();
           onCompleted?.call();
           break;
         case BetterPlayerEventType.controlsVisible:
+          _screenAwake.userActivity();
           onControlsVisibilityChanged?.call(true);
           break;
         case BetterPlayerEventType.controlsHiddenEnd:
@@ -556,6 +642,16 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   String _videoUrl = '';
   List<String> _videoCandidates = [];
   int _candidateIndex = 0;
+
+  /// Where the next player build should resume from, when it is not the
+  /// position the screen was opened at (a mid-stream recovery).
+  Duration? _pendingResumePosition;
+
+  /// Mid-stream failures recovered on the current source, so a stream that
+  /// keeps dying cannot loop forever.
+  int _playbackRecoveries = 0;
+  static const int _maxPlaybackRecoveries = 2;
+
   String _duration = '00:00';
   List<dynamic> _attachments = [];
   List<dynamic> _quizzes = [];
@@ -649,6 +745,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   ValueNotifier<EncryptedDownloadProgress>? _downloadProgressNotifier;
   bool _isDownloaded = false;
   bool _isDownloading = false;
+
+  /// The URL the running download is keyed on, which is not always the URL the
+  /// player is currently using.
+  String? _activeDownloadUrl;
 
   bool _videoListenerAdded = false;
   bool _isOnline = true;
@@ -804,6 +904,20 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         state == AppLifecycleState.inactive ||
         state == AppLifecycleState.hidden) {
       _saveProgressOnExit();
+    }
+
+    // Only a real departure from the foreground stops playback.
+    //
+    // `inactive` is not one on iOS: UIKit reports it for every transient
+    // interruption — the notification shade or Control Centre being dragged
+    // down, a banner arriving, the app-switcher being peeked at, a system
+    // alert — and returns straight to `resumed`. Pausing there is what made a
+    // lecture "start and then cut out" a few seconds in on iPhone, with
+    // nothing resuming it. The screen stays protected while inactive because
+    // the native side blacks the window out (ScreenProtectionManager's
+    // overlay on scene resign-active), not because the video is paused.
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
       _betterPlayerController?.pause();
       _audioPlayer.pause();
       _recordedPlayer.pause();
@@ -1080,7 +1194,26 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
       );
       return;
     }
-    if (_videoUrl.isEmpty || _isLocked || !_canWatch) return;
+    // A bare `return` here is what a student experiences as "the download
+    // button does nothing": say which of the two reasons applies instead.
+    if (_isLocked || !_canWatch) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('course.download_not_allowed'.tr()),
+          backgroundColor: const Color(0xFFFF4B4B),
+        ),
+      );
+      return;
+    }
+    if (_videoUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('course.download_no_video'.tr()),
+          backgroundColor: const Color(0xFFFF4B4B),
+        ),
+      );
+      return;
+    }
 
     final videoId = '${widget.courseId}_${widget.chapterId}';
     if (_encryptedVideoService.isVideoDownloaded(videoId)) {
@@ -1118,7 +1251,12 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
       'Accept': '*/*',
     };
 
-    final fileName = 'video_$videoId.enc';
+    // Remembered so cancelling targets the URL the download is actually keyed
+    // on. It used to cancel `_videoUrl`, which the player's candidate fallback
+    // can have moved on from, leaving the download running.
+    _activeDownloadUrl = targetDownloadUrl;
+
+    final fileName = EncryptedVideoService.storageFileName(videoId);
     _downloadProgressNotifier = _encryptedVideoService.getProgressNotifier(
       targetDownloadUrl,
       fileName,
@@ -1172,7 +1310,14 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         setState(() => _isDownloading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('course.download_error'.tr(args: ['$e'])),
+            // A translated reason, not a raw Dart exception the student cannot
+            // read or act on.
+            content: Text(
+              EncryptedVideoService.describeDownloadFailure(
+                e,
+                sourceUrl: targetDownloadUrl,
+              ),
+            ),
             backgroundColor: const Color(0xFFFF4B4B),
           ),
         );
@@ -1182,7 +1327,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
   void _cancelDownload() {
     if (_isDownloading) {
-      _encryptedVideoService.cancelDownload(_videoUrl);
+      _encryptedVideoService.cancelDownload(_activeDownloadUrl ?? _videoUrl);
       setState(() => _isDownloading = false);
     }
   }
@@ -1789,6 +1934,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
       setState(() => _isPlaying = isPlaying);
     };
     _videoHandler.onCompleted = () => _saveProgressOnExit();
+    _videoHandler.onPlaybackError = _recoverPlaybackError;
     try {
       final token = await tokenFuture;
       final Map<String, String> headers = {
@@ -1804,9 +1950,12 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
       // Resuming: start paused, seek, then play — otherwise the player
       // renders and buffers from 0 and immediately throws that away.
-      final resumeAt = widget.initialPosition > 0
-          ? Duration(seconds: widget.initialPosition)
-          : null;
+      final pendingResume = _pendingResumePosition;
+      _pendingResumePosition = null;
+      final resumeAt = pendingResume ??
+          (widget.initialPosition > 0
+              ? Duration(seconds: widget.initialPosition)
+              : null);
 
       final controller = await _videoHandler.initialize(
         videoUrl: _videoUrl,
@@ -1829,6 +1978,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         _retryCount = 0;
         _totalTime = _formatDuration(_videoHandler.totalDuration);
       });
+      if (pendingResume == null) _playbackRecoveries = 0;
 
       // The packaged controls are off, so their visibility events no longer
       // fire; the chrome is shown on load and hidden by [_startHideControlsTimer].
@@ -1906,6 +2056,46 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         ),
       ),
     );
+  }
+
+  /// Recovers from a player exception raised *after* the source was playing.
+  ///
+  /// iOS AVPlayer reports an error for an ordinary stall or a dropped
+  /// connection mid-lecture. Running the candidate fallback for that sent the
+  /// student to a different (often worse) URL at position zero, which is how a
+  /// lecture that had been playing "cut out". The same source is rebuilt at the
+  /// position reached instead, a bounded number of times.
+  Future<void> _recoverPlaybackError() async {
+    if (!mounted) return;
+    final resumeAt = _videoHandler.currentPosition;
+    // Called from the player's own event listener: let it finish before the
+    // controller underneath it is torn down.
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+
+    if (_playbackRecoveries >= _maxPlaybackRecoveries) {
+      debugPrint(
+        '[LectureDetail] Playback failed again on candidate #$_candidateIndex; giving up after $_playbackRecoveries recoveries',
+      );
+      setState(() {
+        _isVideoLoading = false;
+        _isBuffering = false;
+        _hasVideoError = true;
+        _videoErrorType = VideoErrorType.network;
+        _hasSlowInternet = true;
+      });
+      return;
+    }
+
+    _playbackRecoveries++;
+    debugPrint(
+      '[LectureDetail] Playback interrupted; rebuilding the same source at ${resumeAt.inSeconds}s (recovery $_playbackRecoveries)',
+    );
+    _pendingResumePosition =
+        resumeAt > const Duration(seconds: 1) ? resumeAt : null;
+    await _videoHandler.dispose();
+    if (!mounted) return;
+    await _initializeVideoPlayer();
   }
 
   void _onVideoError() {
@@ -2820,6 +3010,27 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                 ],
               ),
             ),
+            // The lecture has a custom header (the player fills the top of the
+            // screen) and therefore no AppBar back button. iOS has no hardware
+            // back button either, so the screen needs its own control; it sits
+            // over the player's top-start corner, inside the safe area, and
+            // pops exactly like the Android back button does.
+            PositionedDirectional(
+              top: 0,
+              start: 0,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: HeaderBackButton(
+                    backgroundColor: Colors.black.withValues(alpha: 0.55),
+                    borderColor: Colors.white.withValues(alpha: 0.3),
+                    padding: const EdgeInsets.all(8),
+                    iconSize: 18,
+                    borderRadius: 12,
+                  ),
+                ),
+              ),
+            ),
             if (_showDiscussionPanel)
               DiscussionPanel(
                 currentPositionSeconds: _videoHandler.currentPosition.inSeconds,
@@ -2914,216 +3125,238 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 100,
-                  height: 100,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [primaryColor, accentColor],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: primaryColor.withValues(alpha: 0.3),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
+        child: Stack(
+          children: [
+            // Locked chapter / view-limit screen: without this the student is
+            // stuck here on iOS, where there is no hardware back button.
+            if (Navigator.of(context).canPop())
+              const PositionedDirectional(
+                top: 0,
+                start: 0,
+                child: Padding(
+                  padding: EdgeInsets.all(8),
+                  child: HeaderBackButton(
+                    iconColor: Color(0xFF1F2937),
+                    backgroundColor: Color(0xFFF3F4F6),
+                    borderColor: Color(0xFFE5E7EB),
+                    padding: EdgeInsets.all(8),
+                    iconSize: 18,
+                    borderRadius: 12,
+                  ),
+                ),
+              ),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 100,
+                      height: 100,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [primaryColor, accentColor],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(24),
+                        boxShadow: [
+                          BoxShadow(
+                            color: primaryColor.withValues(alpha: 0.3),
+                            blurRadius: 20,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  child: Center(
-                    child: FaIcon(
-                      showActivationButton
-                          ? FontAwesomeIcons.lock
-                          : FontAwesomeIcons.circleExclamation,
-                      color: Colors.white,
-                      size: 40,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 32),
-                Text(
-                  isMaxViewsError
-                      ? 'course.views_exceeded_title'.tr()
-                      : (showActivationButton
-                            ? 'course.chapter_locked_title'.tr()
-                            : 'course.error_title'.tr()),
-                  style: TextStyle(
-                    color: const Color(0xFF1F2937),
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  _errorMessage ?? 'course.an_error_occurred'.tr(),
-                  style: const TextStyle(
-                    color: Color(0xFF6B7280),
-                    fontSize: 15,
-                    height: 1.5,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 20),
-                if (showActivationButton && _maxViews > 0) ...[
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 16,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isMaxViewsError
-                          ? const Color(0xFFFFEBEE)
-                          : const Color(0xFFF3F4F6),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: isMaxViewsError
-                            ? const Color(0xFFEF5350).withValues(alpha: 0.3)
-                            : const Color(0xFFE5E7EB),
+                      child: Center(
+                        child: FaIcon(
+                          showActivationButton
+                              ? FontAwesomeIcons.lock
+                              : FontAwesomeIcons.circleExclamation,
+                          color: Colors.white,
+                          size: 40,
+                        ),
                       ),
                     ),
-                    child: Column(
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
+                    const SizedBox(height: 32),
+                    Text(
+                      isMaxViewsError
+                          ? 'course.views_exceeded_title'.tr()
+                          : (showActivationButton
+                                ? 'course.chapter_locked_title'.tr()
+                                : 'course.error_title'.tr()),
+                      style: TextStyle(
+                        color: const Color(0xFF1F2937),
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      _errorMessage ?? 'course.an_error_occurred'.tr(),
+                      style: const TextStyle(
+                        color: Color(0xFF6B7280),
+                        fontSize: 15,
+                        height: 1.5,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 20),
+                    if (showActivationButton && _maxViews > 0) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 16,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isMaxViewsError
+                              ? const Color(0xFFFFEBEE)
+                              : const Color(0xFFF3F4F6),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: isMaxViewsError
+                                ? const Color(0xFFEF5350).withValues(alpha: 0.3)
+                                : const Color(0xFFE5E7EB),
+                          ),
+                        ),
+                        child: Column(
                           children: [
-                            FaIcon(
-                              FontAwesomeIcons.eye,
-                              size: 16,
-                              color: isMaxViewsError
-                                  ? const Color(0xFFEF5350)
-                                  : const Color(0xFF3451E5),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                FaIcon(
+                                  FontAwesomeIcons.eye,
+                                  size: 16,
+                                  color: isMaxViewsError
+                                      ? const Color(0xFFEF5350)
+                                      : const Color(0xFF3451E5),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'course.views_usage'.tr(),
+                                  style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'course.views_usage'.tr(),
-                              style: TextStyle(
-                                color: Colors.grey[600],
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
+                            const SizedBox(height: 8),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: SizedBox(
+                                width: 200,
+                                height: 8,
+                                child: LinearProgressIndicator(
+                                  value: _maxViews > 0
+                                      ? (_currentViews / _maxViews).clamp(0.0, 1.0)
+                                      : 0,
+                                  backgroundColor: Colors.grey[300],
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    isMaxViewsError
+                                        ? const Color(0xFFEF5350)
+                                        : const Color(0xFF3451E5),
+                                  ),
+                                ),
                               ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '${_currentViews} / ${_maxViews} ${'course.views'.tr()}',
+                              style: TextStyle(
+                                color: isMaxViewsError
+                                    ? const Color(0xFFEF5350)
+                                    : const Color(0xFF3451E5),
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            if (isMaxViewsError) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                'course.views_exceeded_hint'.tr(),
+                                style: TextStyle(
+                                  color: Colors.grey[500],
+                                  fontSize: 12,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
+                    if (showActivationButton)
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [primaryColor, accentColor],
+                            begin: Alignment.centerLeft,
+                            end: Alignment.centerRight,
+                          ),
+                          borderRadius: BorderRadius.circular(14),
+                          boxShadow: [
+                            BoxShadow(
+                              color: primaryColor.withValues(alpha: 0.35),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 8),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: SizedBox(
-                            width: 200,
-                            height: 8,
-                            child: LinearProgressIndicator(
-                              value: _maxViews > 0
-                                  ? (_currentViews / _maxViews).clamp(0.0, 1.0)
-                                  : 0,
-                              backgroundColor: Colors.grey[300],
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                isMaxViewsError
-                                    ? const Color(0xFFEF5350)
-                                    : const Color(0xFF3451E5),
-                              ),
+                        child: ElevatedButton.icon(
+                          onPressed: _showActivationCodeDialog,
+                          icon: const FaIcon(
+                            FontAwesomeIcons.key,
+                            size: 16,
+                            color: Colors.white,
+                          ),
+                          label: Text(
+                            'course.enter_activation_code_btn'.tr(),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15,
+                              color: Colors.white,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.transparent,
+                            shadowColor: Colors.transparent,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 28,
+                              vertical: 14,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
                             ),
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '${_currentViews} / ${_maxViews} ${'course.views'.tr()}',
-                          style: TextStyle(
-                            color: isMaxViewsError
-                                ? const Color(0xFFEF5350)
-                                : const Color(0xFF3451E5),
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
+                      )
+                    else
+                      ElevatedButton.icon(
+                        onPressed: _loadChapterDetails,
+                        icon: const FaIcon(FontAwesomeIcons.rotateRight, size: 16),
+                        label: Text('course.retry'.tr()),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: primaryColor,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 28,
+                            vertical: 14,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                        if (isMaxViewsError) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            'course.views_exceeded_hint'.tr(),
-                            style: TextStyle(
-                              color: Colors.grey[500],
-                              fontSize: 12,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                ],
-                if (showActivationButton)
-                  Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [primaryColor, accentColor],
-                        begin: Alignment.centerLeft,
-                        end: Alignment.centerRight,
                       ),
-                      borderRadius: BorderRadius.circular(14),
-                      boxShadow: [
-                        BoxShadow(
-                          color: primaryColor.withValues(alpha: 0.35),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: ElevatedButton.icon(
-                      onPressed: _showActivationCodeDialog,
-                      icon: const FaIcon(
-                        FontAwesomeIcons.key,
-                        size: 16,
-                        color: Colors.white,
-                      ),
-                      label: Text(
-                        'course.enter_activation_code_btn'.tr(),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 15,
-                          color: Colors.white,
-                        ),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.transparent,
-                        shadowColor: Colors.transparent,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 28,
-                          vertical: 14,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                    ),
-                  )
-                else
-                  ElevatedButton.icon(
-                    onPressed: _loadChapterDetails,
-                    icon: const FaIcon(FontAwesomeIcons.rotateRight, size: 16),
-                    label: Text('course.retry'.tr()),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 28,
-                        vertical: 14,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                  ),
-              ],
+                  ],
+                ),
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );

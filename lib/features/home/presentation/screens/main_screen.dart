@@ -7,6 +7,7 @@ import 'package:learnoo/features/home/presentation/screens/my_courses_screen.dar
 import 'package:learnoo/features/community/presentation/screens/community_screen.dart';
 import 'package:learnoo/features/course_content/presentation/screens/live_sessions_screen.dart';
 import 'package:learnoo/core/services/feature_service.dart';
+import 'package:learnoo/core/services/video_settings_service.dart';
 import 'package:learnoo/core/services/notification_service.dart';
 import 'package:learnoo/features/home/data/notification_sync_service.dart';
 
@@ -31,11 +32,12 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-    // Fetch features after user is authenticated and navigating to MainScreen
-    FeatureService().fetchFeatures().then((success) {
-      if (success) {
-        debugPrint('Features refreshed from API in MainScreen');
-      }
+    // Fetch features after user is authenticated and navigating to MainScreen.
+    // Both endpoints need the student's token, so the attempt made at app
+    // start — before sign-in — comes back 401; this is the first one that can
+    // actually return the lecture screen-awake window.
+    FeatureService().fetchFeatures().whenComplete(() {
+      VideoSettingsService().refresh();
     });
     // Signed in now: baseline/sync the student's notifications, and open the
     // notifications screen if the app was launched from one in the tray.

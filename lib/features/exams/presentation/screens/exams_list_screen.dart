@@ -5,6 +5,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:shimmer/shimmer.dart';
 import '../../../../core/services/student_scope.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/widgets/header_back_button.dart';
 import '../../../../core/widgets/pagination_bar.dart';
 import '../../../auth//data/auth_repository.dart';
 import '../../../course_content/data/course_repository.dart';
@@ -370,13 +371,36 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
                   child: Column(
                     children: [
-                      Text(
-                        'exams.title'.tr(),
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
+                      // The exams list is both a tab of the home shell and a
+                      // pushed route (home shortcut, bottom bar). When it was
+                      // pushed it needs its own back control: iOS has no
+                      // hardware back button to fall back on.
+                      Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          SizedBox(
+                            width: double.infinity,
+                            height: 34,
+                            child: Center(
+                              child: Text(
+                                'exams.title'.tr(),
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (Navigator.of(context).canPop())
+                            const PositionedDirectional(
+                              start: 0,
+                              child: HeaderBackButton(
+                                padding: EdgeInsets.all(8),
+                                iconSize: 18,
+                              ),
+                            ),
+                        ],
                       ),
                       const SizedBox(height: 12),
                       _buildSearchBar(),
