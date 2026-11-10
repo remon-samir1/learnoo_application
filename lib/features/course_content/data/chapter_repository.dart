@@ -353,10 +353,20 @@ class ChapterRepository with OfflineFirstRepository {
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = jsonDecode(response.body);
+        // The server answers with the chapter resource; its view count is
+        // `data.attributes.current_user_views`.
+        Object? views;
+        if (data is Map) {
+          final resource = data['data'];
+          final attributes = resource is Map ? resource['attributes'] : null;
+          views = (attributes is Map ? attributes['current_user_views'] : null) ??
+              data['current_views'] ??
+              data['views_count'];
+        }
         return {
           'success': true,
-          'current_views': data['current_views'] ?? data['views_count'],
-          'message': data['message'],
+          'current_views': int.tryParse('${views ?? ''}'),
+          'message': data is Map ? data['message'] : null,
         };
       } else {
         final data = jsonDecode(response.body);

@@ -1026,11 +1026,15 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         watchedMinutes: minutesToSource,
       );
 
-      if (result['success'] && mounted) {
+      if (result['success'] == true) {
+        // The server recorded the view. If the student already left the
+        // screen there is nothing to update — the view must not also be
+        // queued, or it would be sent and counted a second time.
+        if (!mounted) return;
         debugPrint(
           '[LectureDetail] Successfully incremented view count. New views: ${result['current_views']}',
         );
-        final newViewCount = result['current_views'] ?? _currentViews + 1;
+        final newViewCount = (result['current_views'] as int?) ?? _currentViews + 1;
         setState(() {
           _currentViews = newViewCount;
         });
@@ -1143,6 +1147,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     _watchTracker?.dispose();
     _audioWatermarkService?.dispose();
     _videoHandler.dispose();
+    if (widget.offlineVideoPath != null) {
+      unawaited(_encryptedVideoService.deletePlaybackCopies());
+    }
     _commentController.dispose();
     _commentFocusNode.dispose();
     _recordingTimer?.cancel();
@@ -2596,6 +2603,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
           ),
         );
       } else {
+        // A code the server reports as already used may well have unlocked
+        // the chapter already (from the website, another screen or an
+        // admin), so re-read the chapter instead of keeping the old lock.
+        _loadChapterDetails();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -3835,7 +3846,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                 ),
               ),
             )
-          else if (_videoUrl.isNotEmpty && !_isLocked && _canWatch)
+          // Hidden on iOS for now: lectures download as joined HLS (MPEG-TS)
+          // segments, which AVPlayer cannot play from a local file, so the
+          // download completed but never played. Android plays them.
+          else if (_videoUrl.isNotEmpty && !_isLocked && _canWatch && !Platform.isIOS)
             Positioned(
               top: 12,
               right: 52,
@@ -5015,7 +5029,10 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
   void _startHideControlsTimer() {
     _hideControlsTimer?.cancel();
     _hideControlsTimer = Timer(const Duration(seconds: 4), () {
-      if (mounted) {
+      // A paused video keeps its controls, like the inline player: the exit
+      // button lives in that bar, so hiding it on a paused screen leaves the
+      // student nothing to leave fullscreen with.
+      if (mounted && (widget.sourceController.isPlaying() ?? false)) {
         setState(() => _showControls = false);
       }
     });
@@ -5166,6 +5183,9 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
           fit: StackFit.expand,
           children: [
             GestureDetector(
+              // Opaque: the video surface ignores touches, so a tap anywhere on
+              // the screen must still land here to bring the controls back.
+              behavior: HitTestBehavior.opaque,
               onTap: _onVideoTap,
               child: WatermarkWrapper(
                 type: WatermarkType.chapters,

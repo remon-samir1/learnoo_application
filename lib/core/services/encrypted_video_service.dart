@@ -1160,6 +1160,23 @@ class EncryptedVideoService {
     }
   }
 
+  /// Deletes every decrypted playback copy. A downloaded lecture is stored
+  /// encrypted; the plain copy made to play it must not outlive the lecture
+  /// screen, or it stays on the device readable outside the app.
+  Future<void> deletePlaybackCopies() async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      await for (final entity in tempDir.list(followLinks: false)) {
+        final name = entity.uri.pathSegments.isEmpty ? '' : entity.uri.pathSegments.last;
+        if (entity is File && name.startsWith('temp_playback_')) {
+          await entity.delete();
+        }
+      }
+    } catch (e) {
+      debugPrint('[EncryptedVideo] Could not clear playback copies: $e');
+    }
+  }
+
   /// Decrypt and get temp file path for playback
   Future<String?> getDecryptedVideoPath(String videoId) async {
     try {
@@ -1177,6 +1194,9 @@ class EncryptedVideoService {
         return null;
       }
 
+      // At most one plain copy exists at a time: whatever an earlier session
+      // left behind (a crash, or the app killed mid-lecture) goes first.
+      await deletePlaybackCopies();
       final tempDir = await getTemporaryDirectory();
       final tempFilePath =
           '${tempDir.path}/temp_playback_${storageFileName(videoId)}.mp4';

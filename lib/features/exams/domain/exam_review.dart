@@ -195,6 +195,21 @@ List<QuizQuestion> questionsFromQuizAttributes(Map? attributes) {
   return parseQuestionList(attributes['questions']);
 }
 
+/// Carries the selections made on the device onto [graded] questions (matched
+/// by question id), so a review built from the graded quiz still knows what
+/// the student picked.
+void copySelections(List<QuizQuestion> graded, List<QuizQuestion>? taken) {
+  if (taken == null || taken.isEmpty) return;
+  final byId = {for (final q in taken) q.questionId.toString(): q};
+  for (final question in graded) {
+    final previous = byId[question.questionId.toString()];
+    if (previous == null) continue;
+    question.selectedAnswerId = previous.selectedAnswerId;
+    question.selectedAnswerIds = previous.selectedAnswerIds;
+    question.textAnswer = previous.textAnswer;
+  }
+}
+
 /// The quiz's questions as the attempt-result payload carries them
 /// (`payload.data.quiz ?? payload.quiz`), with the graded options attached.
 ///

@@ -77,6 +77,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
 
     final rows = QuizAnswerReview.mapFromResultPayload(payload);
     final serverQuestions = questionsFromResultPayload(payload);
+    if (rows.isEmpty) _countFromGradedQuiz();
     setState(() {
       _resultPayload = payload;
       if (summary != null && summary.hasServerFigures) _summary = summary;
@@ -87,6 +88,26 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
             ? serverQuestions.length
             : rows.length;
       }
+    });
+  }
+
+  /// The "N of M correct" line when the result carries no answer rows: grade
+  /// the device's selections against the finished quiz, which exposes each
+  /// option's `is_correct` (the copy taken before submission hid it, so the
+  /// local tally was always 0).
+  Future<void> _countFromGradedQuiz() async {
+    final quizId = int.tryParse(widget.result.quizId);
+    if (quizId == null || (widget.questions?.isEmpty ?? true)) return;
+    final response = await _examRepository.getQuizById(quizId);
+    final quiz = response['data'];
+    if (!mounted || response['success'] != true || quiz is! Quiz) return;
+    final graded = questionsFromQuizAttributes(quiz.attributes);
+    if (graded.isEmpty) return;
+    copySelections(graded, widget.questions);
+    setState(() {
+      _serverCorrectCount =
+          graded.where((q) => buildQuestionReview(q, null).correct == true).length;
+      _serverQuestionCount = graded.length;
     });
   }
 

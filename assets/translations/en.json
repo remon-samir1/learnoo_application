@@ -490,6 +490,7 @@
     "no_quizzes": "No quizzes available",
     "duration_minutes": "{} Minutes",
     "chapter_prefix": "Chapter: {}",
+    "course_prefix": "Course: {}",
     "attempts_count": "Attempts: {}/{}",
     "badge_exam": "EXAM",
     "badge_homework": "HOMEWORK",

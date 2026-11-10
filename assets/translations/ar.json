@@ -524,6 +524,7 @@
     "no_quizzes": "لا توجد اختبارات متاحة",
     "duration_minutes": "{} دقائق",
     "chapter_prefix": "الفصل: {}",
+    "course_prefix": "المادة: {}",
     "attempts_count": "المحاولات: {}/{}",
     "badge_exam": "امتحان",
     "badge_homework": "واجب محدد",

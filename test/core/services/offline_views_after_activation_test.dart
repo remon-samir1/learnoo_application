@@ -53,6 +53,31 @@ void main() {
     expect(queued, ['840'], reason: 'other chapters keep their queued views');
   });
 
+  test('a queued view stops counting once the queue delivers it', () async {
+    final views = OfflineViewService();
+    await views.incrementOfflineView('809');
+    expect(views.calculateTotalViews(1, '809'), 2);
+
+    final queue = OfflineQueueService();
+    for (final action in queue.getPendingActionsByType(PendingActionTypes.chapterView)) {
+      await queue.dequeue(action.id);
+    }
+
+    expect(views.getOfflineViewsSync('809'), 0);
+    expect(views.calculateTotalViews(2, '809'), 2,
+        reason: 'the server now holds the view; it must not be added again');
+  });
+
+  test('the retired ever-growing counter no longer locks a chapter', () async {
+    SharedPreferences.setMockInitialValues({'offline_views_809': 3});
+    final views = OfflineViewService();
+
+    expect(views.areViewsExhausted(0, '809', 3), isFalse);
+    expect(await views.syncWithApi('809', 0, 3), 0);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.containsKey('offline_views_809'), isFalse);
+  });
+
   test('a downloaded lecture uses the chapter\'s view_by_minute', () async {
     final repository = ChapterRepository();
     expect(repository.cachedViewByMinute('809'), isNull);

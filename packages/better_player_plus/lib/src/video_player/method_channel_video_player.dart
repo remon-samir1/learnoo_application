@@ -288,10 +288,16 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
   @override
   Widget buildView(int? textureId) {
     if (defaultTargetPlatform == TargetPlatform.iOS) {
-      return UiKitView(
-        viewType: 'com.jhomlala/better_player',
-        creationParamsCodec: const StandardMessageCodec(),
-        creationParams: {'textureId': textureId!},
+      // The native video layer needs no touches. Left hit-testable, its
+      // platform-view recognizer enters the gesture arena first and wins every
+      // tap, so once playback starts the Flutter controls above it can never be
+      // brought back (Android's Texture takes no part in hit testing).
+      return IgnorePointer(
+        child: UiKitView(
+          viewType: 'com.jhomlala/better_player',
+          creationParamsCodec: const StandardMessageCodec(),
+          creationParams: {'textureId': textureId!},
+        ),
       );
     } else {
       return Texture(textureId: textureId!);
