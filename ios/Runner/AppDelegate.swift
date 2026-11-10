@@ -174,27 +174,31 @@ class ScreenProtectionManager: NSObject {
         }
     }
 
+    /// Whether the app should be rendering inside the secure canvas.
+    private var wantsSecureCanvas: Bool { isGlobalEnabled && !allowCaptureForDebugBuild }
+
+    /// Hosts the scene's Flutter view inside the secure canvas. Called by the
+    /// scene delegate once the window exists; uses the persisted policy, so a
+    /// cold start is protected before Dart runs.
+    func installSecureCanvas(in window: UIWindow) {
+        secureCanvas.install(in: window, protected: wantsSecureCanvas)
+    }
+
     /// Matches the secure canvas to the dashboard policy.
     ///
-    /// Turning the policy off removes it, which gives back a completely normal,
-    /// capturable app. Nothing here can throw or leave the app unrendered: when
-    /// the canvas cannot be installed the app keeps rendering the way it does
-    /// today and the student is still covered by capture detection, the black
-    /// overlay and the paused/muted players.
+    /// Turning the policy off gives back a completely normal, capturable app.
+    /// When the canvas cannot be used the app keeps rendering normally and the
+    /// student is still covered by capture detection, the black overlay and
+    /// the paused/muted players.
     private func syncSecureCanvas() {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            guard self.isGlobalEnabled, !self.allowCaptureForDebugBuild else {
-                self.secureCanvas.remove()
-                return
-            }
-            guard let window = self.appWindow() else { return }
-            self.secureCanvas.apply(to: window)
+            self.secureCanvas.setProtected(self.wantsSecureCanvas)
         }
     }
 
-    /// Re-applies the secure canvas after the scene life cycle may have
-    /// replaced the window. Does nothing until Dart has pushed the policy.
+    /// Re-applies the policy when the scene becomes active again. Does nothing
+    /// until Dart has pushed the policy.
     func reassertSecureCanvas() {
         guard secureCanvasRequested else { return }
         syncSecureCanvas()
@@ -269,10 +273,6 @@ class ScreenProtectionManager: NSObject {
             // made key when it appeared, and destroying a key window without
             // naming a successor leaves the app without one.
             self.appWindow()?.makeKeyAndVisible()
-            // Making a window key and visible can put its layer back under the
-            // scene's host layer, which would undo the secure canvas; re-assert
-            // it (a no-op when it is still intact).
-            self.reassertSecureCanvas()
         }
     }
 
@@ -282,7 +282,10 @@ class ScreenProtectionManager: NSObject {
             .compactMap { $0 as? UIWindowScene }
             .flatMap { $0.windows }
             .filter { $0 !== protectionWindow }
-        return windows.first { $0.rootViewController is FlutterViewController } ?? windows.first
+        return windows.first {
+            $0.rootViewController is SecureContainerViewController
+                || $0.rootViewController is FlutterViewController
+        } ?? windows.first
     }
     
     func handleAppWillResignActive() {
@@ -351,255 +354,210 @@ extension ScreenProtectionManager: FlutterStreamHandler {
     }
 }
 
+
 /// Makes the app's own pixels unavailable to iOS capture.
 ///
 /// iOS has no API that blocks a screenshot the way Android's `FLAG_SECURE`
-/// does, but it does exclude the rendering canvas of a secure text field
-/// (`isSecureTextEntry = true`) from screenshots, screen recordings, AirPlay
-/// and mirroring. This controller builds such a field, finds the canvas the
-/// field renders itself into, and re-parents the app window's layer into it,
-/// so everything the app draws is composited inside the excluded subtree: the
-/// student's screenshot and recording come out blank/black.
+/// does, but it leaves the rendering canvas of a secure text field
+/// (`isSecureTextEntry = true`) out of screenshots, screen recordings, AirPlay
+/// and mirroring. The Flutter view is therefore hosted *inside* that canvas:
 ///
-/// Only the **layer** is re-parented, not the views. The view hierarchy stays
-/// exactly as Flutter built it (window -> FlutterViewController.view -> ...),
-/// because UIKit hit-testing and first-responder/keyboard handling walk views:
-/// making the Flutter view a *subview* of a `UITextField` would route every
-/// touch through that control and break input. CALayer rendering is
-/// independent of that, so moving the layer changes what is composited
-/// without changing what is touchable.
+///     window
+///       └ SecureContainerViewController.view
+///           └ SecureHostField (UITextField, full screen)
+///               └ the field's canvas view        ← excluded from capture
+///                   └ FlutterViewController.view
 ///
-/// Everything here is defensive. The canvas is located by inspecting the
-/// field's own subviews at runtime; no private class name is required. If the
-/// hierarchy is not what is expected - or any invariant fails after the
-/// move - the controller undoes everything and reports failure, and the app
-/// falls back to the existing behaviour (capture detection, black overlay,
-/// players paused and muted). It never leaves the app blank or unrendered.
+/// The Flutter view is moved as a **view**, with UIKit's own `addSubview`, so
+/// the view tree and the layer tree always agree. (Moving only the window's
+/// layer under a subview of that same window made them disagree, and UIKit
+/// crashed in its next layout pass at launch.)
+///
+/// Protection is switched by flipping `isSecureTextEntry`; nothing is torn
+/// down. When the canvas cannot be found the Flutter view is hosted in the
+/// field itself: the app works exactly as before and stays covered by capture
+/// detection, the black overlay and the paused/muted players.
 final class SecureCanvasController {
+    private weak var container: SecureContainerViewController?
+    private var wantsProtection = false
 
-    /// The window whose layer is currently re-parented.
-    private weak var protectedWindow: UIWindow?
-    /// The secure field; retained by the window as a subview, kept here too.
-    private var secureField: UITextField?
-    /// The field's own rendering canvas, now hosting the window layer.
-    private var canvasLayer: CALayer?
-    /// Where the window layer lived before. Held strongly on purpose: the undo
-    /// path must be able to put the window layer back even if UIKit would
-    /// otherwise have released this layer, because a window whose layer has no
-    /// superlayer renders nothing.
-    private var hostLayer: CALayer?
-    /// The window layer's original z-position among its siblings.
-    private var hostIndex: UInt32 = 0
+    /// Whether the Flutter view is rendering inside the secure canvas now.
+    var isIntact: Bool { container?.isSecureCanvasActive ?? false }
 
-    /// Whether the app window is currently rendering inside the secure canvas.
-    private(set) var isActive = false
+    /// Whether protection was asked for but the canvas could not be used.
+    var didFallBack: Bool { wantsProtection && container != nil && !isIntact }
 
-    /// Whether the last attempt failed and the app is relying on detection
-    /// plus the black overlay instead. Reported through `getProtectionStatus`
-    /// so this can be checked on a device.
-    private(set) var didFallBack = false
-
-    /// Points of slack allowed between the canvas and the window it must cover.
-    private static let tolerance: CGFloat = 2.0
-
-    /// Whether the app window is still rendering inside the canvas.
-    ///
-    /// UIKit can move a window's layer back under the scene's own host layer -
-    /// `makeKeyAndVisible()` is one way - which would silently leave the app
-    /// capturable again. `apply(to:)` re-installs the canvas when this is
-    /// false, so re-asserting it is self-healing.
-    var isIntact: Bool {
-        guard isActive, let window = protectedWindow, let canvas = canvasLayer else { return false }
-        return window.layer.superlayer === canvas && secureField?.superview === window
-    }
-
-    // MARK: - Apply
-
-    /// Re-parents `window`'s layer into a secure canvas.
-    ///
-    /// - Returns: `true` when the window now renders inside the secure canvas,
-    ///   `false` when nothing was changed (or everything was undone) and the
-    ///   caller must rely on detection + overlay.
-    @discardableResult
-    func apply(to window: UIWindow) -> Bool {
-        return apply(to: window, allowRetry: true)
-    }
-
-    @discardableResult
-    private func apply(to window: UIWindow, allowRetry: Bool) -> Bool {
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in self?.apply(to: window, allowRetry: allowRetry) }
-            return false
-        }
-        if isActive, protectedWindow === window, isIntact { return true }
-        if isActive { remove() }
-
-        // The window has to be in the render tree already: its layer's parent
-        // is what the secure field's layer takes the place of.
-        guard let host = window.layer.superlayer else {
-            // Not in the render tree yet (a window still being attached); try
-            // again on the next turn of the run loop.
-            if allowRetry {
-                DispatchQueue.main.async { [weak self] in
-                    self?.apply(to: window, allowRetry: false)
-                }
-                return false
-            }
-            didFallBack = true
-            return false
-        }
-
-        let field = makeSecureField()
-        window.addSubview(field)
-        NSLayoutConstraint.activate([
-            field.topAnchor.constraint(equalTo: window.topAnchor),
-            field.bottomAnchor.constraint(equalTo: window.bottomAnchor),
-            field.leadingAnchor.constraint(equalTo: window.leadingAnchor),
-            field.trailingAnchor.constraint(equalTo: window.trailingAnchor)
-        ])
-        // Force the field to build and lay out its internal canvas.
-        window.layoutIfNeeded()
-
-        guard let canvas = SecureCanvasController.canvasView(of: field, covering: window) else {
-            field.removeFromSuperview()
-            // The field builds its canvas lazily, so one layout pass may not be
-            // enough on a window that is still settling (launch, rotation).
-            // Try once more on the next turn of the run loop before giving up
-            // and leaving the student to detection + overlay.
-            if allowRetry {
-                DispatchQueue.main.async { [weak self] in
-                    self?.apply(to: window, allowRetry: false)
-                }
-                return false
-            }
-            didFallBack = true
-            return false
-        }
-
-        let index = SecureCanvasController.index(of: window.layer, in: host)
-
-        // Put the field's layer exactly where the window's layer was, so the
-        // z-order against other windows (keyboard, the protection overlay) is
-        // unchanged, then nest the window's layer inside the canvas.
-        if let index = index {
-            host.insertSublayer(field.layer, at: index)
-        } else {
-            host.addSublayer(field.layer)
-        }
-        canvas.layer.addSublayer(window.layer)
-
-        protectedWindow = window
-        secureField = field
-        canvasLayer = canvas.layer
-        hostLayer = host
-        hostIndex = index ?? UInt32(max(0, (host.sublayers?.count ?? 1) - 1))
-        isActive = true
-
-        // Everything must be exactly as intended; anything else is undone
-        // rather than risking a blank or shifted app.
-        guard window.layer.superlayer === canvas.layer,
-              field.layer.superlayer === host else {
-            remove()
-            didFallBack = true
-            return false
-        }
-
-        didFallBack = false
-        return true
-    }
-
-    private func makeSecureField() -> UITextField {
-        let field = UITextField()
-        field.isSecureTextEntry = true
-        // The field exists only to lend its canvas: it must never take a
-        // touch, become first responder or bring up a keyboard. Its own views
-        // stay in the window, above the Flutter view, so interaction is off.
-        field.isUserInteractionEnabled = false
-        field.isAccessibilityElement = false
-        field.backgroundColor = .clear
-        field.textColor = .clear
-        field.tintColor = .clear
-        field.borderStyle = .none
-        field.translatesAutoresizingMaskIntoConstraints = false
-        return field
-    }
-
-    // MARK: - Remove
-
-    /// Puts the window's layer back where it was and tears the field down.
-    ///
-    /// Safe to call at any time, including when nothing was applied.
-    func remove() {
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in self?.remove() }
+    /// Wraps the window's `FlutterViewController` in the secure container.
+    /// Safe to call repeatedly; does nothing for any other root.
+    func install(in window: UIWindow, protected: Bool) {
+        wantsProtection = protected
+        if let existing = window.rootViewController as? SecureContainerViewController {
+            container = existing
+            existing.setProtected(protected)
             return
         }
-        defer {
-            secureField = nil
-            canvasLayer = nil
-            hostLayer = nil
-            hostIndex = 0
-            protectedWindow = nil
-            isActive = false
-        }
-        guard isActive else { return }
-
-        if let window = protectedWindow {
-            if window.layer.superlayer === canvasLayer {
-                window.layer.removeFromSuperlayer()
-            }
-            if let host = hostLayer, window.layer.superlayer == nil {
-                let count = UInt32(host.sublayers?.count ?? 0)
-                host.insertSublayer(window.layer, at: min(hostIndex, count))
-            }
-            window.setNeedsLayout()
-        }
-        secureField?.layer.removeFromSuperlayer()
-        secureField?.removeFromSuperview()
+        guard let flutter = window.rootViewController as? FlutterViewController else { return }
+        let wrapper = SecureContainerViewController(content: flutter)
+        window.rootViewController = wrapper
+        container = wrapper
+        wrapper.setProtected(protected)
     }
 
-    // MARK: - Canvas discovery
+    func setProtected(_ protected: Bool) {
+        wantsProtection = protected
+        container?.setProtected(protected)
+    }
+}
 
-    /// Finds the view a secure text field renders itself into.
+/// Root view controller that hosts Flutter inside a secure text field.
+///
+/// Everything UIKit asks the root about (status bar, home indicator, edge
+/// gestures, orientations) is answered by the Flutter view controller.
+final class SecureContainerViewController: UIViewController {
+    let content: UIViewController
+    private let field = SecureHostField()
+
+    init(content: UIViewController) {
+        self.content = content
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    var isSecureCanvasActive: Bool { isViewLoaded && field.isHostedInSecureCanvas }
+
+    override func loadView() {
+        let root = UIView()
+        root.backgroundColor = .black
+        view = root
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        field.frame = view.bounds
+        field.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(field)
+        addChild(content)
+        field.host(content.view)
+        content.didMove(toParent: self)
+    }
+
+    func setProtected(_ protected: Bool) {
+        loadViewIfNeeded()
+        field.setProtected(protected)
+    }
+
+    override var childForStatusBarStyle: UIViewController? { content }
+    override var childForStatusBarHidden: UIViewController? { content }
+    override var childForHomeIndicatorAutoHidden: UIViewController? { content }
+    override var childForScreenEdgesDeferringSystemGestures: UIViewController? { content }
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
+        content.supportedInterfaceOrientations
+    }
+    override var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation {
+        content.preferredInterfaceOrientationForPresentation
+    }
+    override var shouldAutorotate: Bool { content.shouldAutorotate }
+}
+
+/// A secure text field used only for its capture-proof canvas.
+///
+/// It never edits, never becomes first responder and never shows a keyboard.
+/// Touches and accessibility go straight to the hosted Flutter view, and the
+/// field's own gesture recognizers are refused, so it behaves as a plain
+/// pass-through container.
+final class SecureHostField: UITextField {
+    private weak var hostedView: UIView?
+    private(set) var isHostedInSecureCanvas = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        borderStyle = .none
+        backgroundColor = .clear
+        textColor = .clear
+        tintColor = .clear
+        autocorrectionType = .no
+        spellCheckingType = .no
+        isAccessibilityElement = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override var canBecomeFirstResponder: Bool { false }
+    override var canBecomeFocused: Bool { false }
+
+    override func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+        recognizer.view === self ? false : super.gestureRecognizerShouldBegin(recognizer)
+    }
+
+    /// Hit-tests the hosted view directly. The canvas may be smaller than the
+    /// screen; going through it would drop touches outside its bounds.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard let hosted = hostedView, !isHidden, isUserInteractionEnabled, alpha > 0.01 else {
+            return nil
+        }
+        return hosted.hitTest(convert(point, to: hosted), with: event)
+    }
+
+    override var accessibilityElements: [Any]? {
+        get { hostedView.map { [$0] } }
+        set {}
+    }
+
+    func host(_ view: UIView) {
+        hostedView = view
+        placeHostedView()
+    }
+
+    func setProtected(_ protected: Bool) {
+        if isSecureTextEntry != protected { isSecureTextEntry = protected }
+        setNeedsLayout()
+        layoutIfNeeded()
+        placeHostedView()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        placeHostedView()
+    }
+
+    /// Keeps the hosted view in the secure canvas when protected, otherwise in
+    /// the field itself, always on top and always covering the field exactly.
+    private func placeHostedView() {
+        guard let hosted = hostedView else { return }
+        let canvas = isSecureTextEntry ? secureCanvas(excluding: hosted) : nil
+        let target: UIView = canvas ?? self
+        if hosted.superview !== target {
+            target.addSubview(hosted)
+        } else if target.subviews.last !== hosted {
+            target.bringSubviewToFront(hosted)
+        }
+        let frame = target.convert(bounds, from: self)
+        if hosted.frame != frame { hosted.frame = frame }
+        isHostedInSecureCanvas = canvas != nil
+    }
+
+    /// The view the secure field renders its text into.
     ///
-    /// No private class name is relied on. Views that are plainly something
-    /// else (controls, labels, image and scroll views) are discarded, then the
-    /// remaining candidate has to actually cover the window, otherwise the app
-    /// would render offset or clipped once nested inside it. A name containing
-    /// "canvas" is used only as a preference between candidates, never as a
-    /// requirement.
-    private static func canvasView(of field: UITextField, covering window: UIWindow) -> UIView? {
-        let candidates = field.subviews.filter { isPlainContainer($0) && covers(window, $0) }
+    /// No private class name is required: controls, labels, image/scroll views
+    /// and anything that clips are ruled out (a clipping canvas would cut the
+    /// app off). A name containing "canvas" only breaks a tie.
+    private func secureCanvas(excluding hosted: UIView) -> UIView? {
+        let candidates = subviews.filter { view in
+            view !== hosted
+                && !view.isHidden
+                && !(view is UIControl || view is UILabel || view is UIImageView
+                     || view is UIScrollView || view is UIStackView || view is UIVisualEffectView)
+                && !view.clipsToBounds
+                && !view.layer.masksToBounds
+        }
         if let named = candidates.first(where: {
             String(describing: type(of: $0)).lowercased().contains("canvas")
         }) {
             return named
         }
         return candidates.count == 1 ? candidates.first : nil
-    }
-
-    private static func isPlainContainer(_ view: UIView) -> Bool {
-        if view is UIControl { return false }
-        if view is UILabel || view is UIImageView || view is UIScrollView { return false }
-        if view is UIStackView || view is UIVisualEffectView { return false }
-        if view.isHidden { return false }
-        return true
-    }
-
-    /// Whether `view` lines up with the window's own frame, within a point.
-    private static func covers(_ window: UIWindow, _ view: UIView) -> Bool {
-        let originInWindow = view.convert(view.bounds.origin, to: window)
-        guard abs(originInWindow.x) <= tolerance, abs(originInWindow.y) <= tolerance else {
-            return false
-        }
-        let size = view.bounds.size
-        let target = window.bounds.size
-        return abs(size.width - target.width) <= tolerance
-            && abs(size.height - target.height) <= tolerance
-    }
-
-    private static func index(of layer: CALayer, in host: CALayer) -> UInt32? {
-        guard let position = host.sublayers?.firstIndex(where: { $0 === layer }) else { return nil }
-        return UInt32(position)
     }
 }

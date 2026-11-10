@@ -35,6 +35,9 @@ class SceneDelegate: FlutterSceneDelegate {
         options connectionOptions: UIScene.ConnectionOptions
     ) {
         super.scene(scene, willConnectTo: session, options: connectionOptions)
+        if let window = window {
+            protection.installSecureCanvas(in: window)
+        }
         attachScreenProtection()
     }
 
@@ -47,9 +50,6 @@ class SceneDelegate: FlutterSceneDelegate {
         super.sceneDidBecomeActive(scene)
         attachScreenProtection()
         protection.handleAppDidBecomeActive()
-        // The scene owns the window, so re-assert the capture-proof canvas
-        // here: a window replaced while the app was away would otherwise be
-        // rendering outside it, leaving captures readable.
         protection.reassertSecureCanvas()
     }
 
