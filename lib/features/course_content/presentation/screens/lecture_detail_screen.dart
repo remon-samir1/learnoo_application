@@ -624,6 +624,15 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   int _lastSavedWatchedSeconds = -1;
   bool _viewCountApiCalled = false;
 
+  /// One view per visit to this screen, whatever happens to the player.
+  ///
+  /// `_viewCountApiCalled` is cleared whenever the player is rebuilt — a
+  /// retry, the fallback to another source URL, or a mid-stream recovery — so
+  /// a single sitting could be counted more than once and burn through the
+  /// student's views. This one is only ever set, never reset, for the life of
+  /// the screen.
+  bool _viewCountedThisSession = false;
+
   bool _isLoadingChapter = true;
   bool _isLoadingDiscussions = false;
   bool _isOfflineMode = false;
@@ -953,8 +962,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     debugPrint(
       '[LectureDetail] _onViewThresholdReached() - _viewCountApiCalled=$_viewCountApiCalled, _isOfflineMode=$_isOfflineMode',
     );
-    if (_viewCountApiCalled) return;
+    if (_viewCountApiCalled || _viewCountedThisSession) return;
     _viewCountApiCalled = true;
+    _viewCountedThisSession = true;
 
     final chapterIdString = widget.chapterId;
     final chapterId = int.tryParse(chapterIdString);
@@ -1068,33 +1078,55 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
       '[LectureDetail] _checkAndEnforceViewLimit: totalViews=$totalViews, maxViews=$_maxViews',
     );
 
-    if (totalViews >= _maxViews && _maxViews > 0) {
+    if (totalViews < _maxViews || _maxViews <= 0) return;
+
+    debugPrint(
+      '[LectureDetail] View limit reached ($totalViews >= $_maxViews).',
+    );
+
+    // The view that just pushed the count to the limit is the one playing right
+    // now, and the student already spent it — cutting them off mid-lecture (the
+    // threshold is reached near the end) takes a view and gives nothing back.
+    // So the lecture plays to the end; the limit applies the next time the
+    // chapter is opened, which the access check on load enforces.
+    if (_viewCountedThisSession) {
       debugPrint(
-        '[LectureDetail] View limit reached ($totalViews >= $_maxViews). Blocking access.',
+        '[LectureDetail] Last view spent on the session in progress; '
+        'letting it finish and locking on the next open.',
       );
-
-      _betterPlayerController?.pause();
-
-      final videoId = '${widget.courseId}_${widget.chapterId}';
-      await _encryptedVideoService.deleteDownloadedVideo(videoId);
-      debugPrint(
-        '[LectureDetail] Deleted downloaded video due to exhausted views',
-      );
-
-      setState(() {
-        _canWatch = false;
-        _errorMessage = 'course.maximum_views_reached'.tr();
-      });
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('course.maximum_views_reached'.tr()),
-            backgroundColor: const Color(0xFFFF4B4B),
+            content: Text('course.last_view_in_progress'.tr()),
+            backgroundColor: const Color(0xFFF2994A),
             duration: const Duration(seconds: 5),
           ),
         );
       }
+      return;
+    }
+
+    _betterPlayerController?.pause();
+
+    final videoId = '${widget.courseId}_${widget.chapterId}';
+    await _encryptedVideoService.deleteDownloadedVideo(videoId);
+    debugPrint(
+      '[LectureDetail] Deleted downloaded video due to exhausted views',
+    );
+
+    setState(() {
+      _canWatch = false;
+      _errorMessage = 'course.maximum_views_reached'.tr();
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('course.maximum_views_reached'.tr()),
+          backgroundColor: const Color(0xFFFF4B4B),
+          duration: const Duration(seconds: 5),
+        ),
+      );
     }
   }
 

@@ -480,7 +480,8 @@
     "discussions": "النقاشات",
     "discussions_with_count": "النقاشات ({})",
     "download_not_allowed": "لا يمكنك تنزيل هذه المحاضرة بعد.",
-    "download_no_video": "لا يوجد فيديو لتنزيله في هذه المحاضرة."
+    "download_no_video": "لا يوجد فيديو لتنزيله في هذه المحاضرة.",
+    "last_view_in_progress": "دي كانت آخر مشاهدة — كمّل المحاضرة دلوقتي، وهتتقفل بعد كده."
   },
   "downloads": {
     "delete_title": "حذف الفيديو",

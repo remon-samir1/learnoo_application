@@ -6,14 +6,16 @@ import 'package:better_player_plus/better_player_plus.dart';
 /// Calls onThresholdReached when view_by_minute threshold is met.
 /// Designed for: POST /chapter/{chapter_id}/view after required minutes.
 ///
-/// APPROACH: Uses wall-clock time (DateTime.now()) as the source of truth
-/// rather than VideoPlayerController.value.position diffs, because BetterPlayer's
-/// underlying VideoPlayerController.value.position does NOT update reliably
-/// every 1-second tick — it may stay the same across multiple ticks, causing
-/// the position-diff method to never accumulate watch time.
+/// APPROACH: counts MEDIA time, the same way the website's
+/// `useChapterViewRecording.ts` does — the player's own position is sampled
+/// while it plays and only small forward deltas are credited
+/// ([_maxCreditedDeltaSeconds]), so dragging the bar forward buys nothing and
+/// playing at 2x credits the minutes the lecture actually covers, exactly as
+/// on the platform. Wall-clock time was used before, which made the app
+/// stricter than the website for anyone watching at a faster speed.
 ///
-/// The wall-clock timer runs only while video is confirmed to be playing
-/// (checked each tick via BetterPlayer events). Pauses/seeks stop accumulation.
+/// A 1-second timer samples the position only while playback is confirmed;
+/// pauses, backgrounding and seeks stop accumulation.
 class VideoWatchTracker extends ChangeNotifier {
   final String chapterId;
   final int viewByMinute;
@@ -27,9 +29,13 @@ class VideoWatchTracker extends ChangeNotifier {
   bool _viewCounted = false;
   bool _isTracking = false;
 
-  // Wall-clock tracking (the real source of truth)
-  DateTime? _trackingStartedAt;
+  // Media-time tracking (the real source of truth)
+  Duration? _lastMediaPosition;
   int _accumulatedMs = 0;
+
+  /// Largest gap between two samples that can be real playback, in seconds.
+  /// The website uses the same 3s rule to tell playback from a seek.
+  static const int _maxCreditedDeltaSeconds = 3;
 
   // Lifecycle state
   bool _isInForeground = true;
@@ -147,20 +153,7 @@ class VideoWatchTracker extends ChangeNotifier {
       return;
     }
 
-    // Calculate wall-clock seconds elapsed since we started tracking.
-    if (_trackingStartedAt == null) {
-      _trackingStartedAt = DateTime.now();
-      return;
-    }
-
-    final now = DateTime.now();
-    final elapsedMs = now.difference(_trackingStartedAt!).inMilliseconds;
-    _trackingStartedAt = now; // reset baseline for next tick
-
-    // The timer fires every 1s. On each tick, we accumulate the milliseconds
-    // (since we already verified the video is playing). We cap the elapsedMs
-    // to 2000ms to detect large gaps (e.g., device sleep) safely.
-    final msToAdd = elapsedMs.clamp(0, 2000);
+    final msToAdd = _consumeMediaProgress();
 
     if (msToAdd > 0) {
       _accumulatedMs += msToAdd;
@@ -187,13 +180,12 @@ class VideoWatchTracker extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Flush wall-clock time accumulated since _trackingStartedAt.
-  /// Called on seek/pause to ensure elapsed time is credited before resetting.
+  /// Credits the media time played since the last sample.
+  ///
+  /// Called on seek and pause so what was genuinely watched up to that point
+  /// counts, while the jump itself does not.
   void _flushWallClockTime() {
-    if (_trackingStartedAt == null) return;
-    final now = DateTime.now();
-    final elapsedMs = now.difference(_trackingStartedAt!).inMilliseconds;
-    final msToAdd = elapsedMs.clamp(0, 2000);
+    final msToAdd = _consumeMediaProgress();
     if (msToAdd > 0) {
       _accumulatedMs += msToAdd;
       final newWatchedSeconds = _accumulatedMs ~/ 1000;
@@ -206,7 +198,36 @@ class VideoWatchTracker extends ChangeNotifier {
         _checkThreshold();
       }
     }
-    _trackingStartedAt = null;
+    _lastMediaPosition = null;
+  }
+
+  /// Milliseconds of lecture played since the previous sample.
+  ///
+  /// Returns 0 for the first sample (it only sets the baseline), for a pause,
+  /// for any backward move, and for a forward jump larger than
+  /// [_maxCreditedDeltaSeconds] — which is what a drag of the progress bar
+  /// looks like. The baseline always moves to the current position, so the
+  /// time skipped over is never credited later either.
+  int _consumeMediaProgress() {
+    final position = _betterPlayerController?.videoPlayerController?.value.position;
+    if (position == null) return 0;
+
+    final previous = _lastMediaPosition;
+    _lastMediaPosition = position;
+    return creditedDeltaMs(previous, position);
+  }
+
+  /// The rule itself, so it can be exercised without a player.
+  ///
+  /// Mirrors the website's `onTimeUpdate`: no baseline yet, a backward move or
+  /// a jump bigger than [_maxCreditedDeltaSeconds] all credit nothing.
+  @visibleForTesting
+  static int creditedDeltaMs(Duration? previous, Duration current) {
+    if (previous == null) return 0;
+    final deltaMs = current.inMilliseconds - previous.inMilliseconds;
+    if (deltaMs <= 0) return 0;
+    if (deltaMs > _maxCreditedDeltaSeconds * 1000) return 0;
+    return deltaMs;
   }
 
   // ─────────────────────── Start / Pause tracking ─────────────────────────
@@ -240,7 +261,8 @@ class VideoWatchTracker extends ChangeNotifier {
     }
 
     _isTracking = true;
-    _trackingStartedAt = DateTime.now();
+    _lastMediaPosition =
+        _betterPlayerController?.videoPlayerController?.value.position;
 
     _trackingTimer?.cancel();
     _trackingTimer = Timer.periodic(const Duration(seconds: 1), (_) => _onTick());
@@ -256,7 +278,7 @@ class VideoWatchTracker extends ChangeNotifier {
 
     _isTracking = false;
     _trackingTimer?.cancel();
-    _trackingStartedAt = null;
+    _lastMediaPosition = null;
 
     debugPrint(
       '[VideoWatchTracker] Paused tracking. '
@@ -335,7 +357,7 @@ class VideoWatchTracker extends ChangeNotifier {
     _viewCounted = true;
     _isTracking = false;
     _trackingTimer?.cancel();
-    _trackingStartedAt = null;
+    _lastMediaPosition = null;
 
     debugPrint(
       '[VideoWatchTracker] VIEW COUNTED for chapter $chapterId! '
@@ -355,7 +377,7 @@ class VideoWatchTracker extends ChangeNotifier {
     _watchedSeconds = 0;
     _accumulatedMs = 0;
     _viewCounted = false;
-    _trackingStartedAt = null;
+    _lastMediaPosition = null;
     notifyListeners();
     debugPrint('[VideoWatchTracker] Reset for chapter $chapterId');
   }
@@ -366,7 +388,7 @@ class VideoWatchTracker extends ChangeNotifier {
     detach();
     _trackingTimer?.cancel();
     _trackingTimer = null;
-    _trackingStartedAt = null;
+    _lastMediaPosition = null;
     debugPrint('[VideoWatchTracker] Disposed for chapter $chapterId');
   }
 

@@ -480,7 +480,8 @@
     "discussions": "Discussions",
     "discussions_with_count": "Discussions ({})",
     "download_not_allowed": "You cannot download this lecture yet.",
-    "download_no_video": "This lecture has no video to download."
+    "download_no_video": "This lecture has no video to download.",
+    "last_view_in_progress": "This was your last view — finish the lecture now; it will be locked afterwards."
   },
   "exams": {
     "title": "Quizzes & Exams",
