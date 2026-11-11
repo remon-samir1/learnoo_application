@@ -237,7 +237,7 @@ class QuizQuestion {
   final int quizId;
   final String text;
   final String? image; // URL for question image
-  final int score;
+  final num score;
   final String type; // 'single_choice', 'multiple_choice', 'true_false', 'short_answer'
   final bool autoCorrect;
   final DateTime createdAt;
@@ -294,13 +294,11 @@ class QuizQuestion {
     );
   }
 
-  static int _coerceScore(dynamic value) {
-    if (value is num) return value.round();
-    if (value is String) {
-      final n = num.tryParse(value.trim());
-      if (n != null) return n.round();
-    }
-    return 0;
+  /// The question's weight, kept fractional like the website's `Number(...)`;
+  /// rounding made a 0.5-mark question count as 1 (or 0) in the submitted score.
+  static num _coerceScore(dynamic value) {
+    final n = value is num ? value : num.tryParse(value?.toString().trim() ?? '');
+    return n != null && n.isFinite && n > 0 ? n : 0;
   }
 
   // Helper methods for question types
@@ -552,7 +550,8 @@ class QuizAnswerReview {
     if (answers is! List) return result;
     for (final row in answers) {
       final parsed = QuizAnswerReview.fromJson(row);
-      if (parsed != null) result[parsed.questionId] = parsed;
+      // First row wins, like the website's `userAnswers.find(...)`.
+      if (parsed != null) result.putIfAbsent(parsed.questionId, () => parsed);
     }
     return result;
   }
@@ -562,8 +561,8 @@ class QuizAnswerReview {
 class QuizResult {
   final String quizId;
   final String quizTitle;
-  final int score;
-  final int totalScore;
+  final num score;
+  final num totalScore;
   final double percentage;
   final int correctAnswers;
   final int totalQuestions;

@@ -5,6 +5,7 @@ import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import '../../data/exam_repository.dart';
 import '../../domain/exam_review.dart';
 import '../../models/quiz_models.dart';
+import '../widgets/review_option_widgets.dart';
 import '../../../../core/widgets/watermark_wrapper.dart';
 import '../../../../core/widgets/image_preview_screen.dart';
 import '../../../../core/services/feature_manager.dart';
@@ -53,6 +54,7 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
     _pageController = PageController();
     _questions = widget.questions;
     _loadUserData();
+    _ensureCorrectAnswers();
     if (widget.resultPayload != null) {
       _applyResultPayload(widget.resultPayload);
     } else {
@@ -121,6 +123,7 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
         question.selectedAnswerId = previous.selectedAnswerId;
         question.selectedAnswerIds = previous.selectedAnswerIds;
         question.textAnswer = previous.textAnswer;
+        _borrowGrading(question, previous);
       }
     }
 
@@ -130,6 +133,77 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
       _serverAnswers = answers;
       if (_currentPage >= _questions.length) {
         _currentPage = _questions.isEmpty ? 0 : _questions.length - 1;
+      }
+    });
+    _ensureCorrectAnswers();
+  }
+
+  static bool _needsGrading(QuizQuestion q) =>
+      !q.isShortAnswer && q.answers.isNotEmpty && !q.answers.any((a) => a.isCorrect);
+
+  /// A payload question can come without options, or with options that carry no
+  /// `is_correct` — then the review printed "n/a" for the right answer. Take the
+  /// options (and their flags) from [source] when it has them.
+  void _borrowGrading(QuizQuestion target, QuizQuestion source) {
+    if (target.answers.isEmpty && source.answers.isNotEmpty) {
+      target.answers = source.answers;
+      return;
+    }
+    if (!_needsGrading(target) || !source.answers.any((a) => a.isCorrect)) {
+      return;
+    }
+    final correctIds = {
+      for (final a in source.answers)
+        if (a.isCorrect) a.answerId,
+    };
+    final correctTexts = {
+      for (final a in source.answers)
+        if (a.isCorrect) a.text.trim(),
+    };
+    target.answers = [
+      for (final a in target.answers)
+        correctIds.contains(a.answerId) || correctTexts.contains(a.text.trim())
+            ? QuizAnswer(
+                id: a.id,
+                answerId: a.answerId,
+                quizQuestionId: a.quizQuestionId,
+                text: a.text,
+                image: a.image,
+                reason: a.reason ??
+                    source.answers
+                        .where((s) => s.answerId == a.answerId)
+                        .map((s) => s.reason)
+                        .firstOrNull,
+                reasonImage: a.reasonImage,
+                isCorrect: true,
+                createdAt: a.createdAt,
+              )
+            : a,
+    ];
+  }
+
+  bool _fetchedQuiz = false;
+
+  /// Last resort, the website's own source: `GET /v1/quiz/{id}` carries every
+  /// option's `is_correct`. The exam-taking endpoints and the result payload
+  /// may leave it out.
+  Future<void> _ensureCorrectAnswers() async {
+    if (_fetchedQuiz || !_questions.any(_needsGrading)) return;
+    _fetchedQuiz = true;
+    final quizId = int.tryParse(widget.result.quizId);
+    if (quizId == null) return;
+    final res = await _examRepository.getQuizById(quizId);
+    if (!mounted || res['success'] != true) return;
+    final quiz = res['data'];
+    if (quiz is! Quiz) return;
+    final graded = {
+      for (final q in questionsFromQuizAttributes(quiz.attributes))
+        q.questionId: q,
+    };
+    setState(() {
+      for (final q in _questions) {
+        final source = graded[q.questionId];
+        if (source != null) _borrowGrading(q, source);
       }
     });
   }
@@ -312,8 +386,6 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
     final isCorrect = review.correct == true;
     final isPending = review.isPending;
     final server = review.server;
-    final userAnswerText = _userAnswerText(review);
-    final correctAnswerText = _correctAnswerText(review);
 
     const pendingColor = Color(0xFFD97706);
     final statusColor = isPending
@@ -326,8 +398,6 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
         ? 'exams.awaiting_grading'.tr()
         : (isCorrect ? 'exams.correct'.tr() : 'exams.incorrect'.tr());
 
-    final selectedAnswers = review.selected;
-    final feedbackAnswers = review.explanationAnswers;
 
     return Container(
       margin: EdgeInsets.zero,
@@ -443,39 +513,42 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
 
                 const SizedBox(height: 20),
 
-                // User's Answer
-                _buildAnswerSection(
-                  title: isCorrect ? 'exams.your_answer_correct'.tr() : 'exams.your_answer'.tr(),
-                  answerText: userAnswerText,
-                  isCorrect: isCorrect,
-                  isPending: isPending,
-                  images: [
-                    for (final a in selectedAnswers)
-                      if (a.hasImage) a.image!,
-                    ...?server?.answerImages,
-                  ],
-                ),
-
-                // Show correct answer if user was wrong
-                if (!isCorrect && !isPending && !question.isShortAnswer) ...[
-                  const SizedBox(height: 12),
-                  _buildAnswerSection(
-                    title: 'exams.correct_answer'.tr(),
-                    answerText: correctAnswerText,
-                    isCorrect: true,
-                    isPending: false,
-                    images: [
-                      for (final a in review.correctAnswers)
-                        if (a.hasImage) a.image!,
-                    ],
-                  ),
-                ],
-
-                // Reason/Explanation (text and image), as on the website:
-                // shown for answers that are correct or were selected.
-                if (feedbackAnswers.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  _buildReasonSection(feedbackAnswers),
+                // Same layout as the website's review: every option listed and
+                // coloured (chosen/correct/missed), explanations under the
+                // options they belong to.
+                if (question.isShortAnswer) ...[
+                  ReviewShortAnswerBox(review: review),
+                  for (final url in server?.answerImages ?? const <String>[])
+                    Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: _ReviewImage(url: url),
+                    ),
+                ] else if (question.answers.isEmpty)
+                  Text(
+                    'exams.no_answer_provided'.tr(),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF475569),
+                    ),
+                  )
+                else ...[
+                  for (final answer in question.answers)
+                    ReviewOptionTile(
+                      answer: answer,
+                      review: review,
+                      imageBuilder: (url) => _ReviewImage(url: url),
+                    ),
+                  if (question.isMultipleChoice)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'exams.type_multiple_choice'.tr(),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF94A3B8),
+                        ),
+                      ),
+                    ),
                 ],
 
                 // Teacher feedback / correction images from grading.
@@ -489,112 +562,6 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildAnswerSection({
-    required String title,
-    required String answerText,
-    required bool isCorrect,
-    required bool isPending,
-    List<String> images = const [],
-  }) {
-    final Color bgColor;
-    final Color borderColor;
-    final Color textColor;
-    if (isPending) {
-      bgColor = const Color(0xFFFFFBEB);
-      borderColor = const Color(0xFFF59E0B);
-      textColor = const Color(0xFFD97706);
-    } else if (isCorrect) {
-      bgColor = const Color(0xFFF0FDF4);
-      borderColor = const Color(0xFF10B981);
-      textColor = const Color(0xFF059669);
-    } else {
-      bgColor = const Color(0xFFFEF2F2);
-      borderColor = const Color(0xFFEF4444);
-      textColor = const Color(0xFFDC2626);
-    }
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: borderColor.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              FaIcon(
-                isPending
-                    ? FontAwesomeIcons.hourglassHalf
-                    : (isCorrect ? FontAwesomeIcons.circleCheck : FontAwesomeIcons.circleXmark),
-                size: 14,
-                color: textColor,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: textColor,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            answerText.isEmpty ? 'exams.no_answer_provided'.tr() : answerText,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-              color: answerText.isEmpty ? const Color(0xFF9CA3AF) : const Color(0xFF1F2937),
-            ),
-          ),
-          for (final url in images) ...[
-            const SizedBox(height: 10),
-            _ReviewImage(url: url),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildReasonSection(List<QuizAnswer> answers) {
-    return _buildNoteSection(
-      icon: FontAwesomeIcons.lightbulb,
-      title: 'exams.explanation'.tr(),
-      background: const Color(0xFFFEF3C7),
-      accent: const Color(0xFFD97706),
-      textColor: const Color(0xFF92400E),
-      children: [
-        for (final answer in answers) ...[
-          if (answer.hasReason)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text(
-                answer.reason!,
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: Color(0xFF92400E),
-                  height: 1.5,
-                ),
-              ),
-            ),
-          if (answer.hasReasonImage)
-            Padding(
-              padding: const EdgeInsets.only(top: 4, bottom: 8),
-              child: _ReviewImage(url: answer.reasonImage!),
-            ),
-        ],
-      ],
     );
   }
 
@@ -662,24 +629,6 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
         ],
       ),
     );
-  }
-
-  /// The student's answer as text: a short answer verbatim, otherwise the
-  /// options resolved from the server's `answer_text`.
-  String _userAnswerText(ExamQuestionReview review) {
-    if (review.question.isShortAnswer) return review.shortText;
-    if (review.selected.isEmpty) {
-      // The row exists but none of its texts matched an option — show what the
-      // server recorded rather than nothing.
-      return review.server?.answerText.trim() ?? '';
-    }
-    return review.selected.map((a) => a.text).join(', ');
-  }
-
-  String _correctAnswerText(ExamQuestionReview review) {
-    final correctAnswers = review.correctAnswers;
-    if (correctAnswers.isEmpty) return 'exams.not_available_short'.tr();
-    return correctAnswers.map((a) => a.text).join(', ');
   }
 }
 

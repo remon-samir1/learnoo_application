@@ -138,17 +138,17 @@ ExamQuestionReview buildQuestionReview(
   final serverText = server?.answerText.trim() ?? '';
   final hasServerRow = server != null;
 
-  List<QuizAnswer> selected;
-  var usedLocal = false;
-  if (hasServerRow) {
+  // The website's order (ExamAnswersReview.tsx): the picks made on this device
+  // when there are any, otherwise the options resolved from `answer_text`.
+  var selected = localSelectedAnswers(question);
+  var usedLocal = true;
+  if (selected.isEmpty && hasServerRow) {
     selected = selectedAnswersFromAnswerText(
       serverText,
       question.answers,
       isShortAnswer: question.isShortAnswer,
     );
-  } else {
-    selected = localSelectedAnswers(question);
-    usedLocal = true;
+    usedLocal = false;
   }
 
   final typed = question.textAnswer?.trim() ?? '';

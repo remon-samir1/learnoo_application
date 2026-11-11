@@ -293,8 +293,8 @@ class ExamRepository {
     required int attemptId,
     required int quizId,
     List<Map<String, dynamic>> answers = const [],
-    required int score,
-    required int totalScore,
+    required num score,
+    required num totalScore,
   }) async {
     try {
       final payload = await _api.put(

@@ -389,32 +389,55 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
     return texts.join(', ');
   }
 
+  /// Saves run strictly one at a time per question.
+  ///
+  /// Every tap used to fire its own request without waiting for the previous
+  /// one. Two quick taps on a new question both saw "no row yet" and POSTed —
+  /// two rows for the same question, and the server grades whichever it reads —
+  /// and a slower earlier PUT could land after a newer one, leaving the old
+  /// choice as the stored answer. Chaining the saves and reading the selection
+  /// only when a save actually runs removes both.
+  final Map<int, Future<void>> _persistChains = {};
+
   /// Sends one question's answer to `/v1/quiz-user-answer`.
   ///
   /// Best-effort: a failed save is logged but never blocks the student, and the
   /// final score still goes up with the attempt.
-  Future<void> _persistAnswer(QuizQuestion question) async {
-    final text = _answerTextFor(question);
-    if (text.isEmpty) return;
+  Future<void> _persistAnswer(QuizQuestion question) {
+    final previous = _persistChains[question.questionId] ?? Future.value();
+    final next = previous.then((_) => _savePersist(question));
+    _persistChains[question.questionId] = next;
+    return next;
+  }
 
-    final attemptId = widget.attempt.id;
-    if (attemptId.isEmpty) return;
+  Future<void> _savePersist(QuizQuestion question) async {
+    try {
+      // Read the answer now, not when the tap happened: a queued save must
+      // carry the latest choice.
+      final text = _answerTextFor(question);
+      if (text.isEmpty) return;
 
-    final result = await _examRepository.saveAnswer(
-      attemptId: attemptId,
-      questionId: question.questionId,
-      answerText: text,
-      existingAnswerId: _answerRowIds[question.questionId],
-    );
+      final attemptId = widget.attempt.id;
+      if (attemptId.isEmpty) return;
 
-    final rowId = result['id'];
-    if (result['success'] == true && rowId != null) {
-      _answerRowIds[question.questionId] = rowId;
+      final result = await _examRepository.saveAnswer(
+        attemptId: attemptId,
+        questionId: question.questionId,
+        answerText: text,
+        existingAnswerId: _answerRowIds[question.questionId],
+      );
+
+      final rowId = result['id'];
+      if (result['success'] == true && rowId != null) {
+        _answerRowIds[question.questionId] = rowId;
+      }
+    } catch (e) {
+      debugPrint('[quiz-user-answer] save failed: $e');
     }
   }
 
-  /// Flushes every answered question. Run before submitting so a pending
-  /// debounce or an unsaved selection is not lost.
+  /// Flushes every answered question and waits for in-flight saves. Run before
+  /// submitting so a pending debounce or an unsaved selection is not lost.
   Future<void> _persistAllAnswers() async {
     _shortAnswerDebounce?.cancel();
     for (final question in _questions) {
@@ -565,8 +588,8 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
 
     // Calculate score client-side based on correct answers
     int correctAnswers = 0;
-    int totalScore = 0;
-    int userScore = 0;
+    num totalScore = 0;
+    num userScore = 0;
     for (final question in _questions) {
       if (question.isUserAnswerCorrect) {
         correctAnswers++;
