@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:easy_localization/easy_localization.dart';
@@ -41,6 +42,7 @@ import '../../../../features/exams/models/quiz_models.dart';
 import '../../services/attachment_permission_service.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../widgets/learnoo_video_controls.dart';
+import '../widgets/still_watching_prompt.dart';
 import '../widgets/lecture_header.dart';
 import '../widgets/attachments_list.dart';
 import '../widgets/quizzes_list.dart';
@@ -151,8 +153,9 @@ class VideoControllerHandler {
   /// video was running. How long the screen is held is the dashboard's
   /// `sleep_per_minute` setting; [ScreenAwakeController] owns the countdown and
   /// calls back here only when the wakelock actually has to change.
-  /// When the window elapses the lecture is paused as well, so the phone is
-  /// not left playing to a dark screen.
+  /// When the window elapses the student is asked whether they are still
+  /// watching; if nobody answers the lecture is paused, so the phone is not
+  /// left playing to a dark screen.
   late final ScreenAwakeController _screenAwake = ScreenAwakeController(
     setAwake: _toggleWakelock,
     timeout: () => VideoSettingsService().screenAwakeTimeout,
@@ -177,12 +180,27 @@ class VideoControllerHandler {
     VideoSettingsService().removeListener(_onVideoSettingsChanged);
   }
 
+  /// Seconds left on the "still watching?" notice, `null` while it is hidden.
+  ValueListenable<int?> get stillWatchingPrompt =>
+      _screenAwake.promptSecondsLeft;
+
+  /// How long the notice stays up before the video pauses.
+  Duration get stillWatchingPromptDuration => _screenAwake.promptDuration;
+
+  /// The student answered the notice: keep playing and start a new window.
+  void stillWatching() => _screenAwake.stillWatching();
+
+  /// Bumped each time the notice ran out and the lecture was paused, so the
+  /// player on screen can bring its controls (and the play button) back up.
+  final ValueNotifier<int> sleepPauses = ValueNotifier<int>(0);
+
   void _pauseForScreenSleep() {
     try {
       _controller?.pause();
     } catch (e) {
       debugPrint('[VideoControllerHandler] pause on screen sleep failed');
     }
+    sleepPauses.value++;
   }
 
   void _toggleWakelock(bool value) {
@@ -860,6 +878,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     super.initState();
     _maxViews = widget.maxViews ?? 5;
     WidgetsBinding.instance.addObserver(this);
+    // The "still watching?" notice ran out and paused the lecture: bring the
+    // controls up so the play button is right there.
+    _videoHandler.sleepPauses.addListener(_revealControls);
     _detectEmulator();
     _loadUserData();
     // Opening a lecture is the moment the screen-awake window matters, so a
@@ -1122,6 +1143,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _videoHandler.sleepPauses.removeListener(_revealControls);
 
     _videoHandler.onPositionChanged = null;
     _videoHandler.onPlayingStateChanged = null;
@@ -3446,6 +3468,11 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
           studentCode: _studentCode,
           phone: _phoneNumber,
           featureManager: _featureManager,
+          stillWatchingPrompt: _videoHandler.stillWatchingPrompt,
+          stillWatchingPromptDuration:
+              _videoHandler.stillWatchingPromptDuration,
+          onStillWatching: _videoHandler.stillWatching,
+          sleepPauses: _videoHandler.sleepPauses,
           onExit: () {
             if (mounted) {
               setState(() => _isInFullScreen = false);
@@ -3512,6 +3539,13 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                         isBuffering: _isBuffering,
                         onToggleFullScreen: _enterFullScreen,
                         leadingAction: _buildAskMomentAction(),
+                      ),
+                    ),
+                    Positioned.fill(
+                      child: StillWatchingPrompt(
+                        secondsLeft: _videoHandler.stillWatchingPrompt,
+                        total: _videoHandler.stillWatchingPromptDuration,
+                        onStillWatching: _videoHandler.stillWatching,
                       ),
                     ),
                     if (_isEmulator)
@@ -4981,11 +5015,22 @@ class _FullScreenVideoPlayer extends StatefulWidget {
   final FeatureManager featureManager;
   final VoidCallback? onExit;
 
+  /// The inline player's "still watching?" notice, shown here too while the
+  /// lecture is fullscreen — same clock, same button.
+  final ValueListenable<int?> stillWatchingPrompt;
+  final Duration stillWatchingPromptDuration;
+  final VoidCallback onStillWatching;
+  final ValueListenable<int> sleepPauses;
+
   const _FullScreenVideoPlayer({
     required this.sourceController,
     required this.studentCode,
     required this.phone,
     required this.featureManager,
+    required this.stillWatchingPrompt,
+    required this.stillWatchingPromptDuration,
+    required this.onStillWatching,
+    required this.sleepPauses,
     this.onExit,
   });
 
@@ -5006,10 +5051,12 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
     // The packaged controls are off, so the chrome is shown on entry and then
     // hidden by the same auto-hide the inline player uses.
     _startHideControlsTimer();
+    widget.sleepPauses.addListener(_revealControls);
   }
 
   @override
   void dispose() {
+    widget.sleepPauses.removeListener(_revealControls);
     _hideControlsTimer?.cancel();
     if (!_exitCalled) {
       _exitFullScreenMode();
@@ -5194,6 +5241,13 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
                 isFullScreen: true,
                 onToggleFullScreen: _pop,
                 leadingAction: _buildAskMomentAction(),
+              ),
+            ),
+            Positioned.fill(
+              child: StillWatchingPrompt(
+                secondsLeft: widget.stillWatchingPrompt,
+                total: widget.stillWatchingPromptDuration,
+                onStillWatching: widget.onStillWatching,
               ),
             ),
           ],

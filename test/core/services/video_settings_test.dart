@@ -194,23 +194,48 @@ void main() {
       expect(scheduler.scheduledFor, const Duration(minutes: 5));
     });
 
-    test('releases the screen when the window elapses, playback continuing',
-        () {
+    /// The window elapses and then every second of the notice runs out.
+    void runOutWindowAndNotice() {
+      scheduler.fire();
+      for (var i = 0; i < 15; i++) {
+        expect(scheduler.scheduledFor, const Duration(seconds: 1));
+        scheduler.fire();
+      }
+    }
+
+    test('asks "still watching?" when the window elapses, screen held', () {
       controller.playbackStarted();
       scheduler.fire();
 
+      expect(controller.promptSecondsLeft.value, 15);
+      expect(toggles, [true], reason: 'the screen stays on for the notice');
+      expect(expiredCount, 0, reason: 'the video keeps playing meanwhile');
+      expect(scheduler.scheduledFor, const Duration(seconds: 1));
+    });
+
+    test('stops the lecture and releases the screen when nobody answers', () {
+      controller.playbackStarted();
+      runOutWindowAndNotice();
+
+      expect(expiredCount, 1, reason: 'playback is paused with the screen');
       expect(toggles, [true, false]);
       expect(controller.isAwake, isFalse);
+      expect(controller.promptSecondsLeft.value, isNull);
       expect(controller.hasPendingTimeout, isFalse);
     });
 
-    test('stops the lecture when the window elapses', () {
+    test('answering the notice restarts the window without stopping', () {
       controller.playbackStarted();
       scheduler.fire();
+      scheduler.fire();
+      expect(controller.promptSecondsLeft.value, 14);
 
-      expect(expiredCount, 1, reason: 'playback is paused with the screen');
-      expect(controller.isAwake, isFalse);
-      expect(controller.hasPendingTimeout, isFalse);
+      controller.stillWatching();
+
+      expect(controller.promptSecondsLeft.value, isNull);
+      expect(scheduler.scheduledFor, const Duration(minutes: 5));
+      expect(toggles, [true]);
+      expect(expiredCount, 0);
     });
 
     test('a value arriving mid-lecture starts the countdown', () {
@@ -270,7 +295,7 @@ void main() {
     test('after the window elapsed only pressing play takes the screen back',
         () {
       controller.playbackStarted();
-      scheduler.fire();
+      runOutWindowAndNotice();
       expect(controller.isAwake, isFalse);
 
       // The lecture is paused at this point, so touching the controls must not
