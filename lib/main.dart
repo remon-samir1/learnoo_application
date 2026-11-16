@@ -13,6 +13,7 @@ import 'core/theme/dynamic_theme.dart';
 import 'core/local/hive_service.dart';
 import 'core/sync/sync_service.dart';
 import 'core/sync/sync_processors.dart';
+import 'core/widgets/app_update_gate.dart';
 import 'core/widgets/back_button_handler.dart';
 import 'features/auth/presentation/screens/login_screen.dart';
 import 'features/auth/presentation/screens/splash_screen.dart';
@@ -206,7 +207,9 @@ class _HomeAppState extends State<LearnooApp> with WidgetsBindingObserver {
           textDirection: locale.languageCode == 'ar'
               ? TextDirection.rtl
               : TextDirection.ltr,
-          child: child!,
+          // Above the navigator: an app below the dashboard's minimum version
+          // shows only the "update required" screen.
+          child: AppUpdateGate(child: child!),
         );
       },
     );

@@ -747,13 +747,7 @@
     "error_picking_image": "Error picking image: {}"
   },
   "press_back_again_to_exit": "Press back again to exit",
-  "update_available": "Update Available",
-  "new_version": "New Version",
   "file_size": "File Size",
-  "force_update_message": "A new version of the app is required. Please update to continue using the app.",
-  "optional_update_message": "A new version of the app is available. Update now for the best experience.",
-  "skip": "Skip",
-  "update_now": "Update Now",
   "community": {
     "title": "Community",
     "post": "Post",
@@ -1451,6 +1445,8 @@
     "secure_video_failed": "Failed to load secure video.\nPlease check your connection or DRM license.",
     "secure_page_failed": "Failed to load page secure image."
   },
-  "update_play_store_failed": "Could not open the Play Store. Please update the app manually.",
-  "update_play_store_error": "Could not open the Play Store: {}"
+  "update_required_title": "Update required",
+  "update_required_message": "A new version of the app is available. Please update it from the store to continue.",
+  "update_required_button": "Update now",
+  "update_store_open_failed": "Could not open the store. Please open it and update the app manually."
 }

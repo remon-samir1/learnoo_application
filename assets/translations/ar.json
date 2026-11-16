@@ -747,13 +747,7 @@
     "error_picking_image": "خطأ في اختيار الصورة: {}"
   },
   "press_back_again_to_exit": "اضغط مرة أخرى للخروج",
-  "update_available": "تحديث متاح",
-  "new_version": "إصدار جديد",
   "file_size": "حجم الملف",
-  "force_update_message": "إصدار جديد من التطبيق مطلوب. يرجى التحديث للمتابعة في استخدام التطبيق.",
-  "optional_update_message": "يتوفر إصدار جديد من التطبيق. قم بالتحديث الآن للحصول على أفضل تجربة.",
-  "skip": "تخطي",
-  "update_now": "تحديث الآن",
   "community": {
     "title": "المجتمع",
     "post": "منشور",
@@ -1511,6 +1505,8 @@
     "secure_video_failed": "تعذّر تحميل الفيديو المحمي.\nيرجى التحقق من اتصالك أو من ترخيص الحماية.",
     "secure_page_failed": "تعذّر تحميل صورة الصفحة المحمية."
   },
-  "update_play_store_failed": "تعذّر فتح متجر Play. يرجى تحديث التطبيق يدويًا.",
-  "update_play_store_error": "تعذّر فتح متجر Play: {}"
+  "update_required_title": "التحديث مطلوب",
+  "update_required_message": "يتوفر إصدار جديد من التطبيق. يرجى تحديثه من المتجر للمتابعة.",
+  "update_required_button": "تحديث الآن",
+  "update_store_open_failed": "تعذّر فتح المتجر. يرجى فتحه وتحديث التطبيق يدويًا."
 }

@@ -81,8 +81,8 @@ class ApiConstants {
   // Live room endpoints
   static const String liveRooms = '/v1/live-room';
 
-  // OTA (Over-The-Air) update endpoint
-  static const String otaLatest = '/v1/ota/latest';
+  /// Minimum app version per store (public; read at start and on resume).
+  static const String appUpdate = '/v1/app-update';
 
   // Social links endpoint
   static const String socialLinks = '/v1/social-link';

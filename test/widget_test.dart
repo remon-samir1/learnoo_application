@@ -41,7 +41,6 @@ void main() {
   /// The minimum the screen needs: material localizations and a navigator.
   Widget harness({
     required SplashRouter router,
-    Future<Map<String, dynamic>?> Function()? checkForUpdate,
     Locale locale = const Locale('en'),
   }) {
     return MaterialApp(
@@ -54,7 +53,6 @@ void main() {
       supportedLocales: const [Locale('en'), Locale('ar')],
       home: SplashScreen(
         router: router,
-        checkForUpdate: checkForUpdate ?? () async => null,
         splashDelay: Duration.zero,
       ),
     );
@@ -195,20 +193,6 @@ void main() {
     await settleSplash(tester);
 
     expect(resolveCount, 1);
-  });
-
-  testWidgets('a failing update check still routes rather than hanging',
-      (tester) async {
-    await tester.pumpWidget(
-      harness(
-        router: routerReturning(SplashDestination.login),
-        checkForUpdate: () async => throw Exception('offline'),
-      ),
-    );
-    await settleSplash(tester);
-
-    // An unreachable OTA endpoint must never strand a user on the splash.
-    expect(find.byType(LoginScreen), findsOneWidget);
   });
 
   testWidgets('routes the same way in Arabic', (tester) async {
