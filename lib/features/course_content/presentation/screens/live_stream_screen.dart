@@ -9,6 +9,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../../../auth/domain/student_profile.dart';
 import '../../data/models/live_room.dart';
+import '../../domain/live_meeting_config.dart';
 import 'live_stream_webview_screen.dart';
 
 /// Entry point for a live session.
@@ -92,58 +93,19 @@ class _NativeLiveStreamScreenState extends State<NativeLiveStreamScreen> {
       final options = JitsiMeetConferenceOptions(
         serverURL: ApiConstants.jitsiServerUrl,
         room: ApiConstants.jitsiRoomName(widget.liveRoom.id),
-        // Same overrides as the website's student `JitsiMeeting` embed.
-        configOverrides: {
-          'startWithAudioMuted': !widget.isHost,
-          'startWithVideoMuted': !widget.isHost,
-          'disableModeratorIndicator': true,
-          'enableEmailInStats': false,
-          'prejoinPageEnabled': false,
-          'disableDeepLinking': true,
-          'disableChat': !chatEnabled,
-          'requireDisplayName': false,
-          'remoteVideoMenu': {
-            'disabled': true,
-            'disableKick': true,
-            'disableGrantModerator': true,
-            'disablePrivateChat': true,
-            'disableDemote': true,
-          },
-          'disableRemoteMute': true,
-          'disableKick': true,
-          'disableGrantModerator': true,
-          'disablePrivateChat': true,
-          'disableInviteFunctions': true,
-          'hideConferenceSubject': true,
-          'hideConferenceTimer': false,
-          'participantsPane': {
-            'hideModeratorSettingsTab': true,
-            'hideMoreActionsButton': true,
-            'hideMuteAllButton': true,
-          },
-          // Students receive the host's whiteboard canvas.
-          'whiteboard': {
-            'enabled': true,
-            'collabServerBaseUrl': 'https://whiteboard.jitsi.net',
-          },
-          // Students knock and wait in the lobby until the host admits them.
-          'lobby': {
-            'enabled': true,
-            'autoKnock': true,
-          },
-          if (!widget.isHost)
-            'toolbarButtons': [
-              'microphone',
-              'raisehand',
-              'reactions',
-              if (chatEnabled) 'chat',
-              'tileview',
-              'settings',
-              'fullscreen',
-              'hangup',
-            ],
-        },
+        // A student gets exactly the website's student `JitsiMeeting`
+        // options (no pre-join screen, Learnoo's whiteboard server).
+        configOverrides: widget.isHost
+            ? _hostConfigOverrides(chatEnabled)
+            : {
+                ...LiveMeetingConfig.studentConfigOverwrite(
+                  chatEnabled: chatEnabled,
+                ),
+                'requireDisplayName': false,
+              },
         featureFlags: {
+          // The native SDK's own switch for the pre-join screen.
+          'prejoinpage.enabled': false,
           'invite.enabled': false,
           'meeting-name.enabled': false,
           'live-streaming.enabled': false,
@@ -193,6 +155,47 @@ class _NativeLiveStreamScreenState extends State<NativeLiveStreamScreen> {
       });
     }
   }
+
+  /// Reserved for instructor builds: unmuted, no student toolbar.
+  Map<String, Object> _hostConfigOverrides(bool chatEnabled) => {
+      'startWithAudioMuted': false,
+      'startWithVideoMuted': false,
+      'disableModeratorIndicator': true,
+      'enableEmailInStats': false,
+      'prejoinConfig': {'enabled': false},
+      'disableDeepLinking': true,
+      'disableChat': !chatEnabled,
+      'requireDisplayName': false,
+      'remoteVideoMenu': {
+        'disabled': true,
+        'disableKick': true,
+        'disableGrantModerator': true,
+        'disablePrivateChat': true,
+        'disableDemote': true,
+      },
+      'disableRemoteMute': true,
+      'disableKick': true,
+      'disableGrantModerator': true,
+      'disablePrivateChat': true,
+      'disableInviteFunctions': true,
+      'hideConferenceSubject': true,
+      'hideConferenceTimer': false,
+      'participantsPane': {
+        'hideModeratorSettingsTab': true,
+        'hideMoreActionsButton': true,
+        'hideMuteAllButton': true,
+      },
+      // Students receive the host's whiteboard canvas.
+      'whiteboard': {
+        'enabled': true,
+        'collabServerBaseUrl': LiveMeetingConfig.whiteboardCollabServer,
+      },
+      // Students knock and wait in the lobby until the host admits them.
+      'lobby': {
+        'enabled': true,
+        'autoKnock': true,
+      },
+    };
 
   Future<StudentProfile?> _loadProfile() async {
     try {

@@ -14,6 +14,8 @@ import '../../../../core/widgets/header_back_button.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../../../auth/domain/student_profile.dart';
 import '../../data/models/live_room.dart';
+import '../../domain/live_meeting_config.dart';
+import '../widgets/live_tools_bar.dart';
 import 'live_stream_screen.dart';
 
 /// Student live session rendered with the Jitsi **external API** inside a
@@ -79,6 +81,11 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
   bool _whiteboardOpen = false;
   bool _chatOpen = false;
   bool _hasLeft = false;
+
+  /// Live tools bar state, kept in step with Jitsi's events like the website.
+  bool _audioMuted = true;
+  bool _handRaised = false;
+  int _unreadChatCount = 0;
   WhiteboardLockMode _lockMode = WhiteboardLockMode.none;
   String? _error;
 
@@ -117,6 +124,9 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
       _conferenceJoined = false;
       _whiteboardOpen = false;
       _chatOpen = false;
+      _audioMuted = true;
+      _handRaised = false;
+      _unreadChatCount = 0;
       _lockMode = WhiteboardLockMode.none;
     });
 
@@ -264,6 +274,8 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
             _conferenceJoined = false;
             _whiteboardOpen = false;
             _chatOpen = false;
+            _audioMuted = true;
+            _handRaised = false;
             _lockMode = WhiteboardLockMode.none;
           });
         }
@@ -299,8 +311,28 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
         break;
       case 'chatUpdated':
         final open = payload is Map && payload['isOpen'] == true;
-        if (mounted && open != _chatOpen) {
-          setState(() => _chatOpen = open);
+        final unread = payload is Map ? payload['unreadCount'] : null;
+        if (mounted) {
+          setState(() {
+            _chatOpen = open;
+            if (open) {
+              _unreadChatCount = 0;
+            } else if (unread is num) {
+              _unreadChatCount = unread.toInt();
+            }
+          });
+        }
+        break;
+      case 'audioMuted':
+        final muted = payload is Map && payload['muted'] == true;
+        if (mounted && muted != _audioMuted) {
+          setState(() => _audioMuted = muted);
+        }
+        break;
+      case 'handRaised':
+        final raised = payload is Map && payload['raised'] == true;
+        if (mounted && raised != _handRaised) {
+          setState(() => _handRaised = raised);
         }
         break;
       case 'error':
@@ -371,70 +403,13 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
   // ---------------------------------------------------------------------------
 
   String _buildMeetingHtml({required String displayName}) {
-    final chatEnabled = widget.liveRoom.enableChat;
-    final toolbarButtons = <String>[
-      'microphone',
-      'raisehand',
-      'reactions',
-      if (chatEnabled) 'chat',
-      'tileview',
-      'settings',
-      'fullscreen',
-      'hangup',
-    ];
-
-    // Identical to the website's student `JitsiMeeting` embed.
-    final configOverwrite = <String, dynamic>{
-      'startWithAudioMuted': true,
-      'startWithVideoMuted': true,
-      'disableModeratorIndicator': true,
-      'enableEmailInStats': false,
-      'prejoinPageEnabled': false,
-      'disableDeepLinking': true,
-      'disableChat': !chatEnabled,
-      'remoteVideoMenu': {
-        'disabled': true,
-        'disableKick': true,
-        'disableGrantModerator': true,
-        'disablePrivateChat': true,
-        'disableDemote': true,
-      },
-      'disableRemoteMute': true,
-      'disableKick': true,
-      'disableGrantModerator': true,
-      'disablePrivateChat': true,
-      'disableInviteFunctions': true,
-      'hideConferenceSubject': true,
-      'hideConferenceTimer': false,
-      'moderator': {'enabled': false},
-      'participantsPane': {
-        'hideModeratorSettingsTab': true,
-        'hideMoreActionsButton': true,
-        'hideMuteAllButton': true,
-      },
-      'whiteboard': {
-        'enabled': true,
-        'collabServerBaseUrl': 'https://whiteboard.jitsi.net',
-      },
-      'toolbarButtons': toolbarButtons,
-      'lobby': {'enabled': true, 'autoKnock': true},
-    };
-
-    final interfaceConfigOverwrite = <String, dynamic>{
-      'DISABLE_JOIN_LEAVE_NOTIFICATIONS': false,
-      'SHOW_CHROME_EXTENSION_BANNER': false,
-      'MOBILE_APP_PROMO': false,
-      'TOOLBAR_BUTTONS': toolbarButtons,
-      'SETTINGS_SECTIONS': ['devices', 'language'],
-      'HIDE_INVITE_MORE_HEADER': true,
-    };
-
-    final options = <String, dynamic>{
-      'roomName': ApiConstants.jitsiRoomName(widget.liveRoom.id),
-      'configOverwrite': configOverwrite,
-      'interfaceConfigOverwrite': interfaceConfigOverwrite,
-      'userInfo': {'displayName': displayName, 'email': ''},
-    };
+    // The website's student `JitsiMeeting` options, built in one place so the
+    // two clients cannot drift apart again.
+    final options = LiveMeetingConfig.studentMeetingOptions(
+      roomId: widget.liveRoom.id,
+      displayName: displayName,
+      chatEnabled: widget.liveRoom.enableChat,
+    );
 
     final optionsJson = jsonEncode(options);
     final domainJson = jsonEncode(ApiConstants.jitsiDomain);
@@ -497,6 +472,13 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
           post('error', String(e && e.message ? e.message : e));
           return;
         }
+
+        // The website's live tools bar drives the meeting with these commands
+        // (`toggleAudio`, `toggleRaiseHand`, `toggleChat`).
+        var localParticipantId = null;
+        window.learnooCommand = function (name) {
+          try { api.executeCommand(name); } catch (e) {}
+        };
 
         window.learnooHangup = function () {
           try { setFilmstripHidden(false); } catch (e) {}
@@ -829,10 +811,36 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
             filmstripVisible = !!(event && event.visible);
           },
           chatUpdated: function (event) {
-            post('chatUpdated', { isOpen: !!(event && event.isOpen) });
+            post('chatUpdated', {
+              isOpen: !!(event && event.isOpen),
+              unreadCount: (event && typeof event.unreadCount === 'number')
+                ? event.unreadCount : null
+            });
           },
           videoConferenceJoined: function (user) {
-            post('conferenceJoined', { id: user && user.id ? user.id : null });
+            localParticipantId = user && user.id ? user.id : null;
+            post('conferenceJoined', { id: localParticipantId });
+          },
+          audioMuteStatusChanged: function (event) {
+            post('audioMuted', { muted: !!(event && event.muted) });
+          },
+          // Only the student's own hand, like the website.
+          raiseHandUpdated: function (event) {
+            if (!event || !event.id || event.id === localParticipantId ||
+                event.id === 'local') {
+              post('handRaised', { raised: !!(event && event.handRaised) });
+            }
+          },
+          // meet.learnoo.app sends this without a payload when the host puts
+          // the whiteboard on stage; the website reads the on-stage
+          // participant instead of waiting for whiteboardStatusChanged.
+          largeVideoChanged: function () {
+            var onStage;
+            try { onStage = api._getOnStageParticipant(); } catch (e) { return; }
+            if (typeof onStage === 'undefined') { return; }
+            var open = onStage === 'whiteboard';
+            window.learnooSetWhiteboard(open);
+            post('whiteboardStatusChanged', { status: open ? 'shown' : 'hidden', isOpen: open });
           },
           videoConferenceLeft: function () {
             window.learnooSetWhiteboard(false);
@@ -901,67 +909,100 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
               ),
         body: _error != null
             ? _buildError()
-            : Stack(
+            : Column(
                 children: [
-                  if (controller != null)
-                    Positioned.fill(
-                      child: WebViewWidget(controller: controller),
+                  // The website's live tools bar. Hidden only while the
+                  // whiteboard is full-bleed; Jitsi's own toolbar has the same
+                  // microphone, raise-hand and chat buttons in the meantime.
+                  if (controller != null && !_isWhiteboardFullBleed)
+                    LiveToolsBar(
+                      enabled: _conferenceJoined,
+                      chatEnabled: widget.liveRoom.enableChat,
+                      audioMuted: _audioMuted,
+                      handRaised: _handRaised,
+                      chatOpen: _chatOpen,
+                      unreadChatCount: _unreadChatCount,
+                      onToggleAudio: () => _command('toggleAudio'),
+                      onToggleRaiseHand: () {
+                        _command('toggleRaiseHand');
+                        // Same optimistic flip as the website; the
+                        // raiseHandUpdated event confirms it.
+                        setState(() => _handRaised = !_handRaised);
+                      },
+                      onToggleChat: () => _command('toggleChat'),
                     ),
-
-                  // Fallback only: the injected stylesheet normally makes the
-                  // whiteboard surface itself inert, which leaves the toolbar,
-                  // the overflow menu and the chat panel fully usable. This
-                  // barrier comes back only when the page could not be reached,
-                  // and steps aside while the chat panel is open because the
-                  // chat input sits in the area it would cover.
-                  if (_showFallbackShield)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      top: 0,
-                      bottom: _toolbarStripHeight,
-                      child: const AbsorbPointer(
-                        child: SizedBox.expand(),
-                      ),
-                    ),
-
-                  if (_conferenceJoined && _whiteboardOpen)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      // Sits just above the Jitsi toolbar strip instead of over
-                      // the top-left controls, and never takes a pointer.
-                      bottom: _toolbarStripHeight + 8,
-                      child: IgnorePointer(child: _buildViewOnlyHint()),
-                    ),
-
-                  if (_isLoading) Positioned.fill(child: _buildLoading()),
-
-                  // While the whiteboard is full-bleed there is no AppBar, so
-                  // on iOS — no hardware back button, and the PopScope above
-                  // blocks the edge-swipe gesture — this floating control is
-                  // the only way out of the meeting. It leaves exactly the way
-                  // the Android back button does.
-                  if (_isWhiteboardFullBleed)
-                    PositionedDirectional(
-                      top: 0,
-                      start: 0,
-                      child: SafeArea(
-                        child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: HeaderBackButton(
-                            onPressed: _leaveFromBackButton,
-                            backgroundColor: Colors.black.withValues(
-                              alpha: 0.55,
+                  Expanded(
+                    child: Stack(
+                        children: [
+                          if (controller != null)
+                            Positioned.fill(
+                              child: WebViewWidget(controller: controller),
                             ),
-                            borderColor: Colors.white.withValues(alpha: 0.3),
-                          ),
-                        ),
+
+                          // Fallback only: the injected stylesheet normally makes the
+                          // whiteboard surface itself inert, which leaves the toolbar,
+                          // the overflow menu and the chat panel fully usable. This
+                          // barrier comes back only when the page could not be reached,
+                          // and steps aside while the chat panel is open because the
+                          // chat input sits in the area it would cover.
+                          if (_showFallbackShield)
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              top: 0,
+                              bottom: _toolbarStripHeight,
+                              child: const AbsorbPointer(
+                                child: SizedBox.expand(),
+                              ),
+                            ),
+
+                          if (_conferenceJoined && _whiteboardOpen)
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              // Sits just above the Jitsi toolbar strip instead of over
+                              // the top-left controls, and never takes a pointer.
+                              bottom: _toolbarStripHeight + 8,
+                              child: IgnorePointer(child: _buildViewOnlyHint()),
+                            ),
+
+                          if (_isLoading) Positioned.fill(child: _buildLoading()),
+
+                          // While the whiteboard is full-bleed there is no AppBar, so
+                          // on iOS — no hardware back button, and the PopScope above
+                          // blocks the edge-swipe gesture — this floating control is
+                          // the only way out of the meeting. It leaves exactly the way
+                          // the Android back button does.
+                          if (_isWhiteboardFullBleed)
+                            PositionedDirectional(
+                              top: 0,
+                              start: 0,
+                              child: SafeArea(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(8),
+                                  child: HeaderBackButton(
+                                    onPressed: _leaveFromBackButton,
+                                    backgroundColor: Colors.black.withValues(
+                                      alpha: 0.55,
+                                    ),
+                                    borderColor: Colors.white.withValues(alpha: 0.3),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
-                    ),
+                  ),
                 ],
               ),
       ),
+    );
+  }
+
+  /// Runs one of the website's live tools commands in the meeting page.
+  void _command(String name) {
+    _controller?.runJavaScript(
+      'window.learnooCommand && window.learnooCommand(${jsonEncode(name)});',
     );
   }
 

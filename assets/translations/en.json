@@ -1206,7 +1206,14 @@
     "day_short": "d",
     "starts_in": "Starts in",
     "live_now": "Live Now",
-    "elapsed": "Live for"
+    "elapsed": "Live for",
+    "live_tools": "Live Interaction Tools",
+    "raise_hand": "Raise Hand",
+    "lower_hand": "Lower Hand",
+    "chat": "Live Chat",
+    "hide_chat": "Hide Chat",
+    "unmute_mic": "Unmute microphone",
+    "mute_mic": "Mute microphone"
   },
   "course_activation": {
     "title": "Unlock Course",

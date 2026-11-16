@@ -1214,7 +1214,14 @@
     "day_short": "يوم",
     "starts_in": "يبدأ خلال",
     "live_now": "مباشر الآن",
-    "elapsed": "مستمر منذ"
+    "elapsed": "مستمر منذ",
+    "live_tools": "أدوات التفاعل المباشر",
+    "raise_hand": "رفع اليد",
+    "lower_hand": "خفض اليد",
+    "chat": "الدردشة المباشرة",
+    "hide_chat": "إخفاء المحادثة",
+    "unmute_mic": "تشغيل الميكروفون",
+    "mute_mic": "كتم الميكروفون"
   },
   "course_activation": {
     "title": "فتح الدورة",
