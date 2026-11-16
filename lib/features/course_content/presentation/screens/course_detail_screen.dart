@@ -19,7 +19,6 @@ import '../../../../core/utils/coerce.dart';
 import '../../domain/chapter_access.dart';
 import '../../services/attachment_permission_service.dart';
 import '../../data/course_repository.dart';
-import '../../data/chapter_repository.dart';
 import '../../data/library_repository.dart';
 import '../../../notes/presentation/widgets/note_attachment_preview.dart';
 import '../../../exams/domain/quiz_activation_lock.dart';
@@ -59,12 +58,9 @@ class CourseDetailScreen extends StatefulWidget {
 class _CourseDetailScreenState extends State<CourseDetailScreen>
     with SingleTickerProviderStateMixin {
   final _courseRepository = CourseRepository();
-  final _chapterRepository = ChapterRepository();
   final _communityRepository = CommunityRepository();
   final _libraryRepository = LibraryRepository();
   late TabController _tabController;
-
-  Map<String, String> _chapterThumbnails = {};
 
   bool _isLoadingLectures = true;
   bool _isLoadingExams = true;
@@ -206,9 +202,10 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
     _loadScope();
   }
 
+  /// The course and its library are independent requests, so they run
+  /// together instead of the library waiting for the whole course.
   Future<void> _loadData() async {
-    await _loadCourseDetails();
-    await _loadCourseLibrary();
+    await Future.wait([_loadCourseDetails(), _loadCourseLibrary()]);
   }
 
   Future<void> _loadCurrentUserId() async {
@@ -253,33 +250,10 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
     });
 
     try {
-      final courseIdInt = int.tryParse(widget.courseId);
-      final courseResultFuture =
-          _courseRepository.getCourseById(widget.courseId);
-      final chaptersResultFuture = courseIdInt != null
-          ? _chapterRepository.getChapters(courseId: courseIdInt).catchError((e) {
-              debugPrint('[CourseDetailScreen] getChapters error: $e');
-              return <String, dynamic>{'success': false};
-            })
-          : Future.value(<String, dynamic>{'success': false});
-
-      final results = await Future.wait([courseResultFuture, chaptersResultFuture]);
-      final courseResult = results[0];
-      final chaptersResult = results[1];
-
-      final Map<String, String> apiChapterThumbnails = {};
-      if (chaptersResult['success'] == true &&
-          chaptersResult['data'] is List) {
-        for (final item in (chaptersResult['data'] as List)) {
-          if (item is Map) {
-            final id = _extractChapterId(item);
-            final thumb = _extractChapterThumbnail(item);
-            if (id.isNotEmpty && thumb.isNotEmpty) {
-              apiChapterThumbnails[id] = thumb;
-            }
-          }
-        }
-      }
+      // One request. The lessons inside the course record carry their own
+      // `thumbnail` (the same field `GET /v1/chapter` returns), so the app no
+      // longer also downloads the chapter list just to read thumbnails.
+      final courseResult = await _courseRepository.getCourseById(widget.courseId);
 
       if (courseResult['success'] == true &&
           courseResult['data'] != null &&
@@ -311,7 +285,6 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
           }
           _heroSubtitleParts = heroParts;
           _courseRecordLocked = courseIsLocked(courseData);
-          _chapterThumbnails = apiChapterThumbnails;
         });
 
         // 1. Lectures and Chapters from course attributes ONLY
@@ -353,17 +326,6 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                         ? (ch['data'] as Map)['attributes'] as Map
                         : ch);
                 final chId = _extractChapterId(ch);
-
-                // Enrich thumbnail from API data.attributes.thumbnail if missing
-                if (chId.isNotEmpty && apiChapterThumbnails.containsKey(chId)) {
-                  final apiThumb = apiChapterThumbnails[chId];
-                  if (apiThumb != null && apiThumb.isNotEmpty) {
-                    if (chAttrs['thumbnail'] == null ||
-                        chAttrs['thumbnail'].toString().isEmpty) {
-                      chAttrs['thumbnail'] = apiThumb;
-                    }
-                  }
-                }
 
                 final chAtts = chAttrs['attachments'];
                 if (chAtts == null ||
@@ -1050,10 +1012,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
     Map<String, dynamic> attrs,
     ChapterAccessSummary access,
   ) {
-    final chId = _extractChapterId(chapter);
-    final thumb = _extractChapterThumbnail(chapter, attrs).isNotEmpty
-        ? _extractChapterThumbnail(chapter, attrs)
-        : (_chapterThumbnails[chId] ?? '');
+    final thumb = _extractChapterThumbnail(chapter, attrs);
 
     if (thumb.isNotEmpty) {
       return ClipRRect(
@@ -1884,12 +1843,8 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                         'course.untitled_chapter'.tr();
                     final duration =
                         coerceString(chapterAttrs['duration']) ?? '--:--';
-                    final chId = _extractChapterId(chapter);
-                    final extractedThumb =
+                    final thumbnail =
                         _extractChapterThumbnail(chapter, chapterAttrs);
-                    final thumbnail = extractedThumb.isNotEmpty
-                        ? extractedThumb
-                        : (_chapterThumbnails[chId] ?? '');
                     // Web `ChapterRow` rules, computed once per row. A locked
                     // chapter whose video URL the API withheld still counts
                     // as having a video (client report #9).

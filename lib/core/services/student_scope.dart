@@ -135,21 +135,34 @@ class StudentScopeService {
     _inFlight = null;
   }
 
-  /// The activated course ids, from the same call the web's student home makes:
-  /// `GET /v1/course?activated=1`, keeping only rows whose `status` is active.
-  ///
-  /// Falls back to deriving enrolment from `is_locked` on [allCourses] when the
-  /// call fails, so an API hiccup does not empty every section.
-  Future<Set<String>> _fetchEnrolledIds(List<dynamic> allCourses) async {
+  /// The activated course rows, from the same call the web's student home
+  /// makes: `GET /v1/course?activated=1`. `null` when the call fails.
+  Future<List<dynamic>?> _fetchActivatedRows() async {
     try {
       final payload = await _api.get(
         ApiConstants.courses,
         query: {'activated': 1},
         fallback: 'errors.failed_load_activated_courses'.tr(),
       );
+      return unwrapList(payload);
+    } catch (e) {
+      debugPrint('[StudentScope] activated course load failed: $e');
+      return null;
+    }
+  }
 
+  /// The activated course ids: the [activated] rows whose `status` is active.
+  ///
+  /// When that call failed ([activated] is `null`), enrolment is derived from
+  /// `is_locked` on [allCourses], so an API hiccup does not empty every
+  /// section.
+  static Set<String> _enrolledIds(
+    List<dynamic>? activated,
+    List<dynamic> allCourses,
+  ) {
+    if (activated != null) {
       final ids = <String>{};
-      for (final course in unwrapList(payload)) {
+      for (final course in activated) {
         if (course is! Map) continue;
         final id = coerceId(course['id']);
         if (id == null) continue;
@@ -164,26 +177,27 @@ class StudentScopeService {
         ids.add(id);
       }
       return ids;
-    } catch (e) {
-      debugPrint('[StudentScope] activated course load failed: $e');
-      final ids = <String>{};
-      for (final course in allCourses) {
-        if (course is! Map) continue;
-        final id = coerceId(course['id']);
-        if (id == null) continue;
-        final attrs = course['attributes'];
-        final source = attrs is Map ? attrs : course;
-        if (coerceFlagOrNull(source['is_locked']) != true) ids.add(id);
-      }
-      return ids;
     }
+
+    final ids = <String>{};
+    for (final course in allCourses) {
+      if (course is! Map) continue;
+      final id = coerceId(course['id']);
+      if (id == null) continue;
+      final attrs = course['attributes'];
+      final source = attrs is Map ? attrs : course;
+      if (coerceFlagOrNull(source['is_locked']) != true) ids.add(id);
+    }
+    return ids;
   }
 
   Future<StudentScope> _fetch() async {
     final generation = _generation;
+    // Enrolment is a narrower set from its own call. Neither call needs the
+    // other's answer, so both run at once instead of one after the other.
+    final activatedRows = _fetchActivatedRows();
     try {
-      // The full catalogue the student can see. Enrolment is a narrower set and
-      // comes from its own call below.
+      // The full catalogue the student can see.
       final payload = await _api.get(
         ApiConstants.courses,
         query: {'per_page': 500},
@@ -197,7 +211,7 @@ class StudentScopeService {
         if (id != null) visible.add(id);
       }
 
-      final enrolled = await _fetchEnrolledIds(courses);
+      final enrolled = _enrolledIds(await activatedRows, courses);
 
       final scope = StudentScope(
         visibleCourseIds: visible,

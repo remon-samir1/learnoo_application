@@ -32,7 +32,6 @@ import '../../../../core/services/video_settings_service.dart';
 import '../../../../core/video/screen_awake_controller.dart';
 import '../../services/video_frame_capture_service.dart';
 import '../../../../core/services/encrypted_video_service.dart';
-import '../../../../core/services/user_progress_service.dart';
 import '../../../../core/widgets/header_back_button.dart';
 import '../../../../core/widgets/watermark_wrapper.dart';
 import '../../data/chapter_repository.dart';
@@ -603,7 +602,6 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   final _permissionService = AttachmentPermissionService();
   final _featureManager = FeatureManager();
   final _authRepository = AuthRepository();
-  final _userProgressService = UserProgressService();
   final _videoHandler = VideoControllerHandler();
   final _offlineViewService = OfflineViewService();
   final _encryptedVideoService = EncryptedVideoService();
@@ -638,7 +636,6 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   String _studentCode = '';
   String _phoneNumber = '';
 
-  int _lastSavedPosition = -1;
   int _lastSavedWatchedSeconds = -1;
   bool _viewCountApiCalled = false;
 
@@ -1205,22 +1202,8 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
     if (widget.lectureId.isEmpty || totalDuration <= 0) return;
 
-    if (currentPosition != _lastSavedPosition) {
-      _lastSavedPosition = currentPosition;
-      _userProgressService
-          .sendProgress(
-            lectureId: widget.lectureId,
-            currentPosition: currentPosition,
-            totalDuration: totalDuration,
-            immediate: true,
-          )
-          .timeout(
-            const Duration(seconds: 5),
-            onTimeout: () => {'success': false, 'timeout': true},
-          )
-          .catchError((e) => {'success': false, 'error': e.toString()});
-    }
-
+    // Saved per chapter, the shape `POST /v1/user-progress` accepts and the
+    // website's "continue watching" reads.
     final chapterIdInt = int.tryParse(widget.chapterId) ?? 0;
     if (chapterIdInt > 0 &&
         (watchedSeconds != _lastSavedWatchedSeconds || isCompleted)) {
