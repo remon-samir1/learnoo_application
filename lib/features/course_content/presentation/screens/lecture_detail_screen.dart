@@ -1503,7 +1503,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         videoUrl: _videoUrl,
         positionSeconds: moment,
         chapterId: widget.chapterId,
-        betterPlayerController: _betterPlayerController,
+        playerSnapshot: _betterPlayerController?.takeSnapshot,
         headers: {
           if (token != null) 'Authorization': 'Bearer $token',
           'Accept': 'application/json, text/plain, */*',
@@ -1561,7 +1561,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         videoUrl: _videoUrl,
         positionSeconds: momentSeconds,
         chapterId: widget.chapterId,
-        betterPlayerController: _betterPlayerController,
+        playerSnapshot: _betterPlayerController?.takeSnapshot,
         headers: {
           if (token != null) 'Authorization': 'Bearer $token',
           'Accept': 'application/json, text/plain, */*',
@@ -3117,7 +3117,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
             ),
             if (_showDiscussionPanel)
               DiscussionPanel(
-                currentPositionSeconds: _videoHandler.currentPosition.inSeconds,
+                // The moment the question is about: the one snapshotted with
+                // the frame, not the position the video has played on to.
+                currentPositionSeconds:
+                    _momentSeconds ?? _videoHandler.currentPosition.inSeconds,
                 isLoading: _isLoadingDiscussions,
                 discussions: _discussions,
                 currentTab: _discussionTab,

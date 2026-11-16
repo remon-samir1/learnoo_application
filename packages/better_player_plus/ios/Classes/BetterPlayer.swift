@@ -34,6 +34,21 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     public var lastAvPlayerTimeControlStatus: AVPlayer.TimeControlStatus? = nil
 
     private var pipController: AVPictureInPictureController?
+
+    /// Decoded frames of the current item, read by `takeSnapshot`.
+    ///
+    /// The picture is drawn by an `AVPlayerLayer` inside a platform view, so
+    /// Flutter cannot rasterise it, and `AVAssetImageGenerator` cannot read
+    /// HTTP Live Streams (every lesson is AES-128 HLS). The video output hands
+    /// back the frame the player itself decoded for the current time, which is
+    /// the frame on screen. It reads the player's own pipeline, not the
+    /// screen, so the screen-capture protection is untouched.
+    private var frameOutput: AVPlayerItemVideoOutput?
+    /// Last frame handed out, reused while the video stays on that frame: the
+    /// output only vends a buffer once, so a paused video asked twice would
+    /// otherwise have nothing to give the second time.
+    private var lastFrame: (buffer: CVPixelBuffer, time: CMTime)?
+    private lazy var snapshotContext = CIContext(options: nil)
     private var restoreUIOnPipStop: ((Bool) -> Void)?
 
     /// Audio-session interruption observer. Registered with a block, so the
@@ -240,6 +255,7 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         self.stalledCount = 0
         self.isStalledCheckStarted = false
         self.playerRate = 1
+        attachFrameOutput(to: item)
         player.replaceCurrentItem(with: item)
 
         let asset = item.asset
@@ -635,6 +651,8 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         disposed = false
         failedCount = 0
         key = nil
+        frameOutput = nil
+        lastFrame = nil
         guard player.currentItem != nil else { return }
         removeObservers()
         player.currentItem?.asset.cancelLoading()
@@ -660,27 +678,47 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         disposed = true
     }
 
+    private func attachFrameOutput(to item: AVPlayerItem) {
+        let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        ])
+        item.add(output)
+        frameOutput = output
+        lastFrame = nil
+    }
+
+    /// JPEG of the frame the player shows now, or nil when no frame has been
+    /// decoded for this moment yet.
     public func takeSnapshot(completion: @escaping (Data?) -> Void) {
-        guard let item = player.currentItem else {
+        guard let item = player.currentItem,
+              let output = frameOutput,
+              item.outputs.contains(output) else {
             completion(nil)
             return
         }
-        let imageGenerator = AVAssetImageGenerator(asset: item.asset)
-        imageGenerator.appliesPreferredTrackTransform = true
-        imageGenerator.requestedTimeToleranceBefore = .zero
-        imageGenerator.requestedTimeToleranceAfter = .zero
-        let time = player.currentTime()
-        imageGenerator.generateCGImagesAsynchronously(forTimes: [NSValue(time: time)]) { _, image, _, result, _ in
-            if result == .succeeded, let image = image {
-                let uiImage = UIImage(cgImage: image)
-                let data = uiImage.jpegData(compressionQuality: 0.85)
-                DispatchQueue.main.async {
-                    completion(data)
-                }
-            } else {
-                DispatchQueue.main.async {
-                    completion(nil)
-                }
+
+        let now = item.currentTime()
+        var shownAt = CMTime.invalid
+        if let buffer = output.copyPixelBuffer(forItemTime: now, itemTimeForDisplay: &shownAt) {
+            lastFrame = (buffer, shownAt.isValid ? shownAt : now)
+        }
+
+        // A cached frame only stands in for the same moment (a paused video);
+        // after a seek or further playback it is stale and must not be sent.
+        guard let frame = lastFrame,
+              abs(CMTimeGetSeconds(CMTimeSubtract(frame.time, now))) <= 0.5 else {
+            completion(nil)
+            return
+        }
+
+        let buffer = frame.buffer
+        let context = snapshotContext
+        DispatchQueue.global(qos: .userInitiated).async {
+            let image = CIImage(cvPixelBuffer: buffer)
+            let data = context.createCGImage(image, from: image.extent)
+                .flatMap { UIImage(cgImage: $0).jpegData(compressionQuality: 0.85) }
+            DispatchQueue.main.async {
+                completion(data)
             }
         }
     }
