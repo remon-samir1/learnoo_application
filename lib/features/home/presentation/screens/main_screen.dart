@@ -9,6 +9,7 @@ import 'package:learnoo/features/course_content/presentation/screens/live_sessio
 import 'package:learnoo/core/services/feature_service.dart';
 import 'package:learnoo/core/services/video_settings_service.dart';
 import 'package:learnoo/core/services/notification_service.dart';
+import 'package:learnoo/core/services/push_service.dart';
 import 'package:learnoo/features/home/data/notification_sync_service.dart';
 
 class MainScreen extends StatefulWidget {
@@ -42,6 +43,9 @@ class _MainScreenState extends State<MainScreen> {
     // Signed in now: baseline/sync the student's notifications, and open the
     // notifications screen if the app was launched from one in the tray.
     NotificationSyncService().resume();
+    // Ask for notification permission now that it means something, and
+    // register this phone for pushes while the app is closed.
+    PushService().start();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) NotificationService().openPendingNotificationsScreen();
     });

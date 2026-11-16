@@ -89,6 +89,18 @@ class NotificationService {
     _openNotificationsHandler = handler;
   }
 
+  /// A tap on a student notification (this app's own or a pushed one): opens
+  /// the notifications screen now, or once the student's home screen is
+  /// shown when the app is still starting.
+  void openNotificationsScreen() {
+    final handler = _openNotificationsHandler;
+    if (handler != null) {
+      handler();
+    } else {
+      _openNotificationsPending = true;
+    }
+  }
+
   /// Opens the notifications screen if the app was launched by tapping a
   /// student notification before the navigator was ready. Called once the
   /// student's home screen is shown.
@@ -108,6 +120,23 @@ class NotificationService {
       hash = (hash * 0x01000193) & 0x7FFFFFFF;
     }
     return 100000 + (hash % 1000000000);
+  }
+
+  /// Creates the Android "general" channel ahead of the first notification:
+  /// pushes shown by the system while the app is closed name it
+  /// (`channel_id`), and Android drops them into a generic channel when it
+  /// does not exist yet.
+  Future<void> ensureGeneralChannel() async {
+    if (!_isInitialized) await initialize();
+    await _notificationsPlugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(AndroidNotificationChannel(
+          _generalChannelId,
+          'notifications_push.channel_name'.tr(),
+          description: 'notifications_push.channel_description'.tr(),
+          importance: Importance.high,
+        ));
   }
 
   /// Shows a student notification from the backend in the system tray on the
@@ -173,12 +202,7 @@ class NotificationService {
     final payload = response.payload;
     if (payload == null) return;
     if (payload.startsWith(openNotificationsPayload)) {
-      final handler = _openNotificationsHandler;
-      if (handler != null) {
-        handler();
-      } else {
-        _openNotificationsPending = true;
-      }
+      openNotificationsScreen();
       return;
     }
     _openDownloadFromPayload(payload);

@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'core/services/screen_protection_service.dart';
 import 'core/services/notification_service.dart';
+import 'core/services/push_service.dart';
 import 'core/network/api_client.dart';
 import 'core/services/websocket_service.dart';
 import 'core/services/feature_service.dart';
@@ -50,6 +51,8 @@ void main() async {
     screenProtectionInitialization(),
     notificationInitialization(),
     featureInitialization(),
+    // Push (Firebase) when this build has its config files; otherwise off.
+    PushService().initialize(),
   ]);
 
   final screenProtection = results[0] as ScreenProtectionService;
@@ -125,7 +128,8 @@ class _HomeAppState extends State<LearnooApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     ApiClient.onUnauthorized = _onSessionRevoked;
     // Student notifications in the phone's notification bar while the app
-    // runs (no push service yet): sync now, on resume and periodically.
+    // runs: sync now, on resume and periodically. While it is in the
+    // background or closed they arrive as pushes (PushService).
     NotificationService().setOpenNotificationsHandler(_openNotificationsScreen);
     NotificationSyncService().start();
   }
@@ -264,7 +268,7 @@ Future<ScreenProtectionService> screenProtectionInitialization() async {
 Future<NotificationService> notificationInitialization() async {
   final service = NotificationService();
   await service.initialize();
-  await service.requestPermissions();
+  // Permission is asked once the student is signed in (PushService.start).
   return service;
 }
 

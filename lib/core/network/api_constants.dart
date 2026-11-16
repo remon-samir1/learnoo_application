@@ -17,6 +17,8 @@ class ApiConstants {
   static const String updateProfile = '/v1/auth/update';
   static const String me = '/v1/auth/me';
   static const String logout = '/v1/auth/logout';
+  /// POST registers / DELETE removes this phone's push token.
+  static const String pushTokens = '/v1/push-tokens';
 
   /// Ask staff to move the account to the device making the call. The web
   /// posts the refused login's `transfer_token` here

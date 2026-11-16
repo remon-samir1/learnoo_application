@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:learnoo/core/services/notification_service.dart';
+import 'package:learnoo/core/services/push_service.dart';
 import 'package:learnoo/core/services/websocket_service.dart';
 import 'package:learnoo/core/session/session_manager.dart';
 import 'package:learnoo/features/auth/data/auth_repository.dart';
@@ -15,10 +16,12 @@ import 'package:learnoo/features/home/data/notification_repository.dart';
 /// endpoint the web dashboard reads in `getStudentNotifications`) into the
 /// phone's notification bar while the app is running.
 ///
-/// The backend has no push service, so this only works while the process is
-/// alive: on start, on resume, every [pollInterval] while in the foreground,
-/// and shortly after any realtime broadcast. Delivery while the app is closed
-/// needs FCM/APNs from the backend.
+/// This only works while the process is alive: on start, on resume, every
+/// [pollInterval] while in the foreground, shortly after any realtime
+/// broadcast and when a push arrives in the foreground. While the app is in
+/// the background or closed the backend pushes the same notifications
+/// ([PushService]); once it confirmed that for this phone, what arrived
+/// meanwhile is recorded on start/resume without being shown a second time.
 ///
 /// Rules:
 /// * The first sync for a session only records what is already there — the
@@ -64,15 +67,27 @@ class NotificationSyncService {
     // student, so it only triggers a fetch of the student's own list.
     _realtimeSubscription =
         WebSocketService().notificationStream.listen((_) => syncSoon());
+    // A push in the foreground is not shown by the system; show it here.
+    PushService().onForegroundMessage = () => unawaited(sync());
     resume();
   }
+
+  /// Whether the backend pushes to this phone, so the phone's system already
+  /// showed what arrived while the app was in the background or closed.
+  @visibleForTesting
+  Future<bool> Function() pushDeliveryActive = () => PushService().deliveryActive();
 
   /// App came to the foreground: sync now and keep polling.
   void resume() {
     if (!_started) return;
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(pollInterval, (_) => unawaited(sync()));
-    unawaited(sync());
+    unawaited(_catchUp());
+  }
+
+  Future<void> _catchUp() async {
+    final pushed = await pushDeliveryActive();
+    await sync(showNew: !pushed);
   }
 
   /// App went to the background: stop polling.
@@ -89,16 +104,21 @@ class NotificationSyncService {
     _debounce = Timer(const Duration(seconds: 2), () => unawaited(sync()));
   }
 
-  /// Fetches the latest notifications and shows the new unread ones.
-  Future<void> sync() {
+  /// Fetches the latest notifications and shows the new unread ones, or with
+  /// [showNew] false only records them as seen.
+  Future<void> sync({bool showNew = true}) {
     final running = _running;
-    if (running != null) return running;
-    final future = _sync().whenComplete(() => _running = null);
+    if (running != null) {
+      // A quiet catch-up in flight must not swallow a notification that
+      // should be shown: fetch again after it.
+      return showNew ? running.then((_) => sync()) : running;
+    }
+    final future = _sync(showNew).whenComplete(() => _running = null);
     _running = future;
     return future;
   }
 
-  Future<void> _sync() async {
+  Future<void> _sync(bool showNew) async {
     try {
       if (!await SessionManager().isSignedIn) return;
 
@@ -146,12 +166,16 @@ class NotificationSyncService {
       if (newestAt != null) await prefs.setInt(_latestAtKey, newestAt);
       if (!initialized) await prefs.setBool(_initializedKey, true);
 
-      if (fresh.isEmpty) return;
-      await _show(fresh);
+      if (fresh.isEmpty || !showNew) return;
+      await display(fresh);
     } catch (e) {
       debugPrint('[NotificationSync] sync failed: ${e.runtimeType}');
     }
   }
+
+  /// Puts new notifications in the phone's tray.
+  @visibleForTesting
+  late Future<void> Function(List<Notification> fresh) display = _show;
 
   Future<void> _show(List<Notification> fresh) async {
     // Newest first from the API; post the oldest first so the newest ends up

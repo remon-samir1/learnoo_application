@@ -9,6 +9,7 @@ import 'package:learnoo/core/network/api_client.dart';
 import 'package:learnoo/core/network/api_constants.dart';
 import 'package:learnoo/core/network/api_exception.dart';
 import 'package:learnoo/core/services/device_service.dart';
+import 'package:learnoo/core/services/push_service.dart';
 import 'package:learnoo/core/services/student_scope.dart';
 import 'package:learnoo/core/session/session_manager.dart';
 
@@ -615,6 +616,8 @@ class AuthRepository {
   /// token as a completed logout), and the local session is cleared either way.
   Future<Map<String, dynamic>> logout() async {
     String message = 'errors.logged_out'.tr();
+    // While still signed in: this phone stops getting the student's pushes.
+    await PushService().unregister();
     try {
       final payload = await _api.post(
         ApiConstants.logout,

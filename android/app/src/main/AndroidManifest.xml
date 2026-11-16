@@ -57,6 +57,20 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
+        <!-- Pushes from Firebase (PushService): the app registers with its
+             Firebase Installation ID (FirebaseMessaging.register), which
+             Firebase only allows with this flag; then the student-notification
+             channel and status-bar icon the app uses for its own. -->
+        <meta-data
+            android:name="firebase_messaging_installation_id_enabled"
+            android:value="true" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="general_channel" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_learnoo" />
+
         <!-- Flutter Downloader Service -->
         <service
             android:name="vn.hunghd.flutterdownloader.DownloadWorker"

@@ -7,6 +7,13 @@
 	  cipher's installation secret lives in the keychain, so the release build
 	  needs the same capability or encrypted downloads cannot be written.
 	-->
+	<!--
+	  Push Notifications (PushService / Firebase Cloud Messaging → APNs).
+	  Xcode replaces "development" with "production" when the archive is
+	  exported for the App Store.
+	-->
+	<key>aps-environment</key>
+	<string>development</string>
 	<key>keychain-access-groups</key>
 	<array/>
 </dict>
