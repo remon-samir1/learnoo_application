@@ -87,25 +87,21 @@ class AuthRepository {
   // Registration & sign-in — passwordless
   // ---------------------------------------------------------------------
 
-  /// Role id sent to `POST /v1/auth/register`, matching the web's
-  /// `role: role === "Parent" ? 3 : 1`.
-  static const int studentRoleId = 1;
-  static const int parentRoleId = 3;
+  /// Role id sent to `POST /v1/auth/register`: the server's
+  /// `UserRole::STUDENT`, the same `role: 0` the web's create-account sends.
+  static const int studentRoleId = 0;
 
-  /// `POST /v1/auth/register`.
+  /// `POST /v1/auth/register` — student accounts only.
   ///
-  /// [password] and `role: 3` are sent for the Parent role only — students
-  /// register passwordless and verify by OTP. The returned token becomes the
-  /// *pending* session; the account is not signed in until either the OTP is
-  /// verified (student) or [activateSession] is called (parent, which the web
-  /// does immediately because parents skip verification).
+  /// Students register passwordless and verify by OTP. Parent registration is
+  /// paused in the app and refused by the server; existing parents sign in
+  /// through [login] with a password. The returned token becomes the *pending*
+  /// session; the account is not signed in until the OTP is verified.
   Future<Map<String, dynamic>> register({
     required String firstName,
     required String lastName,
     required String phone,
     required String email,
-    String? password,
-    int role = studentRoleId,
   }) async {
     try {
       final deviceName = await _deviceName();
@@ -120,8 +116,7 @@ class AuthRepository {
           'phone': normalizePhone(phone),
           'email': email,
           'device_name': deviceName,
-          'role': role,
-          if (password != null && password.isNotEmpty) 'password': password,
+          'role': studentRoleId,
         },
       );
 
