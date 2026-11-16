@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../sync/offline_queue_service.dart';
@@ -49,18 +51,39 @@ class OfflineViewService {
     await _prefs?.remove('$_prefsKeySyncedPrefix$chapterId');
   }
 
+  /// A fresh key for one opening of a lesson. The server counts a view key
+  /// once, so the same opening re-sent after a timeout, a failed request or
+  /// from the offline queue can never be charged twice.
+  static String newViewKey() {
+    final random = Random.secure();
+    return List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+  }
+
   /// Queues a view the server has not recorded, and returns how many views
   /// for [chapterId] are now waiting to be sent.
-  Future<int> incrementOfflineView(String chapterId, {int? watchedMinutes}) async {
+  ///
+  /// [viewKey] identifies the opening the view belongs to: an opening already
+  /// waiting in the queue is not queued a second time. [courseId] lets a
+  /// course activation code discard the views it resets.
+  Future<int> incrementOfflineView(
+    String chapterId, {
+    int? watchedMinutes,
+    String? viewKey,
+    String? courseId,
+  }) async {
     await _dropLegacyCounter(chapterId);
 
     final chapterNumericId = int.tryParse(chapterId);
-    if (chapterNumericId != null && chapterNumericId > 0) {
+    final alreadyQueued = viewKey != null &&
+        _pendingViews(chapterId).any((action) => action.payload['view_key'] == viewKey);
+    if (chapterNumericId != null && chapterNumericId > 0 && !alreadyQueued) {
       await OfflineQueueService().enqueue(
         type: PendingActionTypes.chapterView,
         payload: {
           'chapter_id': chapterNumericId,
           if (watchedMinutes != null) 'watched_minutes': watchedMinutes,
+          if (viewKey != null) 'view_key': viewKey,
+          if (courseId != null && courseId.isNotEmpty) 'course_id': courseId,
         },
       );
     }
@@ -99,6 +122,24 @@ class OfflineViewService {
     await clearOfflineViews(chapterId);
     final queue = OfflineQueueService();
     for (final action in _pendingViews(chapterId)) {
+      await queue.dequeue(action.id);
+    }
+  }
+
+  /// A course activation code resets the views of every lesson in the
+  /// course; drops the queued views recorded for that course.
+  Future<void> discardViewsAfterCourseActivation(String courseId) async {
+    final queue = OfflineQueueService();
+    final List<PendingAction> pending;
+    try {
+      pending = queue.getPendingActionsByType(PendingActionTypes.chapterView);
+    } catch (e) {
+      debugPrint('[OfflineViewService] Queue unavailable: $e');
+      return;
+    }
+    for (final action in pending) {
+      if ('${action.payload['course_id']}' != courseId) continue;
+      await clearOfflineViews('${action.payload['chapter_id']}');
       await queue.dequeue(action.id);
     }
   }

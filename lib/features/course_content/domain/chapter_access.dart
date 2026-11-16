@@ -132,6 +132,20 @@ bool chapterViewsExhausted(dynamic chapter) {
   return chapterCurrentViews(chapter) >= max;
 }
 
+/// Whether a lesson the server has just let the student open must still be
+/// locked on this device.
+///
+/// The server's answer already includes every view it recorded (and keeps a
+/// spent last view watchable for a while, as the website shows). What it
+/// cannot know about are views this device spent and still holds in its
+/// queue; only those can take the total to the limit here.
+bool lockedByQueuedViews({
+  required int serverViews,
+  required int queuedViews,
+  required int maxViews,
+}) =>
+    maxViews > 0 && queuedViews > 0 && serverViews + queuedViews >= maxViews;
+
 /// Minutes of playback required before a view is counted.
 ///
 /// `0` (or absent) means the view is registered as soon as playback starts.

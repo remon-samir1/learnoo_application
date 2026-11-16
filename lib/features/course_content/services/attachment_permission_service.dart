@@ -295,6 +295,10 @@ class AttachmentPermissionService {
                           ),
                         );
                       } else {
+                        // "Already used" may mean this very code unlocked the
+                        // lesson a moment ago; show the server's current state
+                        // instead of the old lock.
+                        onRefresh();
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text(

@@ -633,6 +633,11 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   /// the screen.
   bool _viewCountedThisSession = false;
 
+  /// Identifies this opening of the lesson to the server, which counts each
+  /// key once: the same opening re-sent (a timeout, the offline queue) can
+  /// never cost a second view.
+  final String _viewKey = OfflineViewService.newViewKey();
+
   bool _isLoadingChapter = true;
   bool _isLoadingDiscussions = false;
   bool _isOfflineMode = false;
@@ -977,6 +982,8 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
       await _offlineViewService.incrementOfflineView(
         chapterIdString,
         watchedMinutes: watchedMinutes > 0 ? watchedMinutes : _viewByMinute,
+        viewKey: _viewKey,
+        courseId: widget.courseId,
       );
 
       final videoId = '${widget.courseId}_${widget.chapterId}';
@@ -1011,70 +1018,48 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
       return;
     }
 
-    try {
-      final watchedMinutes = (_watchTracker?.watchedSeconds ?? 0) ~/ 60;
-      final minutesToSource = watchedMinutes > 0
-          ? watchedMinutes
-          : _viewByMinute;
+    final result = await _chapterRepository.incrementViewCount(
+      chapterId: chapterId,
+      viewKey: _viewKey,
+    );
 
+    if (result['success'] == true) {
+      // The server recorded the view. If the student already left the
+      // screen there is nothing to update — the view must not also be
+      // queued, or it would be sent and counted a second time.
+      if (!mounted) return;
       debugPrint(
-        '[LectureDetail] Calling incrementViewCount: chapterId=$chapterId, watchedMinutes=$minutesToSource',
+        '[LectureDetail] Successfully incremented view count. New views: ${result['current_views']}',
       );
-
-      final result = await _chapterRepository.incrementViewCount(
-        chapterId: chapterId,
-        watchedMinutes: minutesToSource,
-      );
-
-      if (result['success'] == true) {
-        // The server recorded the view. If the student already left the
-        // screen there is nothing to update — the view must not also be
-        // queued, or it would be sent and counted a second time.
-        if (!mounted) return;
-        debugPrint(
-          '[LectureDetail] Successfully incremented view count. New views: ${result['current_views']}',
-        );
-        final newViewCount = (result['current_views'] as int?) ?? _currentViews + 1;
-        setState(() {
-          _currentViews = newViewCount;
-        });
-        await _checkAndEnforceViewLimit(newViewCount);
-      } else {
-        debugPrint(
-          '[LectureDetail] Failed to increment view count via API: ${result['message']}',
-        );
-        debugPrint('[LectureDetail] Falling back to offline view tracking');
-        await _offlineViewService.incrementOfflineView(chapterIdString);
-
-        if (mounted) {
-          final offlineViews = await _offlineViewService.getOfflineViews(
-            chapterIdString,
-          );
-          final totalViews = _currentViews + offlineViews;
-          debugPrint(
-            '[LectureDetail] Offline view incremented as fallback. API: $_currentViews, Offline: $offlineViews, Total: $totalViews',
-          );
-          await _checkAndEnforceViewLimit(totalViews);
-        }
-      }
-    } catch (e) {
-      debugPrint('[LectureDetail] Exception during incrementViewCount: $e');
-      debugPrint(
-        '[LectureDetail] Falling back to offline view tracking due to exception',
-      );
-      await _offlineViewService.incrementOfflineView(chapterIdString);
-
-      if (mounted) {
-        final offlineViews = await _offlineViewService.getOfflineViews(
-          chapterIdString,
-        );
-        final totalViews = _currentViews + offlineViews;
-        debugPrint(
-          '[LectureDetail] Offline view incremented as fallback. API: $_currentViews, Offline: $offlineViews, Total: $totalViews',
-        );
-        await _checkAndEnforceViewLimit(totalViews);
-      }
+      final newViewCount = (result['current_views'] as int?) ?? _currentViews + 1;
+      setState(() {
+        _currentViews = newViewCount;
+      });
+      await _checkAndEnforceViewLimit(newViewCount);
+      return;
     }
+
+    if (result['retryable'] != true) {
+      // The server answered and refused (e.g. the limit was reached on
+      // another device). Like the website: nothing is queued, the lecture in
+      // progress keeps playing, and the next opening gets the server's lock.
+      debugPrint(
+        '[LectureDetail] View refused by the server: ${result['message']}',
+      );
+      return;
+    }
+
+    // No answer, or the server failed: the view may or may not have been
+    // recorded. Queue it under this opening's key — the server ignores the
+    // key if it already counted it.
+    debugPrint(
+      '[LectureDetail] View not confirmed (${result['message']}); queued for retry',
+    );
+    await _offlineViewService.incrementOfflineView(
+      chapterIdString,
+      viewKey: _viewKey,
+      courseId: widget.courseId,
+    );
   }
 
   Future<void> _checkAndEnforceViewLimit(int totalViews) async {
@@ -1853,7 +1838,15 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
           '[LectureDetail] Loaded chapter views - API: $apiCurrentViews, Offline: $offlineViews, Total: $totalViews, Max: $_maxViews, Candidates: ${_videoCandidates.length}, Initial URL: $_videoUrl',
         );
 
-        if (totalViews >= apiMaxViews && apiMaxViews > 0) {
+        // The server sent the lesson, so by its count the student may watch
+        // — including a last view still inside the window the server keeps
+        // open after it was spent, as on the website. Only views this device
+        // spent and the server has not received yet can lock it here.
+        if (lockedByQueuedViews(
+          serverViews: apiCurrentViews,
+          queuedViews: offlineViews,
+          maxViews: apiMaxViews,
+        )) {
           setState(() {
             _errorMessage = 'course.maximum_views_reached'.tr();
             _canWatch = false;
@@ -2588,9 +2581,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     );
     if (mounted) {
       if (result['success']) {
-        await _ensureOfflineViewInitialized();
-        await _offlineViewService.discardViewsAfterActivation(widget.chapterId);
-        if (!mounted) return;
+        // The repository already dropped the views the code reset.
         setState(() {
           _isLocked = false;
           _canWatch = true;
