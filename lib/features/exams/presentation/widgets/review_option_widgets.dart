@@ -239,3 +239,90 @@ class _DashedPainter extends CustomPainter {
   @override
   bool shouldRepaint(_DashedPainter old) => old.color != color;
 }
+
+/// Under the options: the student's choice marked right (green) or wrong (red)
+/// and, when it is wrong, the right choice beneath it in green — what the
+/// doctor asked for on 16 Nov. When the correct options are not known (the
+/// server hides them while a newer attempt of the same exam is running) the
+/// second box is left out rather than showing a placeholder.
+class ReviewAnswerSummary extends StatelessWidget {
+  final ExamQuestionReview review;
+
+  const ReviewAnswerSummary({super.key, required this.review});
+
+  static const _red = Color(0xFFDC2626);
+  static const _green = Color(0xFF059669);
+
+  @override
+  Widget build(BuildContext context) {
+    final isCorrect = review.correct == true;
+    final chosen = review.selected.map((a) => a.text.trim()).where((t) => t.isNotEmpty).toList();
+    final correct = review.correctAnswers.map((a) => a.text.trim()).where((t) => t.isNotEmpty).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _box(
+          key: const ValueKey('review-your-answer'),
+          icon: isCorrect ? Icons.check_circle_outline : Icons.highlight_off,
+          label: isCorrect ? 'exams.your_answer_correct'.tr() : 'exams.your_answer'.tr(),
+          lines: chosen.isEmpty ? ['exams.no_answer_provided'.tr()] : chosen,
+          color: isCorrect ? _green : _red,
+          fill: isCorrect ? const Color(0xFFECFDF5) : const Color(0xFFFEF2F2),
+        ),
+        if (!isCorrect && correct.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _box(
+            key: const ValueKey('review-correct-answer'),
+            icon: Icons.check_circle_outline,
+            label: 'exams.correct_answer'.tr(),
+            lines: correct,
+            color: _green,
+            fill: const Color(0xFFECFDF5),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _box({
+    required Key key,
+    required IconData icon,
+    required String label,
+    required List<String> lines,
+    required Color color,
+    required Color fill,
+  }) {
+    return Container(
+      key: key,
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: fill,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: color),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          for (final line in lines)
+            Text(
+              line,
+              style: TextStyle(fontSize: 14, height: 1.5, fontWeight: FontWeight.w600, color: color),
+            ),
+        ],
+      ),
+    );
+  }
+}

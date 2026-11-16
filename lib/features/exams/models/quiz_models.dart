@@ -449,6 +449,10 @@ class QuizAnswerReview {
   /// Correction images the teacher attached while grading.
   final List<String> feedbackImages;
 
+  /// The options the server read out of [answerText] and graded, by answer id.
+  /// `null` when the server did not send them (older backends).
+  final List<int>? selectedAnswerIds;
+
   const QuizAnswerReview({
     required this.questionId,
     this.answerText = '',
@@ -457,6 +461,7 @@ class QuizAnswerReview {
     this.feedback,
     this.answerImages = const [],
     this.feedbackImages = const [],
+    this.selectedAnswerIds,
   });
 
   static const _answerImageKeys = [
@@ -526,6 +531,7 @@ class QuizAnswerReview {
     if (questionId == null) return null;
 
     final rawScore = attributes['score_earned'];
+    final rawSelected = attributes['selected_answer_ids'];
     return QuizAnswerReview(
       questionId: questionId,
       answerText: attributes['answer_text']?.toString() ?? '',
@@ -536,6 +542,9 @@ class QuizAnswerReview {
       feedback: coerceString(attributes['feedback']),
       answerImages: _images(attributes, _answerImageKeys),
       feedbackImages: _images(attributes, _feedbackImageKeys),
+      selectedAnswerIds: rawSelected is List
+          ? rawSelected.map(coerceId).whereType<String>().map(int.tryParse).whereType<int>().toList()
+          : null,
     );
   }
 

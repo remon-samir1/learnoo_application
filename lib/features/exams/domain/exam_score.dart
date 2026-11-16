@@ -215,3 +215,14 @@ String formatMarks(double? value) {
   if (value == value.roundToDouble()) return value.toInt().toString();
   return value.toString();
 }
+
+/// A percentage printed like the website's result page (`formatPercent` in
+/// `ExamResultView.tsx`): one decimal at most, `66.67` → `66.7%`, `50` → `50%`.
+/// The app used to cut the fraction off (`66%`).
+String formatPercent(double value) {
+  if (!value.isFinite) return '—';
+  final rounded = (value * 10).round() / 10;
+  return rounded == rounded.roundToDouble()
+      ? '${rounded.toInt()}%'
+      : '$rounded%';
+}

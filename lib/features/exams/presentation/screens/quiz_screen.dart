@@ -664,6 +664,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                   attemptId: widget.attempt.id,
                   passingMarks: _quizMarks('passing_marks'),
                   totalMarks: _quizMarks('total_marks'),
+                  finishPayload: result['raw'],
                 ),
           ),
         );
@@ -711,6 +712,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                   attemptId: widget.attempt.id,
                   passingMarks: _quizMarks('passing_marks'),
                   totalMarks: _quizMarks('total_marks'),
+                  finishPayload: result['raw'],
                 ),
           ),
         );

@@ -127,7 +127,8 @@ List<QuizAnswer> localSelectedAnswers(QuizQuestion question) {
 /// Builds the review state for one question.
 ///
 /// The server's row drives everything it can: the chosen options come from its
-/// `answer_text`, and its `is_correct` is final. The in-memory selections are
+/// `selected_answer_ids` (else the device's picks, else its `answer_text`), and
+/// its `is_correct` is final. The in-memory selections are
 /// consulted only when the server sent no row for this question — straight
 /// after a submit that never reached the API, for instance. A locally computed
 /// verdict can therefore never override the server's.
@@ -138,11 +139,16 @@ ExamQuestionReview buildQuestionReview(
   final serverText = server?.answerText.trim() ?? '';
   final hasServerRow = server != null;
 
-  // The website's order (ExamAnswersReview.tsx): the picks made on this device
-  // when there are any, otherwise the options resolved from `answer_text`.
-  var selected = localSelectedAnswers(question);
-  var usedLocal = true;
-  if (selected.isEmpty && hasServerRow) {
+  // The options the server graded come first, so the marked options always
+  // agree with the right/wrong verdict. Without them, the website's order
+  // (ExamAnswersReview.tsx): the picks made on this device when there are any,
+  // otherwise the options resolved from `answer_text`.
+  final gradedIds = question.isShortAnswer ? null : server?.selectedAnswerIds;
+  var selected = gradedIds == null
+      ? localSelectedAnswers(question)
+      : question.answers.where((a) => gradedIds.contains(a.answerId)).toList();
+  var usedLocal = gradedIds == null;
+  if (selected.isEmpty && hasServerRow && gradedIds == null) {
     selected = selectedAnswersFromAnswerText(
       serverText,
       question.answers,

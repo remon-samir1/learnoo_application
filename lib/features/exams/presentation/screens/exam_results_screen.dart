@@ -27,6 +27,12 @@ class ExamResultsScreen extends StatefulWidget {
   /// The quiz's own `total_marks`, same fallback role.
   final num? totalMarks;
 
+  /// The body of the `PUT /v1/quiz-attempt/{id}` that finished the attempt. It
+  /// already holds the server's grade (`results`), so the screen opens on the
+  /// real score instead of the device's tally, which cannot know the right
+  /// options (they are hidden while the exam runs) and so always read 0.
+  final dynamic finishPayload;
+
   const ExamResultsScreen({
     super.key,
     required this.result,
@@ -34,6 +40,7 @@ class ExamResultsScreen extends StatefulWidget {
     this.attemptId,
     this.passingMarks,
     this.totalMarks,
+    this.finishPayload,
   });
 
   @override
@@ -57,6 +64,12 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
   @override
   void initState() {
     super.initState();
+    final finished = ExamScoreSummary.fromResultPayload(
+      widget.finishPayload,
+      fallbackPassingMarks: widget.passingMarks,
+      fallbackTotalMarks: widget.totalMarks,
+    );
+    if (finished != null && finished.hasServerFigures) _summary = finished;
     _loadUserData();
     _loadResult();
   }
@@ -129,10 +142,14 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
     );
   }
 
-  String get _correctLine => 'exams.out_of_correct'.tr(args: [
-        '${_serverCorrectCount ?? widget.result.correctAnswers}',
-        '${_serverQuestionCount ?? widget.result.totalQuestions}',
-      ]);
+  /// "N out of M correct" only from the server's graded rows: the device's own
+  /// count cannot know the right options and printed "0 out of 10" (7 Nov).
+  String? get _correctLine => _serverCorrectCount == null
+      ? null
+      : 'exams.out_of_correct'.tr(args: [
+          '$_serverCorrectCount',
+          '${_serverQuestionCount ?? widget.result.totalQuestions}',
+        ]);
 
   Future<void> _loadUserData() async {
     final result = await _authRepository.getProfile();
@@ -228,21 +245,23 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
                   child: Column(
                     children: [
                       Text(
-                        '${_percentage.toInt()}%',
+                        formatPercent(_percentage),
                         style: TextStyle(
                           fontSize: 48,
                           fontWeight: FontWeight.w700,
                           color: isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1F2937),
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _correctLine,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF9CA3AF),
+                      if (_correctLine case final correctLine?) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          correctLine,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF9CA3AF),
+                          ),
                         ),
-                      ),
+                      ],
                       const SizedBox(height: 8),
                       Text(
                         _scoreLine,
@@ -270,7 +289,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
                             ),
                             Center(
                               child: Text(
-                                '${_percentage.toInt()}%',
+                                formatPercent(_percentage),
                                 style: TextStyle(
                                   fontSize: 22,
                                   fontWeight: FontWeight.bold,
