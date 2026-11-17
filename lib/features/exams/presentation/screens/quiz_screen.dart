@@ -10,6 +10,7 @@ import '../../domain/exam_score.dart';
 import '../../models/quiz_models.dart';
 import 'exam_results_screen.dart';
 import 'exams_list_screen.dart';
+import '../widgets/exam_banner.dart';
 import '../../../../core/widgets/header_back_button.dart';
 import '../../../../core/widgets/watermark_wrapper.dart';
 import '../../../../core/widgets/image_preview_screen.dart';
@@ -824,6 +825,7 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
     final currentQuestion = _questions[_currentQuestionIndex];
     final progress = (_currentQuestionIndex + 1) / _questions.length;
     final answers = currentQuestion.answers;
+    final bannerUrl = widget.quiz.bannerUrl;
 
     return PopScope(
       canPop: false,
@@ -942,7 +944,14 @@ class _QuizScreenState extends State<QuizScreen> with WidgetsBindingObserver {
                         minHeight: 6,
                       ),
                     ),
-                    const SizedBox(height: 32),
+                    // The exam banner stays here, outside the scrolling
+                    // question, so it is at the top of every question.
+                    if (bannerUrl != null) ...[
+                      const SizedBox(height: 16),
+                      ExamBanner(url: bannerUrl),
+                      const SizedBox(height: 16),
+                    ] else
+                      const SizedBox(height: 32),
                     // Scrollable content - Question Card + Options
                     Expanded(
                       child: SingleChildScrollView(

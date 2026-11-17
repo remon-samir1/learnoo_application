@@ -68,6 +68,10 @@ class Quiz {
   /// Bundled with a course: unlocks once that course is activated.
   bool get isIncluded => visibility == QuizVisibility.included;
 
+  /// The exam banner set on the dashboard (`banner`), shown at the top of the
+  /// exam; null when the exam has none.
+  String? get bannerUrl => readExamMediaUrl(attributes, const ['banner']);
+
   factory Quiz.fromJson(Map<String, dynamic> json) {
     final rawAttributes = json['attributes'];
     final nestedAttributes = rawAttributes is Map
