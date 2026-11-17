@@ -64,9 +64,12 @@ class _CommunityScreenState extends State<CommunityScreen> {
     if (mounted) setState(() => _currentUserId = id);
   }
 
-  Future<void> _loadPosts() async {
+  /// Loads the feed. A [quiet] reload (after a comment is added or removed)
+  /// keeps the posts on screen instead of the loading placeholders, so the
+  /// open comment list and the reader's place on the page stay where they are.
+  Future<void> _loadPosts({bool quiet = false}) async {
     setState(() {
-      _isLoading = true;
+      if (!quiet) _isLoading = true;
       _hasError = false;
     });
 
@@ -97,7 +100,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
               _courses[idx] = updated;
             }
           }
-        } else {
+        } else if (!quiet) {
+          // A failed quiet reload keeps the feed that is already shown.
           _hasError = true;
         }
       });
@@ -1376,9 +1380,10 @@ class _CommunityScreenState extends State<CommunityScreen> {
             ],
           ),
           PostCommentsSection(
+            key: ValueKey('comments-${post.id}'),
             post: post,
             currentUserId: _currentUserId,
-            onChanged: _loadPosts,
+            onChanged: () => _loadPosts(quiet: true),
           ),
         ],
       ),
