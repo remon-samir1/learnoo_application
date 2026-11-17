@@ -7,11 +7,7 @@ import '../../../../core/services/student_scope.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/header_back_button.dart';
 import '../../../../core/widgets/pagination_bar.dart';
-import '../../../auth//data/auth_repository.dart';
-import '../../../course_content/data/course_repository.dart';
-import '../../../course_content/data/chapter_repository.dart';
 import '../../data/exam_repository.dart';
-import '../../data/exam_filter_service.dart';
 import '../../domain/quiz_activation_lock.dart';
 import '../../domain/quiz_course_title.dart';
 import '../../domain/usecases/exam_access_usecase.dart';
@@ -27,9 +23,6 @@ class ExamsListScreen extends StatefulWidget {
 
 class _ExamsListScreenState extends State<ExamsListScreen> {
   final ExamRepository _examRepository = ExamRepository();
-  final AuthRepository _authRepository = AuthRepository();
-  final CourseRepository _courseRepository = CourseRepository();
-  final ChapterRepository _chapterRepository = ChapterRepository();
   final ExamAccessUseCase _examAccessUseCase = ExamAccessUseCase();
 
   /// Every exam this student may see (course-filtered and search-filtered),
@@ -53,9 +46,8 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
   /// overwrite the list for the current one.
   int _loadGeneration = 0;
 
-  List<dynamic> _cachedAllowedCourses = [];
-  List<dynamic> _cachedAllChapters = [];
   StudentScope _scope = const StudentScope.empty();
+  bool _scopeLoaded = false;
 
   @override
   void initState() {
@@ -118,65 +110,26 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
     });
 
     try {
-      // Fetch user profile, allowed courses, and chapters once (or reuse cache)
-      if (_cachedAllowedCourses.isEmpty || _cachedAllChapters.isEmpty) {
-        final results = await Future.wait([
-          _authRepository.getProfile(),
-          _courseRepository.getCourses(),
-          StudentScopeService().load(),
-          _chapterRepository.getChapters(),
-        ]);
-
-        if (!mounted || generation != _loadGeneration) return;
-
-        final meResult = results[0] as Map<String, dynamic>;
-        final coursesResult = results[1] as Map<String, dynamic>;
-        _scope = results[2] as StudentScope;
-        final chaptersResult = results[3] as Map<String, dynamic>;
-
-        if (meResult['success'] && coursesResult['success']) {
-          final meData = meResult['data'] as Map<String, dynamic>;
-          final allCourses = coursesResult['data'] as List<dynamic>? ?? [];
-          final allChapters = chaptersResult['success']
-              ? (chaptersResult['data'] as List<dynamic>? ?? [])
-              : <dynamic>[];
-
-          final allowedDeptIds = _getAllowedDepartmentIds(meData);
-          _cachedAllowedCourses = allCourses.where((course) {
-            final id = course['id']?.toString();
-            if (id != null && _scope.isVisible(id)) return true;
-            if (allowedDeptIds.isEmpty) return true;
-            final attrs = course['attributes'] ?? {};
-            final categoryId = attrs['category']?['data']?['id']?.toString() ??
-                attrs['department']?['data']?['id']?.toString();
-            if (categoryId == null) return false;
-            return allowedDeptIds.contains(categoryId);
-          }).toList();
-
-          _cachedAllChapters = allChapters;
-        }
-      }
-
-      // Every page first, then the course filter, then local pagination.
-      final quizResult = await _examRepository.getAllQuizzes(
+      // The server sends a student only the exams of their own courses
+      // (GET /v1/quiz is scoped per student), so the app no longer downloads
+      // every lesson and every exam on the platform to filter them here; that
+      // took about 9 s on a real iPhone. The scope is still needed for each
+      // card's enrolled / locked state, and loads alongside the exams.
+      final scopeFuture = _scopeLoaded
+          ? Future.value(_scope)
+          : StudentScopeService().load();
+      final quizFuture = _examRepository.getAllQuizzes(
         title: _searchQuery.isNotEmpty ? _searchQuery : null,
       );
+      final scope = await scopeFuture;
+      final quizResult = await quizFuture;
 
       if (!mounted || generation != _loadGeneration) return;
+      _scope = scope;
+      _scopeLoaded = true;
 
       if (quizResult['success']) {
-        final allQuizzes = quizResult['data'] as List<Quiz>;
-        final filteredQuizzes = await ExamFilterService.filterExams(
-          exams: allQuizzes,
-          allowedCourses: _cachedAllowedCourses,
-          allChapters: _cachedAllChapters,
-        );
-
-        if (!mounted || generation != _loadGeneration) return;
-
-        // `filterExams` collects into a set; put the server's order back.
-        final keep = filteredQuizzes.toSet();
-        final ordered = allQuizzes.where(keep.contains).toList();
+        final ordered = quizResult['data'] as List<Quiz>;
 
         setState(() {
           _quizzes = ordered;
@@ -185,7 +138,7 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
           _isSearching = false;
         });
 
-        for (final quiz in filteredQuizzes) {
+        for (final quiz in ordered) {
           _remainingAttempts[quiz.quizId] = quiz.remainingAttempts;
         }
 
@@ -247,25 +200,6 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
       final type = quiz.type.toLowerCase();
       return title.contains(q) || chapter.contains(q) || type.contains(q);
     }).toList();
-  }
-
-  List<String> _getAllowedDepartmentIds(Map<String, dynamic> meData) {
-    final Set<String> ids = {};
-
-    final data = meData['data'] as Map<String, dynamic>?;
-    final attributes = data?['attributes'] as Map<String, dynamic>?;
-
-    // Get user's departments from me data
-    final departmentsData = attributes?['departments']?['data'] as List<dynamic>? ?? [];
-
-    for (final dept in departmentsData) {
-      final deptId = dept['id']?.toString();
-      if (deptId != null) {
-        ids.add(deptId);
-      }
-    }
-
-    return ids.toList();
   }
 
   Future<void> _loadAttemptsForQuiz(int quizId, int maxAttempts) async {

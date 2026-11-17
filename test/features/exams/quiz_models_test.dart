@@ -103,4 +103,27 @@ void main() {
       expect(merged['2']!.title, 'Second');
     });
   });
+
+  group('Quiz.owningCourseIds', () {
+    test('reads every course the server says the exam belongs to', () {
+      final quiz = Quiz.fromJson({
+        'id': '7',
+        'attributes': {
+          'id': 7,
+          'title': 'On a lesson, shared with a second course',
+          'chapter_id': 40,
+          'courses_ids': [12],
+          'owning_course_ids': [9, 12, '15', null],
+        },
+      });
+      expect(quiz.owningCourseIds, {'9', '12', '15'});
+      // The activation lock still reads only the direct / shared courses.
+      expect(quiz.courseIds, ['12']);
+    });
+
+    test('is empty when the server sends no owning courses', () {
+      final quiz = Quiz.fromJson({'id': '8', 'attributes': {'id': 8, 'title': 'x'}});
+      expect(quiz.owningCourseIds, isEmpty);
+    });
+  });
 }
