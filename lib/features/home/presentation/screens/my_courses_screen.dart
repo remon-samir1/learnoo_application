@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../course_content/domain/course_visibility.dart';
+import '../../../../core/utils/coerce.dart';
 import '../../../../core/widgets/cover_image.dart';
 import '../../../../core/widgets/header_back_button.dart';
 import 'package:easy_localization/easy_localization.dart';
@@ -583,8 +584,12 @@ class _MyCoursesScreenState extends State<MyCoursesScreen> {
         'home.unknown_instructor'.tr();
     // Empty falls through to the local placeholder in `errorBuilder`.
     final thumbnail = attributes['thumbnail']?.toString() ?? '';
-    final lectures = attributes['lectures_count']?.toString() ?? '0';
-    final students = attributes['students_count']?.toString() ?? '0';
+    // The API sends counts under `stats`, like the website reads them. The
+    // student count is only sent to staff (owner / the course's teacher), so a
+    // student sees no student count rather than a wrong "0".
+    final stats = attributes['stats'] is Map ? attributes['stats'] as Map : const {};
+    final lectures = coerceInt(stats['lectures']);
+    final students = coerceNonNegativeInt(stats['students']);
     // Calculate progress from user progress API (viewed chapters / total chapters)
     final progress = _calculateCourseProgress(course);
 
@@ -693,13 +698,15 @@ class _MyCoursesScreenState extends State<MyCoursesScreen> {
                       '$lectures ${'home.lectures'.tr()}',
                       style: const TextStyle(color: Colors.grey, fontSize: 12),
                     ),
-                    const SizedBox(width: 20),
-                    const FaIcon(FontAwesomeIcons.users, size: 12, color: Colors.grey),
-                    const SizedBox(width: 6),
-                    Text(
-                      '$students ${'home.students'.tr()}',
-                      style: const TextStyle(color: Colors.grey, fontSize: 12),
-                    ),
+                    if (students != null) ...[
+                      const SizedBox(width: 20),
+                      const FaIcon(FontAwesomeIcons.users, size: 12, color: Colors.grey),
+                      const SizedBox(width: 6),
+                      Text(
+                        '$students ${'home.students'.tr()}',
+                        style: const TextStyle(color: Colors.grey, fontSize: 12),
+                      ),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 20),

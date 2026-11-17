@@ -2174,9 +2174,14 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                 children: [
                   Text(
                     title,
+                    // The lecture panel behind this row is always light
+                    // (#FAFBFF), so the title needs a fixed dark colour. With
+                    // the theme's default it turned white on dark-mode phones
+                    // and the lesson names disappeared.
                     style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 13,
+                      color: Color(0xFF1F2937),
                     ),
                   ),
                   const SizedBox(height: 6),

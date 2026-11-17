@@ -19,7 +19,6 @@ import '../../data/course_files_repository.dart';
 import '../../data/chapter_repository.dart';
 import '../../data/library_repository.dart';
 import '../../../exams/data/exam_repository.dart';
-import '../../../exams/data/exam_filter_service.dart';
 import '../../../exams/domain/usecases/exam_access_usecase.dart';
 import '../../../exams/models/quiz_models.dart';
 import 'course_detail_screen.dart';
@@ -105,29 +104,23 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen>
     if (!mounted) return;
     setState(() => _isLoadingExams = true);
     try {
-      // Fetch all exams and chapters for this department
-      final results = await Future.wait([
-        _examRepository.getQuizzes(perPage: 500),
-        _chapterRepository.getChapters(),
-      ]);
+      // The server sends a student only their own courses' exams and names
+      // every course each exam belongs to (`owning_course_ids`, its lesson's
+      // course included), so this page no longer downloads every lesson on
+      // the platform to place exams under the subject.
+      final examResult = await _examRepository.getQuizzes(perPage: 500);
 
       if (!mounted) return;
 
-      final examResult = results[0];
-      final chaptersResult = results[1];
-
       if (examResult['success']) {
         final allExams = examResult['data'] as List<Quiz>;
-        final allChapters = chaptersResult['success']
-            ? (chaptersResult['data'] as List<dynamic>? ?? [])
-            : <dynamic>[];
-
-        // Filter exams by courses in this subject (NOT by department)
-        final filteredExams = await ExamFilterService.filterExams(
-          exams: allExams,
-          allowedCourses: _courses,
-          allChapters: allChapters,
-        );
+        final subjectCourseIds = {
+          for (final course in _courses)
+            if (course is Map) ?coerceId(course['id']),
+        };
+        final filteredExams = allExams
+            .where((exam) => exam.owningCourseIds.any(subjectCourseIds.contains))
+            .toList();
 
         setState(() {
           _exams = filteredExams;

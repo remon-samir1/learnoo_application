@@ -62,6 +62,15 @@ class Quiz {
     this.canWatch = false,
   });
 
+  /// Every course the exam belongs to, including through its lesson, as the
+  /// server reports it (`owning_course_ids`). Used to place an exam under a
+  /// subject without downloading every lesson to look up its course.
+  Set<String> get owningCourseIds {
+    final raw = attributes['owning_course_ids'];
+    if (raw is! List) return const {};
+    return {for (final id in raw) ?coerceId(id)};
+  }
+
   /// Open to everyone, no gate. Kept for call sites that only need the boolean.
   bool get isPublic => visibility == QuizVisibility.public;
 
