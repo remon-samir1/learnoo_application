@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "350755081670",
+    "project_id": "learnoo-6bd23",
+    "storage_bucket": "learnoo-6bd23.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:350755081670:android:e8ad94db7cae7cc79836c7",
+        "android_client_info": {
+          "package_name": "com.sunmed.learnoo"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBtDXRIIFaeT-IRlQIRZpuaaJq2q9YSE0w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
