@@ -22,7 +22,7 @@ class SyncProcessors {
     syncService.registerProcessor(PendingActionTypes.reaction, _processReaction);
     syncService.registerProcessor(PendingActionTypes.deletePost, _processDeletePost);
     syncService.registerProcessor(PendingActionTypes.updatePost, _processUpdatePost);
-    syncService.registerProcessor(PendingActionTypes.chapterView, _processChapterView);
+    syncService.registerProcessor(PendingActionTypes.chapterView, processChapterView);
   }
 
   /// Process a pending comment action
@@ -185,8 +185,15 @@ class SyncProcessors {
     }
   }
 
-  /// Process a pending chapter view action
-  static Future<bool> _processChapterView(PendingAction action) async {
+  /// Sends a view queued because the lesson screen could not deliver it.
+  ///
+  /// The queued `view_key` is sent again, so a view the server already
+  /// recorded (the first request timed out after reaching it) is not counted
+  /// twice. A 4xx refusal — the limit is reached, the lesson is locked — is
+  /// final: the view is dropped instead of being retried and, while it waits,
+  /// counted against the student on this device.
+  @visibleForTesting
+  static Future<bool> processChapterView(PendingAction action) async {
     final token = await _getToken();
     if (token == null) return false;
 
@@ -194,6 +201,7 @@ class SyncProcessors {
     if (chapterId == null) return true; // Invalid payload, discard
 
     final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.chapters}/$chapterId/view');
+    final viewKey = action.payload['view_key'];
 
     try {
       final response = await http.post(
@@ -203,13 +211,24 @@ class SyncProcessors {
           'Accept': 'application/json',
           'Authorization': 'Bearer $token',
         },
-      );
+        body: viewKey == null ? null : jsonEncode({'view_key': viewKey}),
+      ).timeout(const Duration(seconds: 20));
 
       debugPrint('[SyncProcessors] Sent chapter view sync for chapter $chapterId -> status: ${response.statusCode}');
-      return response.statusCode == 200 || response.statusCode == 201;
+      return isFinalViewResponse(response.statusCode);
     } catch (e) {
       debugPrint('[SyncProcessors] Error syncing chapter view for $chapterId: $e');
       throw Exception('Failed to record chapter view: $e');
     }
+  }
+
+  /// Whether a queued view is done with after this answer: recorded (2xx) or
+  /// refused for good (4xx other than an expired session, a timeout or a rate
+  /// limit, which may succeed later).
+  @visibleForTesting
+  static bool isFinalViewResponse(int statusCode) {
+    if (statusCode >= 200 && statusCode < 300) return true;
+    if (statusCode == 401 || statusCode == 408 || statusCode == 429) return false;
+    return statusCode >= 400 && statusCode < 500;
   }
 }

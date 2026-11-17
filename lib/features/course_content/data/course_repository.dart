@@ -76,6 +76,9 @@ class CourseRepository with OfflineFirstRepository {
 
     return offlineFirstFetch(
       apiFetcher: () async {
+        // The catalogue only fills in the activated rows, but does not depend
+        // on them: both requests run at once instead of one after the other.
+        final catalogueFuture = _fetchCatalogue(token);
         final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.courses}')
             .replace(queryParameters: {'activated': '1'});
 
@@ -94,7 +97,7 @@ class CourseRepository with OfflineFirstRepository {
           if (activated is! List || activated.isEmpty) {
             return {'success': true, 'data': activated};
           }
-          final catalogue = await _fetchCatalogue(token);
+          final catalogue = await catalogueFuture;
           return {
             'success': true,
             'data': mergeActivatedWithCatalogue(activated, catalogue),

@@ -47,10 +47,20 @@ void main() {
       async.elapse(const Duration(minutes: 2, seconds: 59));
       async.flushMicrotasks();
       expect(wakelock.on, isTrue);
+      expect(controller.promptSecondsLeft.value, isNull);
 
+      // The window ends: the notice comes up and the screen stays on for it.
       async.elapse(const Duration(seconds: 1));
       async.flushMicrotasks();
-      expect(wakelock.on, isFalse, reason: 'phone may sleep after 3 minutes');
+      expect(controller.promptSecondsLeft.value, 15);
+      expect(wakelock.on, isTrue, reason: 'no lock while the notice is up');
+      expect(stoppedCount, 0, reason: 'the video keeps playing meanwhile');
+
+      // Nobody answers it.
+      async.elapse(const Duration(seconds: 15));
+      async.flushMicrotasks();
+      expect(controller.promptSecondsLeft.value, isNull);
+      expect(wakelock.on, isFalse, reason: 'phone may sleep once paused');
       expect(
         stoppedCount,
         1,
@@ -62,14 +72,115 @@ void main() {
       controller.userActivity();
       async.flushMicrotasks();
       expect(wakelock.on, isFalse);
+      async.elapse(const Duration(hours: 1));
+      expect(stoppedCount, 1, reason: 'it stays paused until play is pressed');
+      expect(controller.promptSecondsLeft.value, isNull);
 
       controller.playbackStarted(); // played again: a new period starts
       async.flushMicrotasks();
       expect(wakelock.on, isTrue);
-      async.elapse(const Duration(minutes: 3));
+      async.elapse(const Duration(minutes: 3, seconds: 15));
       async.flushMicrotasks();
       expect(wakelock.on, isFalse);
       expect(stoppedCount, 2);
+    });
+  });
+
+  test('"still watching" hides the notice and restarts the interval', () {
+    fakeAsync((async) {
+      limit = const Duration(minutes: 1);
+      final controller = buildController();
+      final shown = <int?>[];
+      controller.promptSecondsLeft.addListener(
+        () => shown.add(controller.promptSecondsLeft.value),
+      );
+
+      controller.playbackStarted();
+      async.elapse(const Duration(minutes: 1));
+      async.elapse(const Duration(seconds: 6));
+      async.flushMicrotasks();
+      expect(controller.promptSecondsLeft.value, 9);
+      expect(shown, [15, 14, 13, 12, 11, 10, 9], reason: 'one step a second');
+
+      controller.stillWatching();
+      async.flushMicrotasks();
+      expect(controller.promptSecondsLeft.value, isNull);
+      expect(wakelock.on, isTrue);
+      expect(stoppedCount, 0, reason: 'no interruption');
+
+      // A full new interval runs before the next notice.
+      async.elapse(const Duration(seconds: 59));
+      expect(controller.promptSecondsLeft.value, isNull);
+      async.elapse(const Duration(seconds: 1));
+      expect(controller.promptSecondsLeft.value, 15);
+      async.elapse(const Duration(seconds: 15));
+      async.flushMicrotasks();
+      expect(stoppedCount, 1);
+      expect(wakelock.on, isFalse);
+    });
+  });
+
+  test('only the button answers the notice', () {
+    fakeAsync((async) {
+      limit = const Duration(minutes: 1);
+      final controller = buildController();
+      controller.playbackStarted();
+      async.elapse(const Duration(minutes: 1, seconds: 5));
+      expect(controller.promptSecondsLeft.value, 10);
+
+      // Tapping the video or seeking while the notice is up does not count as
+      // an answer, nor does the dashboard value arriving.
+      controller.userActivity();
+      controller.timeoutChanged();
+      async.elapse(const Duration(seconds: 1));
+      expect(controller.promptSecondsLeft.value, 9);
+
+      async.elapse(const Duration(seconds: 9));
+      async.flushMicrotasks();
+      expect(stoppedCount, 1);
+
+      // Pressing the button after the video stopped does nothing.
+      controller.stillWatching();
+      async.flushMicrotasks();
+      expect(wakelock.on, isFalse);
+      expect(controller.promptSecondsLeft.value, isNull);
+    });
+  });
+
+  test('pausing during the notice hides it; play starts a full interval', () {
+    fakeAsync((async) {
+      limit = const Duration(minutes: 1);
+      final controller = buildController();
+      controller.playbackStarted();
+      async.elapse(const Duration(minutes: 1, seconds: 3));
+      expect(controller.isPrompting, isTrue);
+
+      controller.playbackStopped(); // the student paused it themselves
+      async.flushMicrotasks();
+      expect(controller.promptSecondsLeft.value, isNull);
+      expect(wakelock.on, isFalse);
+      async.elapse(const Duration(minutes: 5));
+      expect(stoppedCount, 0);
+
+      controller.playbackStarted();
+      async.elapse(const Duration(seconds: 59));
+      expect(controller.promptSecondsLeft.value, isNull);
+      async.elapse(const Duration(seconds: 1));
+      expect(controller.promptSecondsLeft.value, 15);
+    });
+  });
+
+  test('leaving the screen during the notice cancels it for good', () {
+    fakeAsync((async) {
+      limit = const Duration(minutes: 1);
+      final controller = buildController();
+      controller.playbackStarted();
+      async.elapse(const Duration(minutes: 1, seconds: 2));
+      controller.dispose();
+      async.elapse(const Duration(minutes: 1));
+      async.flushMicrotasks();
+      expect(stoppedCount, 0);
+      expect(wakelock.on, isFalse);
     });
   });
 
@@ -94,6 +205,11 @@ void main() {
       );
 
       async.elapse(const Duration(seconds: 30));
+      async.flushMicrotasks();
+      expect(wakelock.on, isTrue, reason: 'the notice holds the screen');
+      expect(controller.isPrompting, isTrue);
+
+      async.elapse(const Duration(seconds: 15));
       async.flushMicrotasks();
       expect(wakelock.on, isFalse);
     });
@@ -126,6 +242,11 @@ void main() {
       expect(wakelock.on, isTrue);
 
       async.elapse(const Duration(seconds: 1));
+      async.flushMicrotasks();
+      expect(controller.isPrompting, isTrue);
+      expect(stoppedCount, 0);
+
+      async.elapse(const Duration(seconds: 15));
       async.flushMicrotasks();
       expect(wakelock.on, isFalse);
       expect(stoppedCount, 1);

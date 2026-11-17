@@ -219,6 +219,20 @@ class LiveRoomRepository {
   }
 }
 
+/// The home screen's "upcoming live classes", like the website's student home
+/// (`app/[locale]/student/page.tsx`, step 3): a session can belong to several
+/// courses and is kept when any of them is one the student activated; a
+/// session attached to no course at all is dropped. Until the student's
+/// courses have loaded every session is shown rather than none.
+List<LiveRoom> liveRoomsForHome(Iterable<LiveRoom> rooms, StudentScope scope) {
+  if (!scope.isLoaded) return rooms.toList();
+  return rooms
+      .where((room) =>
+          scope.isAnyEnrolled(room.courseIds) ||
+          (room.courseId != null && scope.isEnrolled(room.courseId)))
+      .toList();
+}
+
 /// What the website's live sessions page computes before rendering:
 /// the student's faculty course tree and the unlocked course ids.
 class LiveRoomAccessContext {

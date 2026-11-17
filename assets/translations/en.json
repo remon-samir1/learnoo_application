@@ -147,10 +147,6 @@
     "auto_fill_ready": "The code will fill in automatically",
     "register_failed": "Registration failed",
     "register_success": "Account created successfully",
-    "confirm_password_hint": "Re-enter your password",
-    "password_mismatch": "Passwords do not match",
-    "role_student": "Student",
-    "role_parent": "Parent",
     "parent_login_title": "Parent sign in",
     "parent_login_subtitle": "Follow your children's progress",
     "parent_login_link": "Sign in as a parent",
@@ -425,6 +421,9 @@
     "live_webview_failed": "The live session could not be loaded. Check your connection and try again.",
     "join_with_native_meeting": "Join with the meeting app instead",
     "ask_this_moment": "Ask about this moment",
+    "still_watching_title": "Are you still watching?",
+    "still_watching_countdown": "The video will stop in {} seconds",
+    "still_watching_button": "Still watching",
     "capturing_moment": "Capturing this moment…",
     "frame_attached": "Video frame attached",
     "remove_frame": "Remove the frame",
@@ -490,6 +489,7 @@
     "no_quizzes": "No quizzes available",
     "duration_minutes": "{} Minutes",
     "chapter_prefix": "Chapter: {}",
+    "course_prefix": "Course: {}",
     "attempts_count": "Attempts: {}/{}",
     "badge_exam": "EXAM",
     "badge_homework": "HOMEWORK",
@@ -746,13 +746,7 @@
     "error_picking_image": "Error picking image: {}"
   },
   "press_back_again_to_exit": "Press back again to exit",
-  "update_available": "Update Available",
-  "new_version": "New Version",
   "file_size": "File Size",
-  "force_update_message": "A new version of the app is required. Please update to continue using the app.",
-  "optional_update_message": "A new version of the app is available. Update now for the best experience.",
-  "skip": "Skip",
-  "update_now": "Update Now",
   "community": {
     "title": "Community",
     "post": "Post",
@@ -1211,7 +1205,14 @@
     "day_short": "d",
     "starts_in": "Starts in",
     "live_now": "Live Now",
-    "elapsed": "Live for"
+    "elapsed": "Live for",
+    "live_tools": "Live Interaction Tools",
+    "raise_hand": "Raise Hand",
+    "lower_hand": "Lower Hand",
+    "chat": "Live Chat",
+    "hide_chat": "Hide Chat",
+    "unmute_mic": "Unmute microphone",
+    "mute_mic": "Mute microphone"
   },
   "course_activation": {
     "title": "Unlock Course",
@@ -1450,6 +1451,8 @@
     "secure_video_failed": "Failed to load secure video.\nPlease check your connection or DRM license.",
     "secure_page_failed": "Failed to load page secure image."
   },
-  "update_play_store_failed": "Could not open the Play Store. Please update the app manually.",
-  "update_play_store_error": "Could not open the Play Store: {}"
+  "update_required_title": "Update required",
+  "update_required_message": "A new version of the app is available. Please update it from the store to continue.",
+  "update_required_button": "Update now",
+  "update_store_open_failed": "Could not open the store. Please open it and update the app manually."
 }

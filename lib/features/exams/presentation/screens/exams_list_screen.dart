@@ -13,6 +13,7 @@ import '../../../course_content/data/chapter_repository.dart';
 import '../../data/exam_repository.dart';
 import '../../data/exam_filter_service.dart';
 import '../../domain/quiz_activation_lock.dart';
+import '../../domain/quiz_course_title.dart';
 import '../../domain/usecases/exam_access_usecase.dart';
 import '../../models/quiz_models.dart';
 import '../widgets/exam_countdown.dart';
@@ -534,6 +535,16 @@ class _ExamsListScreenState extends State<ExamsListScreen> {
                 Expanded(child: Text(_formatDateRange(quiz.startTime, quiz.endTime), style: const TextStyle(fontSize: 12, color: AppColors.textGray), overflow: TextOverflow.ellipsis)),
               ],
             ),
+            if (quizCourseTitle(quiz.attributes) case final courseTitle?) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  FaIcon(FontAwesomeIcons.graduationCap, size: 14, color: AppColors.textGray.withValues(alpha: 0.7)),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text('exams.course_prefix'.tr(args: [courseTitle]), style: const TextStyle(fontSize: 12, color: AppColors.textGray), overflow: TextOverflow.ellipsis)),
+                ],
+              ),
+            ],
             if (quiz.chapter != null) ...[
               const SizedBox(height: 8),
               Row(

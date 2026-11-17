@@ -8,6 +8,7 @@ import '../../../core/offline/offline_first_repository.dart';
 import '../../../core/local/hive_boxes.dart';
 import '../../../core/local/hive_service.dart';
 import '../../../core/local/models/pending_action.dart';
+import '../../../core/services/offline_view_service.dart';
 
 class ChapterRepository with OfflineFirstRepository {
   final _storage = const FlutterSecureStorage();
@@ -177,6 +178,7 @@ class ChapterRepository with OfflineFirstRepository {
 
       final data = jsonDecode(response.body);
       if (response.statusCode == 200) {
+        await _discardViewsResetBy(itemType, itemId);
         return {'success': true, 'data': data['data']};
       } else {
         return {
@@ -186,6 +188,20 @@ class ChapterRepository with OfflineFirstRepository {
       }
     } catch (e) {
       return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
+    }
+  }
+
+  /// A code resets the server's view count for its lesson (or for every
+  /// lesson of its course). Views this device still holds in the queue were
+  /// spent before that reset: kept, they would lock the lesson here again and
+  /// later be charged against the new code. Done here so every screen that
+  /// redeems a code gets it, not only the lesson screen.
+  Future<void> _discardViewsResetBy(String itemType, int itemId) async {
+    final views = OfflineViewService();
+    if (itemType == 'chapter') {
+      await views.discardViewsAfterActivation('$itemId');
+    } else if (itemType == 'course') {
+      await views.discardViewsAfterCourseActivation('$itemId');
     }
   }
 
@@ -325,48 +341,82 @@ class ChapterRepository with OfflineFirstRepository {
     return cached as List<dynamic>?;
   }
 
-  /// Increment chapter view count when user watches for required minutes
+  /// Records one view of [chapterId] — `POST /v1/chapter/{id}/view`, as the
+  /// website's `chaptersApi.recordView` does once the watch threshold is met.
+  ///
+  /// [viewKey] identifies this opening of the lesson; the server counts a key
+  /// once, so re-sending the same opening cannot add a second view.
+  ///
+  /// `retryable` is true only when the server's answer is unknown (no
+  /// response, a timeout) or it failed on its side (5xx); the view may then be
+  /// queued and re-sent with the same key. Any other refusal (a 4xx such as
+  /// `view_limit_reached`) is final, as on the website, and is not queued.
   Future<Map<String, dynamic>> incrementViewCount({
     required int chapterId,
-    required int watchedMinutes,
+    required String viewKey,
   }) async {
     final token = await getToken();
-    if (token == null) return {'success': false, 'message': 'errors.no_token'.tr()};
-
-    try {
-      final headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Authorization': 'Bearer $token',
-      };
-
-      final url =
-          '${ApiConstants.baseUrl}${ApiConstants.chapters}/$chapterId/view';
-      debugPrint('[ChapterRepository] incrementViewCount: POST $url');
-
-      // No body, matching the web's `chaptersApi.recordView`: the server
-      // derives the watched time from its own view record. The log used to
-      // claim a `watched_minutes` payload that was never sent.
-      final response = await http.post(Uri.parse(url), headers: headers);
-
-      debugPrint('[ChapterRepository] Response Status: ${response.statusCode}');
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final data = jsonDecode(response.body);
-        return {
-          'success': true,
-          'current_views': data['current_views'] ?? data['views_count'],
-          'message': data['message'],
-        };
-      } else {
-        final data = jsonDecode(response.body);
-        return {
-          'success': false,
-          'message': data['message'] ?? 'errors.failed_record_view'.tr(),
-        };
-      }
-    } catch (e) {
-      return {'success': false, 'message': 'course.connection_error'.tr(args: ['$e'])};
+    if (token == null) {
+      return {'success': false, 'retryable': false, 'message': 'errors.no_token'.tr()};
     }
+
+    final url = '${ApiConstants.baseUrl}${ApiConstants.chapters}/$chapterId/view';
+    debugPrint('[ChapterRepository] incrementViewCount: POST $url');
+
+    final http.Response response;
+    try {
+      response = await http
+          .post(
+            Uri.parse(url),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({'view_key': viewKey}),
+          )
+          .timeout(viewRequestTimeout);
+    } catch (e) {
+      return {
+        'success': false,
+        'retryable': true,
+        'message': 'course.connection_error'.tr(args: ['$e']),
+      };
+    }
+
+    debugPrint('[ChapterRepository] Response Status: ${response.statusCode}');
+    Object? data;
+    try {
+      data = jsonDecode(response.body);
+    } catch (_) {}
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      // The server answers with the chapter resource; its view count is
+      // `data.attributes.current_user_views`.
+      Object? views;
+      if (data is Map) {
+        final resource = data['data'];
+        final attributes = resource is Map ? resource['attributes'] : null;
+        views = (attributes is Map ? attributes['current_user_views'] : null) ??
+            data['current_views'] ??
+            data['views_count'];
+      }
+      return {
+        'success': true,
+        'current_views': int.tryParse('${views ?? ''}'),
+        'message': data is Map ? data['message'] : null,
+      };
+    }
+
+    return {
+      'success': false,
+      'retryable': response.statusCode >= 500,
+      'statusCode': response.statusCode,
+      'watch_access_state': data is Map ? data['watch_access_state'] : null,
+      'message': (data is Map ? data['message'] : null) ?? 'errors.failed_record_view'.tr(),
+    };
   }
+
+  /// How long a view request may take before its answer counts as unknown.
+  static const Duration viewRequestTimeout = Duration(seconds: 20);
 }

@@ -538,6 +538,8 @@ class _QuizReviewScreenState extends State<QuizReviewScreen> {
                       review: review,
                       imageBuilder: (url) => _ReviewImage(url: url),
                     ),
+                  const SizedBox(height: 8),
+                  ReviewAnswerSummary(review: review),
                   if (question.isMultipleChoice)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),

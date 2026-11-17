@@ -482,16 +482,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (result['success'] && mounted) {
         final all = result['data'] as List<LiveRoom>;
         setState(() {
-          // A session can belong to several courses; keep it when any of them
-          // is one the student activated. A session attached to no course at
-          // all is dropped, which is what the web does.
-          _liveClasses = !_scope.isLoaded
-              ? all
-              : all
-                  .where((room) =>
-                      _scope.isAnyEnrolled(room.courseIds) ||
-                      (room.courseId != null && _scope.isEnrolled(room.courseId)))
-                  .toList();
+          _liveClasses = liveRoomsForHome(all, _scope);
           _isLiveClassesLoading = false;
         });
       } else if (mounted) {

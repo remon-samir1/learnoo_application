@@ -9,6 +9,7 @@ import 'package:learnoo/features/course_content/presentation/screens/live_sessio
 import 'package:learnoo/core/services/feature_service.dart';
 import 'package:learnoo/core/services/video_settings_service.dart';
 import 'package:learnoo/core/services/notification_service.dart';
+import 'package:learnoo/core/services/push_service.dart';
 import 'package:learnoo/features/home/data/notification_sync_service.dart';
 
 class MainScreen extends StatefulWidget {
@@ -42,6 +43,9 @@ class _MainScreenState extends State<MainScreen> {
     // Signed in now: baseline/sync the student's notifications, and open the
     // notifications screen if the app was launched from one in the tray.
     NotificationSyncService().resume();
+    // Ask for notification permission now that it means something, and
+    // register this phone for pushes while the app is closed.
+    PushService().start();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) NotificationService().openPendingNotificationsScreen();
     });
@@ -75,11 +79,11 @@ class _MainScreenState extends State<MainScreen> {
           unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w400),
           elevation: 0,
           items: [
-            _buildNavItem(FontAwesomeIcons.house, FontAwesomeIcons.house, 'home.nav_home'.tr(), 0),
-            _buildNavItem(FontAwesomeIcons.bookOpen, FontAwesomeIcons.bookOpen, 'home.nav_courses'.tr(), 1),
-            _buildNavItem(FontAwesomeIcons.users, FontAwesomeIcons.users, 'home.nav_community'.tr(), 2),
-            _buildNavItem(FontAwesomeIcons.video, FontAwesomeIcons.video, 'home.nav_live'.tr(), 3),
-            _buildNavItem(FontAwesomeIcons.fileSignature, FontAwesomeIcons.fileSignature, 'home.nav_exams'.tr(), 4),
+            _buildNavItem(FontAwesomeIcons.house, FontAwesomeIcons.house, 'home.nav_home'.tr(context: context), 0),
+            _buildNavItem(FontAwesomeIcons.bookOpen, FontAwesomeIcons.bookOpen, 'home.nav_courses'.tr(context: context), 1),
+            _buildNavItem(FontAwesomeIcons.users, FontAwesomeIcons.users, 'home.nav_community'.tr(context: context), 2),
+            _buildNavItem(FontAwesomeIcons.video, FontAwesomeIcons.video, 'home.nav_live'.tr(context: context), 3),
+            _buildNavItem(FontAwesomeIcons.fileSignature, FontAwesomeIcons.fileSignature, 'home.nav_exams'.tr(context: context), 4),
           ],
         ),
       ),

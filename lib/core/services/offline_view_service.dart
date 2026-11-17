@@ -1,14 +1,22 @@
+import 'dart:math';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../sync/offline_queue_service.dart';
 import '../local/models/pending_action.dart';
 
-/// Service for managing offline video view counts.
-/// 
-/// This service tracks views locally when the user watches videos offline,
-/// and allows syncing with the API when back online.
-/// 
-/// The total views calculation is: Total = API Views + Offline Views
+/// Views this device has spent but the server has not recorded yet.
+///
+/// A local view is exactly a `chapterView` action still waiting in the offline
+/// queue: it is added when a view cannot be sent and disappears when the queue
+/// delivers it (or gives up on it). Total views are therefore
+/// `server views + views still queued`, and a view is never counted twice.
+///
+/// Earlier versions kept a separate counter in SharedPreferences that only
+/// ever grew — it was not cleared when the queued view reached the server — so
+/// each failed or late request kept a phantom view on the device and students
+/// were locked out in the app while the website still let them watch. That
+/// counter is now ignored and removed.
 class OfflineViewService {
   static final OfflineViewService _instance = OfflineViewService._internal();
   factory OfflineViewService() => _instance;
@@ -24,97 +32,88 @@ class OfflineViewService {
     _prefs ??= await SharedPreferences.getInstance();
   }
 
-  /// Get the storage key for a chapter's offline views
-  String _getViewsKey(String chapterId) => '$_prefsKeyPrefix$chapterId';
+  List<PendingAction> _pendingViews(String chapterId) {
+    try {
+      return OfflineQueueService()
+          .getPendingActionsByType(PendingActionTypes.chapterView)
+          .where((action) => '${action.payload['chapter_id']}' == chapterId)
+          .toList();
+    } catch (e) {
+      debugPrint('[OfflineViewService] Queue unavailable: $e');
+      return const [];
+    }
+  }
 
-  /// Get the storage key for tracking if views were synced
-  String _getSyncedKey(String chapterId) => '$_prefsKeySyncedPrefix$chapterId';
-
-  /// Increment the offline view count for a chapter
-  /// Returns the new offline view count and enqueues an offline sync action
-  Future<int> incrementOfflineView(String chapterId, {int? watchedMinutes}) async {
+  /// Removes the retired SharedPreferences counter for [chapterId].
+  Future<void> _dropLegacyCounter(String chapterId) async {
     await initialize();
-    
-    final key = _getViewsKey(chapterId);
-    final currentViews = _prefs?.getInt(key) ?? 0;
-    final newViews = currentViews + 1;
-    
-    await _prefs?.setInt(key, newViews);
-    await _prefs?.setBool(_getSyncedKey(chapterId), false);
+    await _prefs?.remove('$_prefsKeyPrefix$chapterId');
+    await _prefs?.remove('$_prefsKeySyncedPrefix$chapterId');
+  }
+
+  /// A fresh key for one opening of a lesson. The server counts a view key
+  /// once, so the same opening re-sent after a timeout, a failed request or
+  /// from the offline queue can never be charged twice.
+  static String newViewKey() {
+    final random = Random.secure();
+    return List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+  }
+
+  /// Queues a view the server has not recorded, and returns how many views
+  /// for [chapterId] are now waiting to be sent.
+  ///
+  /// [viewKey] identifies the opening the view belongs to: an opening already
+  /// waiting in the queue is not queued a second time. [courseId] lets a
+  /// course activation code discard the views it resets.
+  Future<int> incrementOfflineView(
+    String chapterId, {
+    int? watchedMinutes,
+    String? viewKey,
+    String? courseId,
+  }) async {
+    await _dropLegacyCounter(chapterId);
 
     final chapterNumericId = int.tryParse(chapterId);
-    if (chapterNumericId != null && chapterNumericId > 0) {
+    final alreadyQueued = viewKey != null &&
+        _pendingViews(chapterId).any((action) => action.payload['view_key'] == viewKey);
+    if (chapterNumericId != null && chapterNumericId > 0 && !alreadyQueued) {
       await OfflineQueueService().enqueue(
         type: PendingActionTypes.chapterView,
         payload: {
           'chapter_id': chapterNumericId,
           if (watchedMinutes != null) 'watched_minutes': watchedMinutes,
+          if (viewKey != null) 'view_key': viewKey,
+          if (courseId != null && courseId.isNotEmpty) 'course_id': courseId,
         },
       );
     }
-    
-    debugPrint('[OfflineViewService] Incremented offline views for chapter $chapterId: $currentViews -> $newViews and queued sync action');
-    return newViews;
+
+    final pending = _pendingViews(chapterId).length;
+    debugPrint('[OfflineViewService] Queued a view for chapter $chapterId; $pending waiting to sync');
+    return pending;
   }
 
-  /// Get the current offline view count for a chapter
-  Future<int> getOfflineViews(String chapterId) async {
-    await initialize();
-    
-    final key = _getViewsKey(chapterId);
-    final views = _prefs?.getInt(key) ?? 0;
-    
-    return views;
-  }
+  /// Views for [chapterId] still waiting to reach the server.
+  Future<int> getOfflineViews(String chapterId) async => _pendingViews(chapterId).length;
 
-  /// Get offline views synchronously (requires initialize() to be called first)
-  int getOfflineViewsSync(String chapterId) {
-    final key = _getViewsKey(chapterId);
-    return _prefs?.getInt(key) ?? 0;
-  }
+  /// Same as [getOfflineViews], synchronously.
+  int getOfflineViewsSync(String chapterId) => _pendingViews(chapterId).length;
 
-  /// Calculate total views (API views + offline views)
-  int calculateTotalViews(int apiViews, String chapterId) {
-    final offlineViews = getOfflineViewsSync(chapterId);
-    return apiViews + offlineViews;
-  }
+  /// Calculate total views (API views + views still queued)
+  int calculateTotalViews(int apiViews, String chapterId) =>
+      apiViews + getOfflineViewsSync(chapterId);
 
-  /// Sync offline views with API data
-  /// - If API current views exceed local total, clear local offline views
-  /// - Mark views as synced
-  /// Returns the resolved offline view count after sync
+  /// Called with fresh server data: drops the retired counter and returns the
+  /// views still queued, which the server count does not include yet.
   Future<int> syncWithApi(String chapterId, int apiCurrentViews, int apiMaxViews) async {
-    await initialize();
-    
-    final offlineViews = getOfflineViewsSync(chapterId);
-    final localTotal = apiCurrentViews + offlineViews;
-    
-    // If API shows more views than our local total (watched on another device),
-    // clear the offline views since they're already accounted for
-    if (apiCurrentViews >= localTotal && offlineViews > 0) {
-      await clearOfflineViews(chapterId);
-      debugPrint('[OfflineViewService] Cleared offline views for chapter $chapterId - API already has $apiCurrentViews views');
-      return 0;
-    }
-    
-    await _prefs?.setBool(_getSyncedKey(chapterId), true);
-    
-    debugPrint('[OfflineViewService] Synced offline views for chapter $chapterId: API=$apiCurrentViews, Offline=$offlineViews, Total=$localTotal');
-    return offlineViews;
+    await _dropLegacyCounter(chapterId);
+    final pending = getOfflineViewsSync(chapterId);
+    debugPrint('[OfflineViewService] Chapter $chapterId: API=$apiCurrentViews, queued=$pending');
+    return pending;
   }
 
-  /// Clear offline views for a specific chapter
-  Future<void> clearOfflineViews(String chapterId) async {
-    await initialize();
-    
-    final key = _getViewsKey(chapterId);
-    final syncedKey = _getSyncedKey(chapterId);
-    
-    await _prefs?.remove(key);
-    await _prefs?.remove(syncedKey);
-    
-    debugPrint('[OfflineViewService] Cleared offline views for chapter $chapterId');
-  }
+  /// Clear the retired local counter for a specific chapter
+  Future<void> clearOfflineViews(String chapterId) => _dropLegacyCounter(chapterId);
 
   /// An activation code resets the server's view count for its chapter, so
   /// views this device spent before it must neither keep the chapter locked
@@ -122,62 +121,58 @@ class OfflineViewService {
   Future<void> discardViewsAfterActivation(String chapterId) async {
     await clearOfflineViews(chapterId);
     final queue = OfflineQueueService();
-    for (final action in queue.getPendingActionsByType(
-      PendingActionTypes.chapterView,
-    )) {
-      if ('${action.payload['chapter_id']}' == chapterId) {
-        await queue.dequeue(action.id);
-      }
+    for (final action in _pendingViews(chapterId)) {
+      await queue.dequeue(action.id);
     }
   }
 
-  /// Check if views are exhausted for a chapter (including offline views)
-  bool areViewsExhausted(int apiCurrentViews, String chapterId, int maxViews) {
-    final offlineViews = getOfflineViewsSync(chapterId);
-    final totalViews = apiCurrentViews + offlineViews;
-    
-    return totalViews >= maxViews;
+  /// A course activation code resets the views of every lesson in the
+  /// course; drops the queued views recorded for that course.
+  Future<void> discardViewsAfterCourseActivation(String courseId) async {
+    final queue = OfflineQueueService();
+    final List<PendingAction> pending;
+    try {
+      pending = queue.getPendingActionsByType(PendingActionTypes.chapterView);
+    } catch (e) {
+      debugPrint('[OfflineViewService] Queue unavailable: $e');
+      return;
+    }
+    for (final action in pending) {
+      if ('${action.payload['course_id']}' != courseId) continue;
+      await clearOfflineViews('${action.payload['chapter_id']}');
+      await queue.dequeue(action.id);
+    }
   }
+
+  /// Check if views are exhausted for a chapter (including queued views)
+  bool areViewsExhausted(int apiCurrentViews, String chapterId, int maxViews) =>
+      calculateTotalViews(apiCurrentViews, chapterId) >= maxViews;
 
   /// Get remaining views for a chapter
-  int getRemainingViews(int apiCurrentViews, String chapterId, int maxViews) {
-    final offlineViews = getOfflineViewsSync(chapterId);
-    final totalViews = apiCurrentViews + offlineViews;
-    
-    return (maxViews - totalViews).clamp(0, maxViews);
-  }
+  int getRemainingViews(int apiCurrentViews, String chapterId, int maxViews) =>
+      (maxViews - calculateTotalViews(apiCurrentViews, chapterId)).clamp(0, maxViews);
 
-  /// Reset all offline views (useful for testing or when user logs out)
+  /// Removes every retired local counter (e.g. on logout).
   Future<void> resetAllOfflineViews() async {
     await initialize();
-    
     final keys = _prefs?.getKeys() ?? <String>{};
-    final offlineKeys = keys.where((key) => 
-      key.startsWith(_prefsKeyPrefix) || key.startsWith(_prefsKeySyncedPrefix)
-    );
-    
-    for (final key in offlineKeys) {
+    for (final key in keys.where((key) =>
+        key.startsWith(_prefsKeyPrefix) || key.startsWith(_prefsKeySyncedPrefix))) {
       await _prefs?.remove(key);
     }
-    
     debugPrint('[OfflineViewService] Reset all offline views');
   }
 
-  /// Get all chapters with offline views (for debugging/migration)
+  /// Chapters with views still queued (for debugging).
   Map<String, int> getAllOfflineViews() {
-    final keys = _prefs?.getKeys() ?? <String>{};
     final result = <String, int>{};
-    
-    for (final key in keys) {
-      if (key.startsWith(_prefsKeyPrefix)) {
-        final chapterId = key.substring(_prefsKeyPrefix.length);
-        final views = _prefs?.getInt(key) ?? 0;
-        if (views > 0) {
-          result[chapterId] = views;
-        }
+    try {
+      for (final action in OfflineQueueService()
+          .getPendingActionsByType(PendingActionTypes.chapterView)) {
+        final id = '${action.payload['chapter_id']}';
+        result[id] = (result[id] ?? 0) + 1;
       }
-    }
-    
+    } catch (_) {}
     return result;
   }
 }

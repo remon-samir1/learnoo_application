@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:better_player_plus/better_player_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
@@ -25,33 +24,46 @@ class VideoFrameCaptureService {
   static const int _jpegQuality = 80;
   static const Duration _nativeTimeout = Duration(seconds: 8);
 
+  /// Whether the player is a native view Flutter cannot rasterise.
+  ///
+  /// On iOS the video is an `AVPlayerLayer` inside a platform view, so a
+  /// `RepaintBoundary` image of the player holds only what Flutter drew on top
+  /// of it: a black box with the watermark. Android draws the video into a
+  /// Flutter texture, which the boundary does include.
+  static bool get videoIsPlatformView =>
+      defaultTargetPlatform == TargetPlatform.iOS;
+
   /// Captures the frame at [positionSeconds].
   ///
-  /// [videoUrl] is the source currently playing (a network URL or a local
-  /// file path); [headers] are the auth headers the player was given, needed
-  /// for the API's protected streams. [boundaryKey] is the key on the
-  /// `RepaintBoundary` wrapping the player, used by level 2.
+  /// [playerSnapshot] asks the player for the frame it is showing now
+  /// (`BetterPlayerController.takeSnapshot`). [videoUrl] is the source
+  /// currently playing (a network URL or a local file path); [headers] are the
+  /// auth headers the player was given, needed for the API's protected
+  /// streams. [boundaryKey] is the key on the `RepaintBoundary` wrapping the
+  /// player, used by level 2.
   ///
   /// Returns a JPEG in the temp directory, or `null` when every layer failed.
   Future<File?> capture({
     required String videoUrl,
     required int positionSeconds,
     required String chapterId,
-    BetterPlayerController? betterPlayerController,
+    Future<Uint8List?> Function()? playerSnapshot,
     Map<String, String>? headers,
     GlobalKey? boundaryKey,
     String? chapterTitle,
   }) async {
     final positionMs = math.max(0, positionSeconds) * 1000;
 
-    // LEVEL 0 — direct native snapshot from player controller (PixelCopy / AVAssetImageGenerator)
-    if (betterPlayerController != null) {
+    // LEVEL 0 — the frame the player itself decoded for this moment
+    // (AVPlayerItemVideoOutput on iOS, PixelCopy of the surface on Android).
+    if (playerSnapshot != null) {
       try {
-        final playerShot = await betterPlayerController.takeSnapshot();
+        final playerShot = await playerSnapshot().timeout(_nativeTimeout);
         if (playerShot != null && playerShot.isNotEmpty) {
-          debugPrint('[FrameCapture] level 0 (player controller snapshot) succeeded');
+          debugPrint('[FrameCapture] level 0 (player snapshot) succeeded');
           return _writeBytes(playerShot, chapterId, positionSeconds);
         }
+        debugPrint('[FrameCapture] level 0 returned no frame');
       } catch (e) {
         debugPrint('[FrameCapture] level 0 snapshot failed: $e');
       }
@@ -68,8 +80,9 @@ class VideoFrameCaptureService {
       return _writeBytes(native, chapterId, positionSeconds);
     }
 
-    // LEVEL 2 — whatever the Flutter layer can rasterise.
-    if (boundaryKey != null) {
+    // LEVEL 2 — whatever the Flutter layer can rasterise. Never on a
+    // platform-view player: that image is black with only the watermark.
+    if (boundaryKey != null && !videoIsPlatformView) {
       final widgetShot = await _captureBoundary(boundaryKey);
       if (widgetShot != null) {
         debugPrint('[FrameCapture] level 2 (repaint boundary) succeeded');

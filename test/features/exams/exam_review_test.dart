@@ -145,12 +145,28 @@ void main() {
   });
 
   group('buildQuestionReview', () {
-    test("the server's answer_text drives the selection, not the local pick",
-        () {
+    test("the device's pick wins over answer_text, like the website", () {
       final question = _question(
         id: '20',
         answers: [_answer('1', 'Cairo', correct: true), _answer('2', 'Tunis')],
       )..selectedAnswerId = 2;
+
+      final review = buildQuestionReview(
+        question,
+        QuizAnswerReview.fromJson({
+          'attributes': {'quiz_question_id': 20, 'answer_text': 'Cairo'},
+        }),
+      );
+
+      expect(review.selected.map((a) => a.id), ['2']);
+      expect(review.usedLocalSelection, isTrue);
+    });
+
+    test("without a pick on the device, the server's answer_text decides", () {
+      final question = _question(
+        id: '20',
+        answers: [_answer('1', 'Cairo', correct: true), _answer('2', 'Tunis')],
+      );
 
       final review = buildQuestionReview(
         question,

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:easy_localization/easy_localization.dart';
@@ -31,7 +32,6 @@ import '../../../../core/services/video_settings_service.dart';
 import '../../../../core/video/screen_awake_controller.dart';
 import '../../services/video_frame_capture_service.dart';
 import '../../../../core/services/encrypted_video_service.dart';
-import '../../../../core/services/user_progress_service.dart';
 import '../../../../core/widgets/header_back_button.dart';
 import '../../../../core/widgets/watermark_wrapper.dart';
 import '../../data/chapter_repository.dart';
@@ -41,6 +41,7 @@ import '../../../../features/exams/models/quiz_models.dart';
 import '../../services/attachment_permission_service.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../widgets/learnoo_video_controls.dart';
+import '../widgets/still_watching_prompt.dart';
 import '../widgets/lecture_header.dart';
 import '../widgets/attachments_list.dart';
 import '../widgets/quizzes_list.dart';
@@ -151,8 +152,9 @@ class VideoControllerHandler {
   /// video was running. How long the screen is held is the dashboard's
   /// `sleep_per_minute` setting; [ScreenAwakeController] owns the countdown and
   /// calls back here only when the wakelock actually has to change.
-  /// When the window elapses the lecture is paused as well, so the phone is
-  /// not left playing to a dark screen.
+  /// When the window elapses the student is asked whether they are still
+  /// watching; if nobody answers the lecture is paused, so the phone is not
+  /// left playing to a dark screen.
   late final ScreenAwakeController _screenAwake = ScreenAwakeController(
     setAwake: _toggleWakelock,
     timeout: () => VideoSettingsService().screenAwakeTimeout,
@@ -177,12 +179,27 @@ class VideoControllerHandler {
     VideoSettingsService().removeListener(_onVideoSettingsChanged);
   }
 
+  /// Seconds left on the "still watching?" notice, `null` while it is hidden.
+  ValueListenable<int?> get stillWatchingPrompt =>
+      _screenAwake.promptSecondsLeft;
+
+  /// How long the notice stays up before the video pauses.
+  Duration get stillWatchingPromptDuration => _screenAwake.promptDuration;
+
+  /// The student answered the notice: keep playing and start a new window.
+  void stillWatching() => _screenAwake.stillWatching();
+
+  /// Bumped each time the notice ran out and the lecture was paused, so the
+  /// player on screen can bring its controls (and the play button) back up.
+  final ValueNotifier<int> sleepPauses = ValueNotifier<int>(0);
+
   void _pauseForScreenSleep() {
     try {
       _controller?.pause();
     } catch (e) {
       debugPrint('[VideoControllerHandler] pause on screen sleep failed');
     }
+    sleepPauses.value++;
   }
 
   void _toggleWakelock(bool value) {
@@ -585,7 +602,6 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   final _permissionService = AttachmentPermissionService();
   final _featureManager = FeatureManager();
   final _authRepository = AuthRepository();
-  final _userProgressService = UserProgressService();
   final _videoHandler = VideoControllerHandler();
   final _offlineViewService = OfflineViewService();
   final _encryptedVideoService = EncryptedVideoService();
@@ -620,7 +636,6 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   String _studentCode = '';
   String _phoneNumber = '';
 
-  int _lastSavedPosition = -1;
   int _lastSavedWatchedSeconds = -1;
   bool _viewCountApiCalled = false;
 
@@ -632,6 +647,11 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   /// student's views. This one is only ever set, never reset, for the life of
   /// the screen.
   bool _viewCountedThisSession = false;
+
+  /// Identifies this opening of the lesson to the server, which counts each
+  /// key once: the same opening re-sent (a timeout, the offline queue) can
+  /// never cost a second view.
+  final String _viewKey = OfflineViewService.newViewKey();
 
   bool _isLoadingChapter = true;
   bool _isLoadingDiscussions = false;
@@ -855,6 +875,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     super.initState();
     _maxViews = widget.maxViews ?? 5;
     WidgetsBinding.instance.addObserver(this);
+    // The "still watching?" notice ran out and paused the lecture: bring the
+    // controls up so the play button is right there.
+    _videoHandler.sleepPauses.addListener(_revealControls);
     _detectEmulator();
     _loadUserData();
     // Opening a lecture is the moment the screen-awake window matters, so a
@@ -977,6 +1000,8 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
       await _offlineViewService.incrementOfflineView(
         chapterIdString,
         watchedMinutes: watchedMinutes > 0 ? watchedMinutes : _viewByMinute,
+        viewKey: _viewKey,
+        courseId: widget.courseId,
       );
 
       final videoId = '${widget.courseId}_${widget.chapterId}';
@@ -1011,66 +1036,48 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
       return;
     }
 
-    try {
-      final watchedMinutes = (_watchTracker?.watchedSeconds ?? 0) ~/ 60;
-      final minutesToSource = watchedMinutes > 0
-          ? watchedMinutes
-          : _viewByMinute;
+    final result = await _chapterRepository.incrementViewCount(
+      chapterId: chapterId,
+      viewKey: _viewKey,
+    );
 
+    if (result['success'] == true) {
+      // The server recorded the view. If the student already left the
+      // screen there is nothing to update — the view must not also be
+      // queued, or it would be sent and counted a second time.
+      if (!mounted) return;
       debugPrint(
-        '[LectureDetail] Calling incrementViewCount: chapterId=$chapterId, watchedMinutes=$minutesToSource',
+        '[LectureDetail] Successfully incremented view count. New views: ${result['current_views']}',
       );
-
-      final result = await _chapterRepository.incrementViewCount(
-        chapterId: chapterId,
-        watchedMinutes: minutesToSource,
-      );
-
-      if (result['success'] && mounted) {
-        debugPrint(
-          '[LectureDetail] Successfully incremented view count. New views: ${result['current_views']}',
-        );
-        final newViewCount = result['current_views'] ?? _currentViews + 1;
-        setState(() {
-          _currentViews = newViewCount;
-        });
-        await _checkAndEnforceViewLimit(newViewCount);
-      } else {
-        debugPrint(
-          '[LectureDetail] Failed to increment view count via API: ${result['message']}',
-        );
-        debugPrint('[LectureDetail] Falling back to offline view tracking');
-        await _offlineViewService.incrementOfflineView(chapterIdString);
-
-        if (mounted) {
-          final offlineViews = await _offlineViewService.getOfflineViews(
-            chapterIdString,
-          );
-          final totalViews = _currentViews + offlineViews;
-          debugPrint(
-            '[LectureDetail] Offline view incremented as fallback. API: $_currentViews, Offline: $offlineViews, Total: $totalViews',
-          );
-          await _checkAndEnforceViewLimit(totalViews);
-        }
-      }
-    } catch (e) {
-      debugPrint('[LectureDetail] Exception during incrementViewCount: $e');
-      debugPrint(
-        '[LectureDetail] Falling back to offline view tracking due to exception',
-      );
-      await _offlineViewService.incrementOfflineView(chapterIdString);
-
-      if (mounted) {
-        final offlineViews = await _offlineViewService.getOfflineViews(
-          chapterIdString,
-        );
-        final totalViews = _currentViews + offlineViews;
-        debugPrint(
-          '[LectureDetail] Offline view incremented as fallback. API: $_currentViews, Offline: $offlineViews, Total: $totalViews',
-        );
-        await _checkAndEnforceViewLimit(totalViews);
-      }
+      final newViewCount = (result['current_views'] as int?) ?? _currentViews + 1;
+      setState(() {
+        _currentViews = newViewCount;
+      });
+      await _checkAndEnforceViewLimit(newViewCount);
+      return;
     }
+
+    if (result['retryable'] != true) {
+      // The server answered and refused (e.g. the limit was reached on
+      // another device). Like the website: nothing is queued, the lecture in
+      // progress keeps playing, and the next opening gets the server's lock.
+      debugPrint(
+        '[LectureDetail] View refused by the server: ${result['message']}',
+      );
+      return;
+    }
+
+    // No answer, or the server failed: the view may or may not have been
+    // recorded. Queue it under this opening's key — the server ignores the
+    // key if it already counted it.
+    debugPrint(
+      '[LectureDetail] View not confirmed (${result['message']}); queued for retry',
+    );
+    await _offlineViewService.incrementOfflineView(
+      chapterIdString,
+      viewKey: _viewKey,
+      courseId: widget.courseId,
+    );
   }
 
   Future<void> _checkAndEnforceViewLimit(int totalViews) async {
@@ -1133,6 +1140,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _videoHandler.sleepPauses.removeListener(_revealControls);
 
     _videoHandler.onPositionChanged = null;
     _videoHandler.onPlayingStateChanged = null;
@@ -1143,6 +1151,9 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     _watchTracker?.dispose();
     _audioWatermarkService?.dispose();
     _videoHandler.dispose();
+    if (widget.offlineVideoPath != null) {
+      unawaited(_encryptedVideoService.deletePlaybackCopies());
+    }
     _commentController.dispose();
     _commentFocusNode.dispose();
     _recordingTimer?.cancel();
@@ -1191,22 +1202,8 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
 
     if (widget.lectureId.isEmpty || totalDuration <= 0) return;
 
-    if (currentPosition != _lastSavedPosition) {
-      _lastSavedPosition = currentPosition;
-      _userProgressService
-          .sendProgress(
-            lectureId: widget.lectureId,
-            currentPosition: currentPosition,
-            totalDuration: totalDuration,
-            immediate: true,
-          )
-          .timeout(
-            const Duration(seconds: 5),
-            onTimeout: () => {'success': false, 'timeout': true},
-          )
-          .catchError((e) => {'success': false, 'error': e.toString()});
-    }
-
+    // Saved per chapter, the shape `POST /v1/user-progress` accepts and the
+    // website's "continue watching" reads.
     final chapterIdInt = int.tryParse(widget.chapterId) ?? 0;
     if (chapterIdInt > 0 &&
         (watchedSeconds != _lastSavedWatchedSeconds || isCompleted)) {
@@ -1489,7 +1486,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         videoUrl: _videoUrl,
         positionSeconds: moment,
         chapterId: widget.chapterId,
-        betterPlayerController: _betterPlayerController,
+        playerSnapshot: _betterPlayerController?.takeSnapshot,
         headers: {
           if (token != null) 'Authorization': 'Bearer $token',
           'Accept': 'application/json, text/plain, */*',
@@ -1547,7 +1544,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
         videoUrl: _videoUrl,
         positionSeconds: momentSeconds,
         chapterId: widget.chapterId,
-        betterPlayerController: _betterPlayerController,
+        playerSnapshot: _betterPlayerController?.takeSnapshot,
         headers: {
           if (token != null) 'Authorization': 'Bearer $token',
           'Accept': 'application/json, text/plain, */*',
@@ -1846,7 +1843,15 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
           '[LectureDetail] Loaded chapter views - API: $apiCurrentViews, Offline: $offlineViews, Total: $totalViews, Max: $_maxViews, Candidates: ${_videoCandidates.length}, Initial URL: $_videoUrl',
         );
 
-        if (totalViews >= apiMaxViews && apiMaxViews > 0) {
+        // The server sent the lesson, so by its count the student may watch
+        // — including a last view still inside the window the server keeps
+        // open after it was spent, as on the website. Only views this device
+        // spent and the server has not received yet can lock it here.
+        if (lockedByQueuedViews(
+          serverViews: apiCurrentViews,
+          queuedViews: offlineViews,
+          maxViews: apiMaxViews,
+        )) {
           setState(() {
             _errorMessage = 'course.maximum_views_reached'.tr();
             _canWatch = false;
@@ -2581,9 +2586,7 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
     );
     if (mounted) {
       if (result['success']) {
-        await _ensureOfflineViewInitialized();
-        await _offlineViewService.discardViewsAfterActivation(widget.chapterId);
-        if (!mounted) return;
+        // The repository already dropped the views the code reset.
         setState(() {
           _isLocked = false;
           _canWatch = true;
@@ -2596,6 +2599,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
           ),
         );
       } else {
+        // A code the server reports as already used may well have unlocked
+        // the chapter already (from the website, another screen or an
+        // admin), so re-read the chapter instead of keeping the old lock.
+        _loadChapterDetails();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -3093,7 +3100,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
             ),
             if (_showDiscussionPanel)
               DiscussionPanel(
-                currentPositionSeconds: _videoHandler.currentPosition.inSeconds,
+                // The moment the question is about: the one snapshotted with
+                // the frame, not the position the video has played on to.
+                currentPositionSeconds:
+                    _momentSeconds ?? _videoHandler.currentPosition.inSeconds,
                 isLoading: _isLoadingDiscussions,
                 discussions: _discussions,
                 currentTab: _discussionTab,
@@ -3444,6 +3454,11 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
           studentCode: _studentCode,
           phone: _phoneNumber,
           featureManager: _featureManager,
+          stillWatchingPrompt: _videoHandler.stillWatchingPrompt,
+          stillWatchingPromptDuration:
+              _videoHandler.stillWatchingPromptDuration,
+          onStillWatching: _videoHandler.stillWatching,
+          sleepPauses: _videoHandler.sleepPauses,
           onExit: () {
             if (mounted) {
               setState(() => _isInFullScreen = false);
@@ -3510,6 +3525,13 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                         isBuffering: _isBuffering,
                         onToggleFullScreen: _enterFullScreen,
                         leadingAction: _buildAskMomentAction(),
+                      ),
+                    ),
+                    Positioned.fill(
+                      child: StillWatchingPrompt(
+                        secondsLeft: _videoHandler.stillWatchingPrompt,
+                        total: _videoHandler.stillWatchingPromptDuration,
+                        onStillWatching: _videoHandler.stillWatching,
                       ),
                     ),
                     if (_isEmulator)
@@ -3835,7 +3857,10 @@ class _LectureDetailScreenState extends State<LectureDetailScreen>
                 ),
               ),
             )
-          else if (_videoUrl.isNotEmpty && !_isLocked && _canWatch)
+          // Hidden on iOS for now: lectures download as joined HLS (MPEG-TS)
+          // segments, which AVPlayer cannot play from a local file, so the
+          // download completed but never played. Android plays them.
+          else if (_videoUrl.isNotEmpty && !_isLocked && _canWatch && !Platform.isIOS)
             Positioned(
               top: 12,
               right: 52,
@@ -4976,11 +5001,22 @@ class _FullScreenVideoPlayer extends StatefulWidget {
   final FeatureManager featureManager;
   final VoidCallback? onExit;
 
+  /// The inline player's "still watching?" notice, shown here too while the
+  /// lecture is fullscreen — same clock, same button.
+  final ValueListenable<int?> stillWatchingPrompt;
+  final Duration stillWatchingPromptDuration;
+  final VoidCallback onStillWatching;
+  final ValueListenable<int> sleepPauses;
+
   const _FullScreenVideoPlayer({
     required this.sourceController,
     required this.studentCode,
     required this.phone,
     required this.featureManager,
+    required this.stillWatchingPrompt,
+    required this.stillWatchingPromptDuration,
+    required this.onStillWatching,
+    required this.sleepPauses,
     this.onExit,
   });
 
@@ -5001,10 +5037,12 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
     // The packaged controls are off, so the chrome is shown on entry and then
     // hidden by the same auto-hide the inline player uses.
     _startHideControlsTimer();
+    widget.sleepPauses.addListener(_revealControls);
   }
 
   @override
   void dispose() {
+    widget.sleepPauses.removeListener(_revealControls);
     _hideControlsTimer?.cancel();
     if (!_exitCalled) {
       _exitFullScreenMode();
@@ -5015,7 +5053,10 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
   void _startHideControlsTimer() {
     _hideControlsTimer?.cancel();
     _hideControlsTimer = Timer(const Duration(seconds: 4), () {
-      if (mounted) {
+      // A paused video keeps its controls, like the inline player: the exit
+      // button lives in that bar, so hiding it on a paused screen leaves the
+      // student nothing to leave fullscreen with.
+      if (mounted && (widget.sourceController.isPlaying() ?? false)) {
         setState(() => _showControls = false);
       }
     });
@@ -5166,6 +5207,9 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
           fit: StackFit.expand,
           children: [
             GestureDetector(
+              // Opaque: the video surface ignores touches, so a tap anywhere on
+              // the screen must still land here to bring the controls back.
+              behavior: HitTestBehavior.opaque,
               onTap: _onVideoTap,
               child: WatermarkWrapper(
                 type: WatermarkType.chapters,
@@ -5183,6 +5227,13 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
                 isFullScreen: true,
                 onToggleFullScreen: _pop,
                 leadingAction: _buildAskMomentAction(),
+              ),
+            ),
+            Positioned.fill(
+              child: StillWatchingPrompt(
+                secondsLeft: widget.stillWatchingPrompt,
+                total: widget.stillWatchingPromptDuration,
+                onStillWatching: widget.onStillWatching,
               ),
             ),
           ],

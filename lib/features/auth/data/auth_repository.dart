@@ -1,16 +1,15 @@
 import 'package:easy_localization/easy_localization.dart';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:http/http.dart' as http;
 
 import 'package:learnoo/core/local/hive_boxes.dart';
 import 'package:learnoo/core/network/api_client.dart';
 import 'package:learnoo/core/network/api_constants.dart';
 import 'package:learnoo/core/network/api_exception.dart';
 import 'package:learnoo/core/services/device_service.dart';
+import 'package:learnoo/core/services/push_service.dart';
 import 'package:learnoo/core/services/student_scope.dart';
 import 'package:learnoo/core/session/session_manager.dart';
 
@@ -31,9 +30,6 @@ class AuthRepository {
 
   /// Device name sent with login/registration. The web sends `learnoo-web`.
   static const String _fallbackDeviceName = 'learnoo-mobile';
-
-  // Current app version code - update this with each release
-  static const int currentVersionCode = 1;
 
   // Cache keys for watermark data
   static const String _cachedStudentCodeKey = 'cached_student_code';
@@ -73,64 +69,6 @@ class AuthRepository {
   }
 
   // ---------------------------------------------------------------------
-  // OTA update check (unauthenticated, custom key header)
-  // ---------------------------------------------------------------------
-
-  /// Check for OTA (Over-The-Air) app updates.
-  /// Returns update info if a newer version is available, null otherwise.
-  Future<Map<String, dynamic>?> checkForUpdate() async {
-    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.otaLatest}');
-
-    try {
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-OTA-Key':
-              '196716f9c69164c7b8ef9e2a4bfb9bced668065997b3e987cc900803c7b78c43',
-        },
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final attributes = data['data']?['attributes'];
-
-        if (attributes == null) return null;
-
-        final versionCode = attributes['version_code'];
-        final isForceUpdate = attributes['is_force_update'] ?? false;
-        final downloadUrl = attributes['download_url'];
-        final versionName = attributes['version_name'];
-        final releaseNotes = attributes['release_notes'];
-        final fileSizeHuman = attributes['file_size_human'];
-
-        if (versionCode != null && versionCode > currentVersionCode) {
-          final lastAcknowledgedVersion = await getLastAcknowledgedVersionCode();
-          if (lastAcknowledgedVersion != null &&
-              versionCode <= lastAcknowledgedVersion) {
-            return null;
-          }
-
-          return {
-            'hasUpdate': true,
-            'versionCode': versionCode,
-            'versionName': versionName,
-            'isForceUpdate': isForceUpdate,
-            'downloadUrl': downloadUrl,
-            'releaseNotes': releaseNotes,
-            'fileSize': fileSizeHuman,
-          };
-        }
-      }
-      return null;
-    } catch (e) {
-      // Silently fail - don't block app startup on update check failure
-      return null;
-    }
-  }
-
-  // ---------------------------------------------------------------------
   // Token / session
   // ---------------------------------------------------------------------
 
@@ -145,48 +83,25 @@ class AuthRepository {
   /// Promotes the pending login token into persistent storage.
   Future<bool> activateSession() => _session.activateSession();
 
-  Future<int?> getLastAcknowledgedVersionCode() async {
-    try {
-      final box = Hive.box<dynamic>(HiveBoxes.userProfile);
-      final value = box.get('last_acknowledged_version_code');
-      return value == null ? null : int.tryParse(value.toString());
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<void> saveLastAcknowledgedVersionCode(int versionCode) async {
-    try {
-      final box = Hive.box<dynamic>(HiveBoxes.userProfile);
-      await box.put('last_acknowledged_version_code', versionCode.toString());
-    } catch (e) {
-      debugPrint('Error saving acknowledged version: $e');
-    }
-  }
-
   // ---------------------------------------------------------------------
   // Registration & sign-in — passwordless
   // ---------------------------------------------------------------------
 
-  /// Role id sent to `POST /v1/auth/register`, matching the web's
-  /// `role: role === "Parent" ? 3 : 1`.
-  static const int studentRoleId = 1;
-  static const int parentRoleId = 3;
+  /// Role id sent to `POST /v1/auth/register`: the server's
+  /// `UserRole::STUDENT`, the same `role: 0` the web's create-account sends.
+  static const int studentRoleId = 0;
 
-  /// `POST /v1/auth/register`.
+  /// `POST /v1/auth/register` — student accounts only.
   ///
-  /// [password] and `role: 3` are sent for the Parent role only — students
-  /// register passwordless and verify by OTP. The returned token becomes the
-  /// *pending* session; the account is not signed in until either the OTP is
-  /// verified (student) or [activateSession] is called (parent, which the web
-  /// does immediately because parents skip verification).
+  /// Students register passwordless and verify by OTP. Parent registration is
+  /// paused in the app and refused by the server; existing parents sign in
+  /// through [login] with a password. The returned token becomes the *pending*
+  /// session; the account is not signed in until the OTP is verified.
   Future<Map<String, dynamic>> register({
     required String firstName,
     required String lastName,
     required String phone,
     required String email,
-    String? password,
-    int role = studentRoleId,
   }) async {
     try {
       final deviceName = await _deviceName();
@@ -201,8 +116,7 @@ class AuthRepository {
           'phone': normalizePhone(phone),
           'email': email,
           'device_name': deviceName,
-          'role': role,
-          if (password != null && password.isNotEmpty) 'password': password,
+          'role': studentRoleId,
         },
       );
 
@@ -697,6 +611,8 @@ class AuthRepository {
   /// token as a completed logout), and the local session is cleared either way.
   Future<Map<String, dynamic>> logout() async {
     String message = 'errors.logged_out'.tr();
+    // While still signed in: this phone stops getting the student's pushes.
+    await PushService().unregister();
     try {
       final payload = await _api.post(
         ApiConstants.logout,

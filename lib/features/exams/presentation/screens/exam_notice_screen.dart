@@ -4,6 +4,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../data/exam_repository.dart';
 import '../../domain/quiz_course_title.dart';
 import '../../models/quiz_models.dart';
+import '../widgets/exam_banner.dart';
 import 'quiz_screen.dart';
 
 class ExamNoticeScreen extends StatelessWidget {
@@ -17,6 +18,7 @@ class ExamNoticeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final courseTitle = quizCourseTitle(quiz.attributes);
+    final bannerUrl = quiz.bannerUrl;
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -26,7 +28,12 @@ class ExamNoticeScreen extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Column(
               children: [
-              const SizedBox(height: 40),
+              if (bannerUrl != null) ...[
+                const SizedBox(height: 16),
+                ExamBanner(url: bannerUrl),
+                const SizedBox(height: 24),
+              ] else
+                const SizedBox(height: 40),
               // Warning Icon
               Container(
                 width: 80,

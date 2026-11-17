@@ -40,9 +40,13 @@ enum AnnotationMode { none, pen, highlighter, eraser }
 
 class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
   final PdfViewerController _pdfViewerController = PdfViewerController();
-  final GlobalKey<SfPdfViewerState> _pdfViewerKey = GlobalKey();
   bool _isLoading = false;
   String? _localFilePath;
+
+  /// The downloaded file before the app's own watermark pass. The server
+  /// already watermarks course files; if the re-written copy cannot be
+  /// rendered, this one is shown instead of an empty viewer.
+  String? _downloadedFilePath;
   bool _isInitializing = true;
   String? _initError;
 
@@ -104,6 +108,18 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
       if (mounted) {
         if (result.status == DownloadStatus.completed && result.localPath != null) {
           String finalPath = result.localPath!;
+          _downloadedFilePath = finalPath;
+
+          // An error page or an empty body saved as ".pdf" would otherwise open
+          // as a blank viewer with no explanation.
+          if (!await _looksLikePdf(finalPath)) {
+            if (!mounted) return;
+            setState(() {
+              _initError = 'pdf.failed_load'.tr();
+              _isInitializing = false;
+            });
+            return;
+          }
 
           // 1. Get watermark text
           final watermark = _watermarkText;
@@ -168,6 +184,36 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
         });
       }
     }
+  }
+
+  static Future<bool> _looksLikePdf(String path) async {
+    try {
+      final raf = await File(path).open();
+      try {
+        final head = await raf.read(1024);
+        return String.fromCharCodes(head).contains('%PDF');
+      } finally {
+        await raf.close();
+      }
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// The viewer could not render the file. Course files fall back to the
+  /// server-watermarked download once; anything else (or a second failure)
+  /// shows the error instead of an empty viewer stuck at "100%".
+  void _onDocumentLoadFailed(PdfDocumentLoadFailedDetails details) {
+    debugPrint('[PdfReviewer] Load failed: ${details.error} ${details.description}');
+    if (!mounted) return;
+    final original = _downloadedFilePath;
+    setState(() {
+      if (widget.watermarkType != 'library' && original != null && original != _localFilePath) {
+        _localFilePath = original;
+      } else {
+        _initError = 'pdf.failed_load'.tr();
+      }
+    });
   }
 
   Future<void> _loadUserData() async {
@@ -595,7 +641,8 @@ class _PdfReviewerScreenState extends State<PdfReviewerScreen> {
                   SfPdfViewer.file(
                     File(_localFilePath!),
                     controller: _pdfViewerController,
-                    key: _pdfViewerKey,
+                    key: ValueKey(_localFilePath),
+                    onDocumentLoadFailed: _onDocumentLoadFailed,
                     enableTextSelection: _currentAnnotationMode == AnnotationMode.none,
                     enableDocumentLinkAnnotation: true,
                     enableHyperlinkNavigation: true,

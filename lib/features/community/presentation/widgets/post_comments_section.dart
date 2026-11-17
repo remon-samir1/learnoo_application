@@ -2,6 +2,7 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../data/comment_order.dart';
 import '../../data/models/post_model.dart';
 import '../../data/repositories/community_repository.dart';
 
@@ -19,6 +20,7 @@ class PostCommentsSection extends StatefulWidget {
     required this.currentUserId,
     this.readOnly = false,
     this.onChanged,
+    this.repository,
   });
 
   final Post post;
@@ -33,12 +35,16 @@ class PostCommentsSection extends StatefulWidget {
   /// post's own counters.
   final Future<void> Function()? onChanged;
 
+  /// Where comments are read and written; tests pass a fake.
+  final CommunityRepository? repository;
+
   @override
   State<PostCommentsSection> createState() => _PostCommentsSectionState();
 }
 
 class _PostCommentsSectionState extends State<PostCommentsSection> {
-  final _repository = CommunityRepository();
+  late final CommunityRepository _repository =
+      widget.repository ?? CommunityRepository();
   final _composerController = TextEditingController();
 
   bool _expanded = false;
@@ -81,14 +87,10 @@ class _PostCommentsSectionState extends State<PostCommentsSection> {
       return;
     }
 
-    // The endpoint can echo the parent back, so rows are re-checked against
-    // `parent_id` the same way the web filters them.
-    final comments = ((result['data'] as List?) ?? const [])
-        .whereType<Post>()
-        .where((c) => c.attributes.parentId == widget.post.id)
-        .toList()
-      ..sort((a, b) =>
-          a.attributes.createdAt.compareTo(b.attributes.createdAt));
+    final comments = commentsOldestFirst(
+      ((result['data'] as List?) ?? const []).whereType<Post>(),
+      widget.post.id,
+    );
 
     setState(() {
       _isLoading = false;
@@ -223,7 +225,9 @@ class _PostCommentsSectionState extends State<PostCommentsSection> {
           ),
           if (_expanded) ...[
             const SizedBox(height: 12),
-            if (_isLoading)
+            // Spinner on the first load only: reloading after a post, a delete
+            // or a like keeps the comments in place, the new one at the end.
+            if (_isLoading && _comments.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
                 child: Center(child: CircularProgressIndicator(strokeWidth: 2)),

@@ -11,6 +11,13 @@
 	  means "this app's own default access group" — nothing is shared with any
 	  other app.
 	-->
+	<!--
+	  Push Notifications (PushService / Firebase Cloud Messaging → APNs).
+	  Xcode replaces "development" with "production" when the archive is
+	  exported for the App Store.
+	-->
+	<key>aps-environment</key>
+	<string>development</string>
 	<key>keychain-access-groups</key>
 	<array/>
 	<key>com.apple.security.get-task-allow</key>
