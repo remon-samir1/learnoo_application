@@ -105,6 +105,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        PushProviderChannel.register(flutterEngine, this)
         
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SCREEN_PROTECTION_CHANNEL)
         methodChannel.setMethodCallHandler { call, result -> handleMethodCall(call, result) }

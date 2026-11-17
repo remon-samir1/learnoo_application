@@ -5,6 +5,9 @@ plugins {
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+    // Huawei Push (phones without Google services) reads its app id from
+    // agconnect-services.json (AppGallery Connect → Learnoo → Project settings).
+    id("com.huawei.agconnect")
 }
 // Firebase (push notifications) is configured by android/app/google-services.json
 // from the Firebase console. Without it the app builds and runs with push off.
@@ -107,4 +110,10 @@ dependencies {
     // media3-exoplayer-rtsp is deliberately absent: the Jitsi Meet SDK bundles
     // the same RTSP classes through react-native-video, and having both makes
     // the duplicate-class check fail. Chapter video is HLS/MP4, never RTSP.
+
+    // PushProviderChannel: is Google Play services / Huawei Mobile Services
+    // on this phone. Both already come with firebase_messaging / huawei_push
+    // (same versions); listed so the app's own code can call them.
+    implementation("com.google.android.gms:play-services-base:18.9.0")
+    implementation("com.huawei.hms:base:6.13.0.301")
 }

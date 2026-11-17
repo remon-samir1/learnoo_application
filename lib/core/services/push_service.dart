@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:huawei_push/huawei_push.dart' as hms;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../network/api_client.dart';
@@ -38,7 +41,8 @@ class PushPayload {
   }
 }
 
-/// The phone side of the push provider (Firebase Cloud Messaging).
+/// The phone side of the push provider: Firebase Cloud Messaging, or Huawei
+/// Push Kit on phones without Google Play services.
 abstract class PushMessaging {
   /// `fcm` or `hms`, as the backend stores it.
   String get provider;
@@ -125,10 +129,60 @@ class _FirebasePushMessaging implements PushMessaging {
   Stream<String> get onRegistered => _messaging.onRegistered;
 }
 
+class _HuaweiPushMessaging implements PushMessaging {
+  @override
+  String get provider => 'hms';
+
+  // Push Kit has no permission prompt of its own; Android 13+ still needs
+  // the app's notification permission for the system to show its pushes.
+  @override
+  Future<bool> requestPermission() =>
+      NotificationService().requestPermissions();
+
+  // The token arrives on [onRegistered] (Push.getTokenStream).
+  @override
+  Future<void> register() async => hms.Push.getToken('');
+
+  @override
+  Stream<String> get onRegistered => hms.Push.getTokenStream.handleError(
+    (Object e) => debugPrint('[Push] Huawei token request failed: $e'),
+  );
+}
+
+/// The data of a Huawei push the student tapped, from the plugin's
+/// notification-open event: the push's `data` keys arrive as intent extras,
+/// and again in `remoteMessage.dataOfMap` (a JSON object string).
+@visibleForTesting
+Map<String, dynamic> huaweiTapData(Object? event) {
+  final data = <String, dynamic>{};
+  if (event is! Map) return data;
+  final extras = event['extras'];
+  if (extras is Map) {
+    extras.forEach((key, value) => data[key.toString()] = value);
+  }
+  final message = event['remoteMessage'];
+  final dataOfMap = message is Map ? message['dataOfMap'] : null;
+  if (dataOfMap is String && dataOfMap.isNotEmpty) {
+    try {
+      final decoded = jsonDecode(dataOfMap);
+      if (decoded is Map) {
+        decoded.forEach(
+          (key, value) => data.putIfAbsent(key.toString(), () => value),
+        );
+      }
+    } on FormatException {
+      // Not ours.
+    }
+  }
+  return data;
+}
+
 /// Notifications while the app is in the background or closed.
 ///
 /// The backend pushes every new row of the student's notifications list to
-/// the phones registered here (Firebase Cloud Messaging; Android and iPhone).
+/// the phones registered here: Firebase Cloud Messaging (iPhone and Android),
+/// or Huawei Push Kit on Android phones that have Huawei Mobile Services but
+/// no Google Play services (`agconnect-services.json` in the Android build).
 /// The phone's system shows them; tapping one opens the notifications screen,
 /// like a tap on the app's own notifications.
 ///
@@ -163,18 +217,39 @@ class PushService {
 
   /// Android channel the pushes name (see [NotificationService]).
   @visibleForTesting
-  Future<void> Function() ensureChannel =
-      () => NotificationService().ensureGeneralChannel();
+  Future<void> Function() ensureChannel = () =>
+      NotificationService().ensureGeneralChannel();
   PushTokenApi _api = const ApiPushTokenApi();
   String _platform = Platform.isIOS ? 'ios' : 'android';
   StreamSubscription<String>? _registeredSubscription;
   bool _sessionListener = false;
 
-  /// Firebase is configured in this build.
+  /// Push is set up on this phone (Firebase configured, or Huawei Push).
   bool get available => _messaging != null;
+
+  static const MethodChannel _providerChannel = MethodChannel(
+    'com.learnoo.push_provider',
+  );
+
+  /// `hms` on an Android phone with Huawei Mobile Services and no Google
+  /// Play services (PushProviderChannel.kt); `fcm` everywhere else.
+  @visibleForTesting
+  Future<String> Function() providerLookup = () async {
+    if (!Platform.isAndroid) return 'fcm';
+    try {
+      return await _providerChannel.invokeMethod<String>('provider') ?? 'fcm';
+    } catch (e) {
+      debugPrint('[Push] push provider check failed: ${e.runtimeType}');
+      return 'fcm';
+    }
+  };
 
   /// Called once from `main()`. Never throws.
   Future<void> initialize() async {
+    if (await providerLookup() == 'hms') {
+      await _initializeHuawei();
+      return;
+    }
     try {
       await Firebase.initializeApp();
     } catch (e) {
@@ -196,6 +271,41 @@ class PushService {
     } catch (e) {
       debugPrint('[Push] messaging setup failed: ${e.runtimeType}');
     }
+  }
+
+  Future<void> _initializeHuawei() async {
+    try {
+      // The plugin otherwise reports its own method-call statistics to Huawei.
+      await hms.Push.disableLogger();
+      _messaging = _HuaweiPushMessaging();
+      // In the foreground Push Kit hands the push to the app instead of
+      // showing it (the backend sends `foreground_show: false`), and the app
+      // shows it once through NotificationSyncService, as with Firebase.
+      hms.Push.onMessageReceivedStream.listen((message) {
+        if (PushPayload.fromData(message.dataOfMap ?? const {}) != null) {
+          onForegroundMessage();
+        }
+      }, onError: (Object e) => debugPrint('[Push] Huawei message error: $e'));
+      hms.Push.onNotificationOpenedApp.listen(
+        (event) => _openHuaweiTap(huaweiTapData(event)),
+        onError: (Object e) => debugPrint('[Push] Huawei open error: $e'),
+      );
+      final initial = await hms.Push.getInitialNotification();
+      if (initial != null) _openHuaweiTap(huaweiTapData(initial));
+    } catch (e) {
+      debugPrint('[Push] Huawei push setup failed: ${e.runtimeType}');
+    }
+  }
+
+  String? _openedHuaweiNotification;
+
+  /// A cold start can report the same tap twice (the initial notification
+  /// and the open event); open the screen once.
+  void _openHuaweiTap(Map<String, dynamic> data) {
+    final id = PushPayload.fromData(data)?.notificationId;
+    if (id == null || id == _openedHuaweiNotification) return;
+    _openedHuaweiNotification = id;
+    openFromTap(data);
   }
 
   /// Set by the app root: fetch the list now and show what is new.
@@ -225,9 +335,11 @@ class PushService {
     // Listen before registering: the id arrives on the stream.
     _registeredSubscription ??= messaging.onRegistered.listen((id) {
       if (id.isEmpty) return;
-      unawaited(_register(id).catchError((Object e) {
-        debugPrint('[Push] sending the push id failed: ${e.runtimeType}');
-      }));
+      unawaited(
+        _register(id).catchError((Object e) {
+          debugPrint('[Push] sending the push id failed: ${e.runtimeType}');
+        }),
+      );
     });
     try {
       await ensureChannel();
