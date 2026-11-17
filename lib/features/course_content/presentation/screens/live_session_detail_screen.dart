@@ -7,6 +7,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../data/live_room_repository.dart';
 import '../../data/models/live_room.dart';
 import '../widgets/live_room_widgets.dart';
+import 'course_detail_screen.dart';
 import 'live_stream_screen.dart';
 
 /// Student live session page — the website's
@@ -124,11 +125,97 @@ class _LiveSessionDetailScreenState extends State<LiveSessionDetailScreen> {
                     ),
                   _buildHeader(room),
                   const SizedBox(height: 16),
-                  _buildBody(room),
+                  room.canView ? _buildBody(room) : _buildLocked(room),
                 ],
               ),
             ),
     );
+  }
+
+  /// Opened from a shared link before the student activated it: the same two
+  /// locked states as the session list — a private session asks for its code,
+  /// a course session sends the student to the course.
+  Widget _buildLocked(LiveRoom room) {
+    final isPrivate = room.isPublic == 'false' || room.isPublic == 'private';
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.lock, size: 18, color: Color(0xFFF59E0B)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  isPrivate
+                      ? 'live.private_session'.tr()
+                      : 'live.activate_course_first'.tr(),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.text(context),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            isPrivate
+                ? 'live.activation_description'.tr()
+                : 'live.course_locked_description'.tr(),
+            style: TextStyle(fontSize: 14, color: AppColors.subtext(context)),
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: isPrivate
+                ? () => _activate(room)
+                : (room.courseIds.isEmpty ? null : () => _openCourse(room)),
+            icon: const Icon(Icons.lock_open, size: 16),
+            label: Text(
+              isPrivate
+                  ? 'live.activate_session'.tr()
+                  : 'live.activate_course_first'.tr(),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryBlue,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              minimumSize: const Size.fromHeight(44),
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.all(Radius.circular(12)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _activate(LiveRoom room) async {
+    final activated = await LiveRoomActivationSheet.show(
+      context,
+      roomId: room.id,
+      title: room.title.trim().isEmpty ? '—' : room.title.trim(),
+    );
+    if (activated && mounted) await _load();
+  }
+
+  Future<void> _openCourse(LiveRoom room) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CourseDetailScreen(
+          courseId: room.courseIds.first,
+          title: room.courseTitles.isNotEmpty ? room.courseTitles.first : '',
+          thumbnail: room.courseThumbnail ?? '',
+          price: '',
+          description: '',
+        ),
+      ),
+    );
+    if (mounted) await _load();
   }
 
   Widget _buildNotFound() {

@@ -36,6 +36,11 @@ class LiveRoom {
   /// `attributes.has_activation` — the student activated this private room.
   final bool hasActivation;
 
+  /// `attributes.can_view` — the student may join. `false` for a session the
+  /// student has not activated yet, which the detail endpoint returns so a
+  /// shared link can show the activate step.
+  final bool canView;
+
   /// `attributes.enable_chat` — only an explicit `false` disables chat.
   final bool enableChat;
 
@@ -71,6 +76,7 @@ class LiveRoom {
     this.rawStatus = '',
     this.isPublic = '',
     this.hasActivation = false,
+    this.canView = true,
     this.enableChat = true,
     this.recordingUrl,
     this.startedAtValue,
@@ -212,6 +218,7 @@ class LiveRoom {
       rawStatus: (attributes['status']?.toString() ?? '').trim().toLowerCase(),
       isPublic: (attributes['is_public']?.toString() ?? '').trim().toLowerCase(),
       hasActivation: attributes['has_activation'] == true,
+      canView: attributes['can_view'] != false,
       enableChat: attributes['enable_chat'] != false,
       recordingUrl: coerceString(attributes['recording_url']) ??
           coerceString(attributes['playback_url']) ??
@@ -399,6 +406,7 @@ class LiveRoom {
         'status': rawStatus,
         'is_public': isPublic,
         'has_activation': hasActivation,
+        'can_view': canView,
         'enable_chat': enableChat,
         'recording_url': recordingUrl,
         'started_at': startedAtValue?.toIso8601String(),

@@ -1212,7 +1212,8 @@
     "chat": "Live Chat",
     "hide_chat": "Hide Chat",
     "unmute_mic": "Unmute microphone",
-    "mute_mic": "Mute microphone"
+    "mute_mic": "Mute microphone",
+    "course_locked_description": "This live session is part of a course you have not activated yet."
   },
   "course_activation": {
     "title": "Unlock Course",

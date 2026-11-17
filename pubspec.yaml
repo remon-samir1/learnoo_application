@@ -171,6 +171,7 @@ dependencies:
   # used only when its config files are in the build.
   firebase_core: ^5.2.0
   firebase_messaging: ^17.1.0
+  app_links: ^7.2.2
 
 
 dev_dependencies:

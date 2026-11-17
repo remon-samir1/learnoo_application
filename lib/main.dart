@@ -5,6 +5,8 @@ import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'core/services/screen_protection_service.dart';
 import 'core/services/notification_service.dart';
 import 'core/services/push_service.dart';
+import 'core/services/share_link_service.dart';
+import 'features/home/presentation/share_link_opener.dart';
 import 'core/network/api_client.dart';
 import 'core/services/websocket_service.dart';
 import 'core/services/feature_service.dart';
@@ -54,6 +56,12 @@ void main() async {
     // Push (Firebase) when this build has its config files; otherwise off.
     PushService().initialize(),
   ]);
+
+  // Exam / live session links shared by teachers, including the one that
+  // started the app; opened once the student's home screen is up.
+  ShareLinkService()
+    ..open = openShareLink
+    ..start();
 
   final screenProtection = results[0] as ScreenProtectionService;
   final notificationService = results[1] as NotificationService;

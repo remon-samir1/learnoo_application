@@ -16,6 +16,14 @@
 	  Xcode replaces "development" with "production" when the archive is
 	  exported for the App Store.
 	-->
+	<!--
+	  Associated Domains: exam and live session links on learnoo.app open the
+	  app (https://learnoo.app/.well-known/apple-app-site-association).
+	-->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:learnoo.app</string>
+	</array>
 	<key>aps-environment</key>
 	<string>development</string>
 	<key>keychain-access-groups</key>

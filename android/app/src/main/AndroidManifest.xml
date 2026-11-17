@@ -50,6 +50,21 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Exam and live session links teachers copy from the dashboard
+                 (ShareLinkService). Verified against
+                 https://learnoo.app/.well-known/assetlinks.json, so they open
+                 here instead of the browser. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="learnoo.app"/>
+                <data android:pathPattern="/.*/student/exams/start-exam/.*"/>
+                <data android:pathPattern="/.*/student/live-sessions/.*"/>
+            </intent-filter>
+            <!-- The app_links plugin delivers the links to Dart; Flutter's own
+                 deep linking would also push them as Navigator routes. -->
+            <meta-data android:name="flutter_deeplinking_enabled" android:value="false"/>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

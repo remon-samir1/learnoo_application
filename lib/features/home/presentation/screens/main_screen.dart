@@ -10,6 +10,7 @@ import 'package:learnoo/core/services/feature_service.dart';
 import 'package:learnoo/core/services/video_settings_service.dart';
 import 'package:learnoo/core/services/notification_service.dart';
 import 'package:learnoo/core/services/push_service.dart';
+import 'package:learnoo/core/services/share_link_service.dart';
 import 'package:learnoo/features/home/data/notification_sync_service.dart';
 
 class MainScreen extends StatefulWidget {
@@ -47,8 +48,18 @@ class _MainScreenState extends State<MainScreen> {
     // register this phone for pushes while the app is closed.
     PushService().start();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) NotificationService().openPendingNotificationsScreen();
+      if (!mounted) return;
+      NotificationService().openPendingNotificationsScreen();
+      // An exam / live session link that opened the app (or arrived while
+      // the student was signing in) opens now; later ones open straight away.
+      ShareLinkService().attachHome(context);
     });
+  }
+
+  @override
+  void dispose() {
+    ShareLinkService().detachHome(context);
+    super.dispose();
   }
 
   @override

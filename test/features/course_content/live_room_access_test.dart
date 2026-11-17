@@ -18,4 +18,15 @@ void main() {
     expect(room('included').accessFor({'10'}), LiveRoomAccess.available);
     expect(room('false').accessFor({'10'}), LiveRoomAccess.lockedPrivate);
   });
+  test('A session opened by its link knows whether the student may join (can_view)', () {
+    LiveRoom withCanView(Object? value) => LiveRoom.fromJson({
+      'id': '1',
+      'attributes': {'is_public': 'false', 'can_view': ?value},
+    });
+    expect(withCanView(false).canView, isFalse);
+    expect(withCanView(true).canView, isTrue);
+    // Older payloads without the flag only came for rooms the student could open.
+    expect(withCanView(null).canView, isTrue);
+    expect(LiveRoom.fromJson(withCanView(false).toJson()).canView, isFalse);
+  });
 }
