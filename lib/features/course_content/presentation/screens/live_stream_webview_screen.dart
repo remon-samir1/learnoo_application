@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
@@ -80,6 +81,7 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
   bool _conferenceJoined = false;
   bool _whiteboardOpen = false;
   bool _chatOpen = false;
+  bool _fullscreen = false;
   bool _hasLeft = false;
 
   /// Live tools bar state, kept in step with Jitsi's events like the website.
@@ -101,7 +103,8 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
   /// Full-bleed WebView while the whiteboard is up, so the board gets the
   /// AppBar's height back. Jitsi's own hangup button and the Android back
   /// button remain the ways out.
-  bool get _isWhiteboardFullBleed => _conferenceJoined && _whiteboardOpen;
+  bool get _isWhiteboardFullBleed =>
+      _fullscreen || (_conferenceJoined && _whiteboardOpen);
 
   @override
   void initState() {
@@ -112,6 +115,13 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
   @override
   void dispose() {
     _startupTimer?.cancel();
+    if (_fullscreen) {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
     // Leave the conference if the student backs out of the screen.
     _controller?.runJavaScript('window.learnooHangup && window.learnooHangup();');
     super.dispose();
@@ -893,6 +903,7 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
       },
       child: Scaffold(
         backgroundColor: Colors.black,
+        resizeToAvoidBottomInset: false,
         // The AppBar is dropped while the whiteboard is open so the board gets
         // the whole screen. Jitsi's hangup button and the Android back button
         // are still there to leave with.
@@ -906,6 +917,14 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
                   style: const TextStyle(color: Colors.white, fontSize: 16),
                 ),
                 iconTheme: const IconThemeData(color: Colors.white),
+                actions: [
+                  IconButton(
+                    key: const Key('live-fullscreen'),
+                    tooltip: 'course.fullscreen'.tr(),
+                    icon: const Icon(Icons.fullscreen),
+                    onPressed: _toggleFullscreen,
+                  ),
+                ],
               ),
         body: _error != null
             ? _buildError()
@@ -932,6 +951,7 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
                       onToggleChat: () => _command('toggleChat'),
                     ),
                   Expanded(
+                    key: const ValueKey('live-meeting-stage'),
                     child: Stack(
                         children: [
                           if (controller != null)
@@ -990,6 +1010,27 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
                                 ),
                               ),
                             ),
+                        if (_isWhiteboardFullBleed)
+                          PositionedDirectional(
+                            top: 0,
+                            end: 0,
+                            child: SafeArea(
+                              child: IconButton.filled(
+                                key: const Key('live-fullscreen'),
+                                tooltip:
+                                    (_fullscreen
+                                            ? 'course.exit_fullscreen'
+                                            : 'course.fullscreen')
+                                        .tr(),
+                                icon: Icon(
+                                  _fullscreen
+                                      ? Icons.fullscreen_exit
+                                      : Icons.fullscreen,
+                                ),
+                                onPressed: _toggleFullscreen,
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                   ),
@@ -998,6 +1039,19 @@ class _LiveStreamWebViewScreenState extends State<LiveStreamWebViewScreen> {
       ),
     );
   }
+
+  Future<void> _toggleFullscreen() async {
+    setState(() => _fullscreen = !_fullscreen);
+    await SystemChrome.setPreferredOrientations(
+      _fullscreen
+          ? [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
+          : [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown],
+    );
+    await SystemChrome.setEnabledSystemUIMode(
+      _fullscreen ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+    );
+  }
+
 
   /// Runs one of the website's live tools commands in the meeting page.
   void _command(String name) {
